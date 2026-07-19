@@ -61,6 +61,10 @@ import {
 } from "../shared/native-gradient-collection";
 import { nativeGradientToCssPreview } from "../shared/native-gradient-preview";
 import {
+  orchestrateNativeGradientCollection,
+  resolveNativeGradientRuntime,
+} from "../shared/native-gradient-contract";
+import {
   type PaletteCommand,
   dispatchPaletteResult,
   listenForPaletteCommands,
@@ -87,6 +91,14 @@ const DESIGN_STATES = new Set<DesignPreviewState>([
   "error",
 ]);
 const STATUS_TIMEOUT_MS = 2500;
+
+const getNativeGradientPlatform = () => {
+  try {
+    return window.cep_node.process.platform;
+  } catch (_error) {
+    return "";
+  }
+};
 
 const paletteSwatchBackground = (color: PaletteColor) =>
   isPaletteGradient(color) ? nativeGradientToCssPreview(color.gradient) : rgbaToCss(color.rgba);
@@ -409,6 +421,8 @@ export const App = () => {
       }
 
       let sourceItems: PaletteCollectionItem[];
+      let collectedDocument: PaletteDocument | null = null;
+      let collectionPaletteWritten = false;
       let sourceName: string | null = null;
       let skipped = 0;
       if (selection.image.status === "ok" && selection.image.path) {
@@ -427,34 +441,60 @@ export const App = () => {
         }));
         sourceName = selection.image.name || "selected image";
       } else if (hasColors) {
-        if (selection.nativeGradients.status === "invalid") {
-          setLastResult("Native gradients require a clean saved project and static unlocked targets");
+        const nativeRuntime = resolveNativeGradientRuntime(
+          getNativeGradientPlatform(),
+          csi.hostEnvironment.appVersion,
+        );
+        const nativeEntryCount = selection.colors.entries.filter(
+          (entry) => entry.type === "native-gradient",
+        ).length;
+        const collection = await orchestrateNativeGradientCollection<
+          Parameters<typeof collectNativeGradientsFromProject>[0][number],
+          ReturnType<typeof collectNativeGradientsFromProject>[number],
+          PaletteCollectionItem,
+          PaletteDocument
+        >({
+          nativeSelectionStatus: selection.nativeGradients.status,
+          nativeEntryCount,
+          runtime: nativeRuntime,
+          entries: selection.colors.entries,
+          colors: selection.colors.colors,
+          descriptors: selection.nativeGradients.descriptors,
+          baseDocument,
+        }, {
+          nativeParser: collectNativeGradientsFromProject,
+          solidItem: (rgba) => ({
+            type: "color",
+            rgba: rgba as PaletteColor["rgba"],
+            preserveDuplicate: false,
+          }),
+          gradientItems: (gradient): readonly PaletteCollectionItem[] =>
+            layoutSettings.gradientCollectionMode === "gradient-slot"
+              ? [{ type: "gradient", gradient }]
+              : nativeGradientToPaletteColors(gradient).map((rgba) => ({
+                  type: "color",
+                  rgba,
+                  preserveDuplicate: true,
+                })),
+          buildDocument: (items) => addPaletteCollectionItems(baseDocument, items),
+          writePalette: (document) => savePalette(document, configRootRef.current),
+        });
+        if (!collection.allowed) {
+          setLastResult(
+            collection.reason === "invalid-selection"
+              ? "Native gradients require a clean saved project and static unlocked targets"
+              : collection.reason === "unsupported-platform"
+              ? "Native gradients are unavailable on this platform"
+              : "This After Effects version is not supported",
+          );
           return;
         }
-        phase = selection.nativeGradients.status === "ok" ? "gradient" : "selection";
-        const gradients =
-          selection.nativeGradients.status === "ok"
-            ? collectNativeGradientsFromProject(selection.nativeGradients.descriptors)
-            : [];
+        phase = collection.parseNativeGradients ? "gradient" : "selection";
+        collectedDocument = collection.nextDocument;
+        collectionPaletteWritten = collection.paletteWritten;
+        const gradients = collection.gradients;
         lastHostResultRef.current = { selection, gradients };
-        sourceItems = [];
-        selection.colors.entries.forEach((entry) => {
-          if (entry.type === "solid") {
-            const rgba = selection.colors.colors[entry.colorIndex];
-            if (!rgba) throw new Error("Solid color traversal index drifted");
-            sourceItems.push({ type: "color", rgba, preserveDuplicate: false });
-            return;
-          }
-          const gradient = gradients[entry.gradientIndex];
-          if (!gradient) throw new Error("Native gradient traversal index drifted");
-          if (layoutSettings.gradientCollectionMode === "gradient-slot") {
-            sourceItems.push({ type: "gradient", gradient });
-          } else {
-            nativeGradientToPaletteColors(gradient).forEach((rgba) =>
-              sourceItems.push({ type: "color", rgba, preserveDuplicate: true })
-            );
-          }
-        });
+        sourceItems = [...collection.sourceItems];
         skipped = selection.colors.unsupportedTextCount;
       } else {
         if (selection.image.status === "multiple-images") {
@@ -483,7 +523,7 @@ export const App = () => {
         return;
       }
 
-      const next = addPaletteCollectionItems(baseDocument, sourceItems);
+      const next = collectedDocument ?? addPaletteCollectionItems(baseDocument, sourceItems);
       const nextActiveColors = getActivePalette(next).colors;
       const addedCount = nextActiveColors.length - baseActiveColors.length;
       const addedGradientCount =
@@ -511,7 +551,7 @@ export const App = () => {
         );
         return;
       }
-      await savePalette(next, configRootRef.current);
+      if (!collectionPaletteWritten) await savePalette(next, configRootRef.current);
       paletteDocumentRef.current = next;
       paletteErrorRef.current = null;
       setPaletteDocument(next);
@@ -568,12 +608,14 @@ export const App = () => {
       const document = paletteDocumentRef.current;
       const extensionRoot = csi.getSystemPath("extension");
       const hostVersion = csi.hostEnvironment.appVersion;
+      const platform = getNativeGradientPlatform();
       const report = await applyActivePaletteNativeGradient(
         {
           ...input,
-          tempBasePath: getNativeGradientTempBasePath(),
+          tempBasePath: getNativeGradientTempBasePath(platform),
           templateRootPath: path.join(extensionRoot, "assets", "native-gradient"),
           hostVersion,
+          platform,
           includeDisabledTargets: layoutSettings.includeDisabledColors,
         },
         async (request) => {
