@@ -7,9 +7,19 @@ import {
 } from "@zimoby/ae-native-gradient";
 import { crypto, fs, os, path } from "../lib/cep/node.ts";
 import {
+  MAX_NATIVE_GRADIENT_DESCRIPTOR_PATH_DEPTH,
+  MAX_NATIVE_GRADIENT_DIAGNOSTIC_COUNT,
+  MAX_NATIVE_GRADIENT_DIAGNOSTIC_LENGTH,
+  MAX_NATIVE_GRADIENT_MATCH_NAME_LENGTH,
+  MAX_NATIVE_GRADIENT_TARGET_COUNT,
+  boundNativeGradientDiagnostic,
+  normalizeNativeGradientHostVersion,
+  resolveNativeGradientRuntime,
   resolveNativeGradientTemplateFamily,
+  type NativeGradientApplyResult,
   type NativeGradientApplyStatus,
 } from "../shared/native-gradient-contract.ts";
+export { resolveNativeGradientRuntime } from "../shared/native-gradient-contract.ts";
 
 export type PaletteRgba = readonly [number, number, number, number];
 
@@ -270,15 +280,19 @@ const removeRegularFileIfPresent = (filePath: string) => {
 };
 
 const cleanFailedPublication = (rootPath: string, tempPath: string, presetPath: string) => {
-  try {
-    removeRegularFileIfPresent(tempPath);
-  } catch {
-    // Preserve the primary publication error.
+  if (tempPath) {
+    try {
+      removeRegularFileIfPresent(tempPath);
+    } catch {
+      // Preserve the primary publication error.
+    }
   }
-  try {
-    removeRegularFileIfPresent(presetPath);
-  } catch {
-    // Preserve the primary publication error.
+  if (presetPath) {
+    try {
+      removeRegularFileIfPresent(presetPath);
+    } catch {
+      // Preserve the primary publication error.
+    }
   }
   try {
     fs.rmdirSync(rootPath);
@@ -326,15 +340,17 @@ export const createNativeGradientPreset = (options: NativeGradientPresetInput & 
     fail("publication-failed", `Could not create generated preset root: ${errorMessage(error)}`);
   }
 
-  const filename = expectedFilename(runToken, options.kind, gradient.colorStops.length);
-  const presetPath = path.join(rootPath, filename);
-  assertDirectChild(rootPath, presetPath, filename);
-  const tempName = `.${filename}.${randomHexToken(TEMP_TOKEN_BYTES)}.tmp`;
-  const tempPath = path.join(rootPath, tempName);
-  assertDirectChild(rootPath, tempPath, tempName);
-
+  let filename = "";
+  let presetPath = "";
+  let tempPath = "";
   let descriptor: number | null = null;
   try {
+    filename = expectedFilename(runToken, options.kind, gradient.colorStops.length);
+    presetPath = path.join(rootPath, filename);
+    assertDirectChild(rootPath, presetPath, filename);
+    const tempName = `.${filename}.${randomHexToken(TEMP_TOKEN_BYTES)}.tmp`;
+    tempPath = path.join(rootPath, tempName);
+    assertDirectChild(rootPath, tempPath, tempName);
     descriptor = fs.openSync(tempPath, "wx", 0o600);
     let offset = 0;
     while (offset < generated.bytes.byteLength) {
@@ -619,6 +635,10 @@ export const probeNativeGradientNodeCapabilities = (
         ? navigator.userAgent
         : "";
   const errors: string[] = [];
+  const addCapabilityDiagnostic = (value: unknown) => {
+    if (errors.length >= MAX_NATIVE_GRADIENT_DIAGNOSTIC_COUNT) return;
+    errors.push(boundNativeGradientDiagnostic(value));
+  };
   const fsAvailable = hasFunctions(fsModule, [
     "realpathSync",
     "statSync",
@@ -641,11 +661,11 @@ export const probeNativeGradientNodeCapabilities = (
   let renameAttempted = false;
   let renamePassed = false;
 
-  if (!processVersion) errors.push("process.version is unavailable");
-  if (!fsAvailable) errors.push("required fs capabilities are unavailable");
-  if (!pathAvailable) errors.push("required path capabilities are unavailable");
-  if (!cryptoAvailable) errors.push("required crypto capabilities are unavailable");
-  if (!renameAvailable) errors.push("fs.renameSync is unavailable");
+  if (!processVersion) addCapabilityDiagnostic("process.version is unavailable");
+  if (!fsAvailable) addCapabilityDiagnostic("required fs capabilities are unavailable");
+  if (!pathAvailable) addCapabilityDiagnostic("required path capabilities are unavailable");
+  if (!cryptoAvailable) addCapabilityDiagnostic("required crypto capabilities are unavailable");
+  if (!renameAvailable) addCapabilityDiagnostic("fs.renameSync is unavailable");
 
   if (errors.length === 0) {
     const activeFs = fsModule as typeof fs;
@@ -702,13 +722,13 @@ export const probeNativeGradientNodeCapabilities = (
       }
       renamePassed = true;
     } catch (error) {
-      errors.push(`rename probe failed: ${errorMessage(error)}`);
+      addCapabilityDiagnostic(`rename probe failed: ${errorMessage(error)}`);
     } finally {
       if (descriptor !== null) {
         try {
           activeFs.closeSync(descriptor);
         } catch (error) {
-          errors.push(`rename probe descriptor cleanup failed: ${errorMessage(error)}`);
+          addCapabilityDiagnostic(`rename probe descriptor cleanup failed: ${errorMessage(error)}`);
         }
       }
       for (const filePath of [sourcePath, destinationPath]) {
@@ -716,13 +736,13 @@ export const probeNativeGradientNodeCapabilities = (
         try {
           const status = activeFs.lstatSync(filePath);
           if (!status.isFile() || status.isSymbolicLink()) {
-            errors.push("rename probe cleanup refused a substituted file");
+            addCapabilityDiagnostic("rename probe cleanup refused a substituted file");
           } else {
             activeFs.unlinkSync(filePath);
           }
         } catch (error) {
           if (!isMissingPathError(error)) {
-            errors.push(`rename probe file cleanup failed: ${errorMessage(error)}`);
+            addCapabilityDiagnostic(`rename probe file cleanup failed: ${errorMessage(error)}`);
           }
         }
       }
@@ -730,7 +750,7 @@ export const probeNativeGradientNodeCapabilities = (
         try {
           activeFs.rmdirSync(rootPath);
         } catch (error) {
-          errors.push(`rename probe root cleanup failed: ${errorMessage(error)}`);
+          addCapabilityDiagnostic(`rename probe root cleanup failed: ${errorMessage(error)}`);
         }
       }
     }
@@ -765,6 +785,7 @@ export type NativeGradientHostPresetRecord = Readonly<{
 
 export type NativeGradientHostApplyRequest = Readonly<{
   schemaVersion: 1;
+  platform?: string;
   expectedHostVersion: string;
   stopCount: number;
   includeDisabledTargets: boolean;
@@ -793,6 +814,406 @@ export type NativeGradientRendererReport = Readonly<{
   errors: readonly string[];
 }>;
 
+const isFiniteNonNegativeInteger = (value: unknown): value is number =>
+  typeof value === "number" && Number.isInteger(value) && value >= 0;
+
+const NATIVE_GRADIENT_FILL_MATCH_NAME = "ADBE Vector Graphic - G-Fill";
+const NATIVE_GRADIENT_STROKE_MATCH_NAME = "ADBE Vector Graphic - G-Stroke";
+const NATIVE_GRADIENT_PAYLOAD_MATCH_NAME = "ADBE Vector Grad Colors";
+
+type NativeGradientWireState =
+  | "pre-undo-rejection"
+  | "post-undo-deterministic"
+  | "unknown-apply"
+  | "success"
+  | "finalization-only";
+
+const NATIVE_GRADIENT_WIRE_STATE: Readonly<
+  Record<NativeGradientApplyStatus, NativeGradientWireState>
+> = {
+  ok: "success",
+  "unsupported-platform": "pre-undo-rejection",
+  "unsupported-host-version": "pre-undo-rejection",
+  "host-version-drift": "pre-undo-rejection",
+  "invalid-request": "pre-undo-rejection",
+  "invalid-preset": "pre-undo-rejection",
+  "no-project": "pre-undo-rejection",
+  "no-active-comp": "pre-undo-rejection",
+  "no-selected-gradient": "pre-undo-rejection",
+  "ambiguous-selected-gradient": "pre-undo-rejection",
+  "unsupported-selected-gradient": "pre-undo-rejection",
+  "target-drift": "post-undo-deterministic",
+  "selection-snapshot-failed": "pre-undo-rejection",
+  "undo-open-failed": "post-undo-deterministic",
+  "selection-mutation-failed": "post-undo-deterministic",
+  "apply-unknown-completion": "unknown-apply",
+  "selection-restore-failed": "finalization-only",
+  "undo-close-failed": "finalization-only",
+  "finalization-failed": "finalization-only",
+};
+
+const isValidTarget = (
+  value: unknown,
+): value is NonNullable<NativeGradientApplyResult["target"]> => {
+  if (!value || typeof value !== "object") return false;
+  const target = value as Record<string, unknown>;
+  if (
+    !Array.isArray(target.propertyIndexPath) ||
+    !Array.isArray(target.matchNamePath) ||
+    target.propertyIndexPath.length === 0 ||
+    target.propertyIndexPath.length < 2 ||
+    target.propertyIndexPath.length > MAX_NATIVE_GRADIENT_DESCRIPTOR_PATH_DEPTH ||
+    target.propertyIndexPath.length !== target.matchNamePath.length
+  ) {
+    return false;
+  }
+  const expectedParentMatchName =
+    target.kind === "fill"
+      ? NATIVE_GRADIENT_FILL_MATCH_NAME
+      : target.kind === "stroke"
+        ? NATIVE_GRADIENT_STROKE_MATCH_NAME
+        : null;
+  return (
+    typeof target.compId === "number" && Number.isInteger(target.compId) && target.compId > 0 &&
+    typeof target.layerId === "number" && Number.isInteger(target.layerId) && target.layerId > 0 &&
+    typeof target.layerIndex === "number" && Number.isInteger(target.layerIndex) && target.layerIndex > 0 &&
+    (target.kind === "fill" || target.kind === "stroke") &&
+    target.propertyIndexPath.every((entry) => isFiniteNonNegativeInteger(entry) && entry > 0) &&
+    target.matchNamePath.every(
+      (entry) =>
+        typeof entry === "string" &&
+        entry.length > 0 &&
+        entry.length <= MAX_NATIVE_GRADIENT_MATCH_NAME_LENGTH,
+    ) &&
+    target.matchNamePath[target.matchNamePath.length - 2] === expectedParentMatchName &&
+    target.matchNamePath[target.matchNamePath.length - 1] === NATIVE_GRADIENT_PAYLOAD_MATCH_NAME
+  );
+};
+
+const hasConsistentTargetIdentity = (
+  targets: NativeGradientApplyResult["targets"],
+) => {
+  if (targets.length === 0) return true;
+  const expectedCompId = targets[0].compId;
+  for (let index = 0; index < targets.length; index += 1) {
+    const target = targets[index];
+    if (target.compId !== expectedCompId) return false;
+    for (let previousIndex = 0; previousIndex < index; previousIndex += 1) {
+      const previous = targets[previousIndex];
+      if (
+        (previous.layerId === target.layerId && previous.layerIndex !== target.layerIndex) ||
+        (previous.layerIndex === target.layerIndex && previous.layerId !== target.layerId)
+      ) {
+        return false;
+      }
+    }
+  }
+  return true;
+};
+
+const sameTarget = (left: unknown, right: unknown) => {
+  if (!isValidTarget(left) || !isValidTarget(right)) return false;
+  if (
+    left.compId !== right.compId ||
+    left.layerId !== right.layerId ||
+    left.layerIndex !== right.layerIndex ||
+    left.kind !== right.kind ||
+    left.propertyIndexPath.length !== right.propertyIndexPath.length
+  ) {
+    return false;
+  }
+  for (let index = 0; index < left.propertyIndexPath.length; index += 1) {
+    if (
+      left.propertyIndexPath[index] !== right.propertyIndexPath[index] ||
+      left.matchNamePath[index] !== right.matchNamePath[index]
+    ) {
+      return false;
+    }
+  }
+  return true;
+};
+
+const readWireCount = (
+  record: Record<string, unknown>,
+  primaryName: string,
+  aliasName: string,
+) => {
+  if (
+    !Object.prototype.hasOwnProperty.call(record, primaryName) ||
+    !Object.prototype.hasOwnProperty.call(record, aliasName)
+  ) {
+    return null;
+  }
+  const primary = record[primaryName];
+  const alias = record[aliasName];
+  if (!isFiniteNonNegativeInteger(primary)) return null;
+  if (!isFiniteNonNegativeInteger(alias) || alias !== primary) return null;
+  return primary;
+};
+
+const readWireIndex = (
+  record: Record<string, unknown>,
+  primaryName: string,
+  aliasName: string,
+  selectedCount: number,
+) => {
+  if (
+    !Object.prototype.hasOwnProperty.call(record, primaryName) ||
+    !Object.prototype.hasOwnProperty.call(record, aliasName)
+  ) {
+    return undefined;
+  }
+  const value = record[primaryName];
+  if (
+    value !== null &&
+    (!isFiniteNonNegativeInteger(value) || value >= selectedCount)
+  ) {
+    return undefined;
+  }
+  const alias = record[aliasName];
+  if (alias !== value) return undefined;
+  return value as number | null;
+};
+
+const hasPositiveSelectionEvidence = (
+  record: Record<string, unknown>,
+  targets: NativeGradientApplyResult["targets"],
+  selectedTargetCount: number,
+) =>
+  selectedTargetCount > 0 &&
+  targets.length === selectedTargetCount &&
+  record.target !== null &&
+  sameTarget(record.target, targets[0]);
+
+const hasNoSelectionEvidence = (
+  record: Record<string, unknown>,
+  targets: NativeGradientApplyResult["targets"],
+  selectedTargetCount: number,
+  skippedDisabledCount: number,
+  preservedStateCount: number,
+  failedTargetIndex: number | null,
+  unknownCompletionTargetIndex: number | null,
+  primaryStatus: NativeGradientApplyStatus,
+) =>
+  selectedTargetCount === 0 &&
+  targets.length === 0 &&
+  record.target === null &&
+  failedTargetIndex === null &&
+  unknownCompletionTargetIndex === null &&
+  (primaryStatus === "no-selected-gradient"
+    ? preservedStateCount === 0
+    : primaryStatus === "unsupported-selected-gradient"
+      ? preservedStateCount > 0 || skippedDisabledCount === 0
+      : skippedDisabledCount === 0 && preservedStateCount === 0);
+
+export const decodeNativeGradientApplyResult = (
+  value: unknown,
+  expectedHostVersion: unknown,
+): NativeGradientApplyResult | null => {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  const status = record.status;
+  const primaryStatus = record.primaryStatus;
+  if (
+    record.schemaVersion !== 1 ||
+    typeof status !== "string" ||
+    !Object.prototype.hasOwnProperty.call(NATIVE_GRADIENT_WIRE_STATE, status) ||
+    typeof primaryStatus !== "string" ||
+    !Object.prototype.hasOwnProperty.call(NATIVE_GRADIENT_WIRE_STATE, primaryStatus) ||
+    typeof record.hostVersion !== "string" ||
+    !Array.isArray(record.targets) ||
+    record.targets.length > MAX_NATIVE_GRADIENT_TARGET_COUNT ||
+    !record.targets.every(isValidTarget)
+  ) return null;
+  const normalizedExpectedHostVersion = normalizeNativeGradientHostVersion(expectedHostVersion);
+  const normalizedResultHostVersion = normalizeNativeGradientHostVersion(record.hostVersion);
+  if (
+    normalizedExpectedHostVersion === null ||
+    normalizedResultHostVersion === null ||
+    normalizedExpectedHostVersion !== normalizedResultHostVersion
+  ) return null;
+  const targets = record.targets as NativeGradientApplyResult["targets"];
+  const selectedTargetCount = readWireCount(record, "selectedTargetCount", "selectedPropertyCount");
+  const attemptedTargetCount = readWireCount(record, "attemptedTargetCount", "attemptedPropertyCount");
+  const appliedTargetCount = readWireCount(record, "appliedTargetCount", "appliedPropertyCount");
+  const skippedDisabledCount = readWireCount(record, "skippedDisabledCount", "skippedDisabledBranchCount");
+  const preservedStateCount = readWireCount(record, "preservedStateCount", "preservedPropertyCount");
+  if (
+    selectedTargetCount === null ||
+    attemptedTargetCount === null ||
+    appliedTargetCount === null ||
+    skippedDisabledCount === null ||
+    preservedStateCount === null ||
+    selectedTargetCount > MAX_NATIVE_GRADIENT_TARGET_COUNT ||
+    attemptedTargetCount > MAX_NATIVE_GRADIENT_TARGET_COUNT ||
+    appliedTargetCount > MAX_NATIVE_GRADIENT_TARGET_COUNT ||
+    skippedDisabledCount > MAX_NATIVE_GRADIENT_TARGET_COUNT ||
+    preservedStateCount > MAX_NATIVE_GRADIENT_TARGET_COUNT ||
+    targets.length !== selectedTargetCount ||
+    attemptedTargetCount > selectedTargetCount ||
+    appliedTargetCount > attemptedTargetCount
+  ) return null;
+  if (!hasConsistentTargetIdentity(targets)) return null;
+  const failedTargetIndex = readWireIndex(
+    record,
+    "failedTargetIndex",
+    "failedPropertyIndex",
+    selectedTargetCount,
+  );
+  const unknownCompletionTargetIndex = readWireIndex(
+    record,
+    "unknownCompletionTargetIndex",
+    "unknownCompletionPropertyIndex",
+    selectedTargetCount,
+  );
+  if (failedTargetIndex === undefined || unknownCompletionTargetIndex === undefined) return null;
+  if (failedTargetIndex !== null && unknownCompletionTargetIndex !== null) return null;
+  if (
+    (record.target === null && targets.length !== 0) ||
+    (record.target !== null &&
+      (targets.length === 0 || !sameTarget(record.target, targets[0])))
+  ) return null;
+  for (let leftIndex = 0; leftIndex < targets.length; leftIndex += 1) {
+    for (let rightIndex = leftIndex + 1; rightIndex < targets.length; rightIndex += 1) {
+      if (sameTarget(targets[leftIndex], targets[rightIndex])) return null;
+    }
+  }
+  const booleans = [
+    "mutationAttempted",
+    "applyCompleted",
+    "undoGroupOpened",
+    "undoGroupCloseAttempted",
+    "undoGroupClosed",
+    "selectionRestoreAttempted",
+    "selectionRestored",
+  ];
+  if (!booleans.every((name) => typeof record[name] === "boolean")) return null;
+  if (record.undoGroupClosed && (!record.undoGroupOpened || !record.undoGroupCloseAttempted)) return null;
+  if (record.undoGroupCloseAttempted && !record.undoGroupOpened) return null;
+  if (record.selectionRestored && !record.selectionRestoreAttempted) return null;
+  if (record.selectionRestoreAttempted && !record.undoGroupOpened) return null;
+  if (record.undoGroupOpened && (!record.selectionRestoreAttempted || !record.undoGroupCloseAttempted)) return null;
+
+  const applyError = record.applyError;
+  if (
+    applyError !== null &&
+    (!applyError ||
+      typeof applyError !== "object" ||
+      !Object.prototype.hasOwnProperty.call(applyError, "line") ||
+      !Object.prototype.hasOwnProperty.call(applyError, "number") ||
+      typeof (applyError as any).name !== "string" ||
+      typeof (applyError as any).message !== "string" ||
+      (applyError as any).name.length > MAX_NATIVE_GRADIENT_DIAGNOSTIC_LENGTH ||
+      (applyError as any).message.length > MAX_NATIVE_GRADIENT_DIAGNOSTIC_LENGTH ||
+      ((applyError as any).line !== null &&
+        (typeof (applyError as any).line !== "number" || !Number.isFinite((applyError as any).line))) ||
+      ((applyError as any).number !== null &&
+        (typeof (applyError as any).number !== "number" || !Number.isFinite((applyError as any).number))))
+  ) return null;
+
+  const primaryState = NATIVE_GRADIENT_WIRE_STATE[primaryStatus as NativeGradientApplyStatus];
+  if (primaryState === "finalization-only") return null;
+  const hostVersionIsSupported = resolveNativeGradientTemplateFamily(normalizedResultHostVersion) !== null;
+  if (
+    primaryStatus === "host-version-drift" ||
+    (primaryStatus === "unsupported-host-version" ? hostVersionIsSupported : !hostVersionIsSupported)
+  ) return null;
+  const hasUndo = record.undoGroupOpened;
+  const hasPositiveSelection = hasPositiveSelectionEvidence(record, targets, selectedTargetCount);
+  const hasNoSelection = hasNoSelectionEvidence(
+    record,
+    targets,
+    selectedTargetCount,
+    skippedDisabledCount,
+    preservedStateCount,
+    failedTargetIndex,
+    unknownCompletionTargetIndex,
+    primaryStatus as NativeGradientApplyStatus,
+  );
+  if (primaryState === "pre-undo-rejection") {
+    if (
+      !hasNoSelection ||
+      hasUndo ||
+      record.mutationAttempted ||
+      record.applyCompleted ||
+      attemptedTargetCount !== 0 ||
+      appliedTargetCount !== 0 ||
+      record.applyError !== null
+    ) return null;
+  } else if (primaryState === "post-undo-deterministic") {
+    if (!hasPositiveSelection) return null;
+    if (primaryStatus === "undo-open-failed") {
+      if (
+        hasUndo ||
+        record.mutationAttempted ||
+        record.applyCompleted ||
+        attemptedTargetCount !== 0 ||
+        appliedTargetCount !== 0 ||
+        failedTargetIndex !== null ||
+        unknownCompletionTargetIndex !== null ||
+        record.applyError !== null
+      ) return null;
+    } else if (!hasUndo) {
+      if (
+        primaryStatus !== "target-drift" ||
+        record.mutationAttempted ||
+        record.applyCompleted ||
+        attemptedTargetCount !== 0 ||
+        appliedTargetCount !== 0 ||
+        failedTargetIndex === null ||
+        unknownCompletionTargetIndex !== null ||
+        record.applyError !== null
+      ) return null;
+    } else if (
+      record.applyCompleted ||
+      attemptedTargetCount !== appliedTargetCount ||
+      failedTargetIndex === null ||
+      failedTargetIndex !== attemptedTargetCount ||
+      attemptedTargetCount >= selectedTargetCount ||
+      record.mutationAttempted !== (attemptedTargetCount > 0) ||
+      unknownCompletionTargetIndex !== null ||
+      record.applyError !== null
+    ) return null;
+  } else if (primaryState === "unknown-apply") {
+    if (
+      !hasUndo ||
+      !hasPositiveSelection ||
+      !record.mutationAttempted ||
+      record.applyCompleted ||
+      attemptedTargetCount < 1 ||
+      appliedTargetCount !== attemptedTargetCount - 1 ||
+      unknownCompletionTargetIndex !== attemptedTargetCount - 1 ||
+      failedTargetIndex !== null ||
+      applyError === null ||
+      typeof applyError !== "object"
+    ) return null;
+  } else if (
+    primaryState === "success" &&
+    (!hasUndo ||
+      !hasPositiveSelection ||
+      !record.mutationAttempted ||
+      !record.applyCompleted ||
+      attemptedTargetCount !== selectedTargetCount ||
+      appliedTargetCount !== selectedTargetCount ||
+      failedTargetIndex !== null ||
+      unknownCompletionTargetIndex !== null ||
+      applyError !== null)
+  ) return null;
+
+  const expectedStatus =
+    !hasUndo
+      ? primaryStatus
+      : !record.selectionRestored && !record.undoGroupClosed
+        ? "finalization-failed"
+        : !record.selectionRestored
+          ? "selection-restore-failed"
+          : !record.undoGroupClosed
+            ? "undo-close-failed"
+            : primaryStatus;
+  if (status !== expectedStatus) return null;
+  return record as NativeGradientApplyResult;
+};
+
 export const nativeGradientResultMessage = (
   report: NativeGradientRendererReport,
   stopCount: number,
@@ -807,15 +1228,24 @@ export const nativeGradientResultMessage = (
           unknownCompletionTargetIndex?: unknown;
           skippedDisabledCount?: unknown;
           preservedStateCount?: unknown;
+          skippedDisabledBranchCount?: unknown;
+          preservedPropertyCount?: unknown;
         })
       : null;
   const appliedTargetCount =
     typeof hostRecord?.appliedTargetCount === "number" ? hostRecord.appliedTargetCount : 0;
-  const skippedTargetCount =
-    (typeof hostRecord?.skippedDisabledCount === "number"
-      ? hostRecord.skippedDisabledCount
-      : 0) +
-    (typeof hostRecord?.preservedStateCount === "number" ? hostRecord.preservedStateCount : 0);
+  const skippedDisabledBranchCount =
+    typeof hostRecord?.skippedDisabledBranchCount === "number"
+      ? hostRecord.skippedDisabledBranchCount
+      : typeof hostRecord?.skippedDisabledCount === "number"
+        ? hostRecord.skippedDisabledCount
+        : 0;
+  const preservedPropertyCount =
+    typeof hostRecord?.preservedPropertyCount === "number"
+      ? hostRecord.preservedPropertyCount
+      : typeof hostRecord?.preservedStateCount === "number"
+        ? hostRecord.preservedStateCount
+        : 0;
   const unknownCompletionMessage =
     typeof hostRecord?.unknownCompletionTargetIndex === "number" &&
     typeof hostRecord?.selectedTargetCount === "number"
@@ -843,6 +1273,7 @@ export const nativeGradientResultMessage = (
       typeof hostRecord?.primaryStatus === "string" ? hostRecord.primaryStatus : hostStatus;
     const messages: Partial<Record<NativeGradientApplyStatus, string>> = {
       "unsupported-host-version": "This After Effects version is not supported",
+      "unsupported-platform": "Native gradients are unavailable on this platform",
       "host-version-drift": "After Effects changed version before the gradient could be applied",
       "invalid-request": "Could not prepare the native gradient request",
       "invalid-preset": "Could not validate the temporary gradient preset",
@@ -876,30 +1307,26 @@ export const nativeGradientResultMessage = (
     }
   }
 
-  if (
-    skippedTargetCount > 0 &&
-    (report.primaryStatus === "ok" || hostRecord?.primaryStatus === "ok")
-  ) {
-    message = `${message}; skipped ${skippedTargetCount}`;
+  if (report.primaryStatus === "ok" || hostRecord?.primaryStatus === "ok") {
+    if (skippedDisabledBranchCount > 0) {
+      message = `${message}; skipped ${skippedDisabledBranchCount} disabled branches`;
+    }
+    if (preservedPropertyCount > 0) {
+      message = `${message}; preserved ${preservedPropertyCount} properties`;
+    }
   }
 
-  if (report.status === "host-finalization-failed") {
-    const hostRecord =
-      report.hostResult && typeof report.hostResult === "object"
-        ? (report.hostResult as { status?: unknown })
-        : null;
-    const finalizationMessages: Partial<Record<NativeGradientApplyStatus, string>> = {
-      "selection-restore-failed": "After Effects selection restoration also failed",
-      "undo-close-failed": "After Effects Undo finalization also failed",
-      "finalization-failed": "After Effects selection and Undo finalization also failed",
-    };
-    const hostStatus = hostRecord?.status;
-    if (
-      typeof hostStatus === "string" &&
-      finalizationMessages[hostStatus as NativeGradientApplyStatus]
-    ) {
-      return `${message}; ${finalizationMessages[hostStatus as NativeGradientApplyStatus]}`;
-    }
+  const finalizationMessages: Partial<Record<NativeGradientApplyStatus, string>> = {
+    "selection-restore-failed": "After Effects selection restoration also failed",
+    "undo-close-failed": "After Effects Undo finalization also failed",
+    "finalization-failed": "After Effects selection and Undo finalization also failed",
+  };
+  const finalizationMessage =
+    typeof hostRecord?.status === "string"
+      ? finalizationMessages[hostRecord.status as NativeGradientApplyStatus]
+      : undefined;
+  if (finalizationMessage && message.indexOf(finalizationMessage) < 0) {
+    message = `${message}; ${finalizationMessage}`;
   }
   if (
     report.status !== "cleanup-failed" &&
@@ -909,9 +1336,6 @@ export const nativeGradientResultMessage = (
     return `${message}; temporary presets preserved for diagnosis`;
   }
   if (report.status !== "cleanup-failed") return message;
-  if (report.primaryStatus === "ok") {
-    return "Gradient apply finished, but temporary preset cleanup failed";
-  }
   return `${message}; temporary preset cleanup also failed`;
 };
 
@@ -938,6 +1362,7 @@ export const applyActivePaletteNativeGradient = async (
     tempBasePath: string;
     templateRootPath: string;
     hostVersion: string;
+    platform?: string;
     includeDisabledTargets: boolean;
   }>,
   invokeHost: (request: NativeGradientHostApplyRequest) => Promise<unknown>,
@@ -947,16 +1372,22 @@ export const applyActivePaletteNativeGradient = async (
     NativeGradientCleanupResult & { kind: GradientFfxKind; error: string | null }
   > = [];
   const errors: string[] = [];
+  const addDiagnostic = (error: unknown) => {
+    if (errors.length >= MAX_NATIVE_GRADIENT_DIAGNOSTIC_COUNT) return;
+    errors.push(boundNativeGradientDiagnostic(errorMessage(error)));
+  };
   let primaryStatus: NativeGradientRendererStatus = "preset-generation-failed";
   let status: NativeGradientRendererStatus = "preset-generation-failed";
   let hostCallAttempted = false;
   let hostResult: unknown = null;
 
-  const templateFamily = resolveNativeGradientTemplateFamily(options.hostVersion);
-  if (!templateFamily) {
+  const runtime = resolveNativeGradientRuntime(options.platform, options.hostVersion);
+  if (!runtime.supported) {
     hostResult = {
-      status: "unsupported-host-version",
-      primaryStatus: "unsupported-host-version",
+      schemaVersion: 1,
+      status: runtime.reason,
+      primaryStatus: runtime.reason,
+      platform: runtime.platform,
       hostVersion: options.hostVersion,
     };
     return {
@@ -969,6 +1400,7 @@ export const applyActivePaletteNativeGradient = async (
       errors,
     };
   }
+  const templateFamily = runtime.templateFamily;
   const templatePaths: Readonly<Record<GradientFfxKind, string>> = {
     fill: path.join(options.templateRootPath, templateFamily, "fill-template.ffx"),
     stroke: path.join(options.templateRootPath, templateFamily, "stroke-template.ffx"),
@@ -990,6 +1422,7 @@ export const applyActivePaletteNativeGradient = async (
     }
     const request: NativeGradientHostApplyRequest = {
       schemaVersion: 1,
+      platform: runtime.platform,
       expectedHostVersion: options.hostVersion,
       stopCount: gradient.colorStops.length,
       includeDisabledTargets: options.includeDisabledTargets,
@@ -1001,20 +1434,17 @@ export const applyActivePaletteNativeGradient = async (
     hostCallAttempted = true;
     try {
       hostResult = await invokeHost(request);
-      const hostRecord =
-        hostResult && typeof hostResult === "object"
-          ? (hostResult as { status?: unknown; primaryStatus?: unknown })
-          : null;
-      const hostStatus = hostRecord?.status;
-      const hostPrimaryStatus =
-        typeof hostRecord?.primaryStatus === "string" ? hostRecord.primaryStatus : hostStatus;
-      if (hostStatus === "ok") {
+      const decoded = decodeNativeGradientApplyResult(hostResult, options.hostVersion);
+      if (!decoded) {
+        primaryStatus = "host-unknown-completion";
+        status = "host-unknown-completion";
+      } else if (decoded.status === "ok") {
         primaryStatus = "ok";
         status = "ok";
-      } else if (hostPrimaryStatus === "ok") {
+      } else if (decoded.primaryStatus === "ok") {
         primaryStatus = "ok";
         status = "host-finalization-failed";
-      } else if (hostPrimaryStatus === "apply-unknown-completion") {
+      } else if (decoded.primaryStatus === "apply-unknown-completion") {
         primaryStatus = "host-unknown-completion";
         status = "host-unknown-completion";
       } else {
@@ -1024,10 +1454,10 @@ export const applyActivePaletteNativeGradient = async (
     } catch (error) {
       primaryStatus = "host-call-unknown-completion";
       status = "host-call-unknown-completion";
-      errors.push(errorMessage(error));
+      addDiagnostic(error);
     }
   } catch (error) {
-    errors.push(errorMessage(error));
+    addDiagnostic(error);
   } finally {
     for (let index = 0; index < generated.length; index += 1) {
       const lease = generated[index];
@@ -1040,8 +1470,8 @@ export const applyActivePaletteNativeGradient = async (
           : cleanupNativeGradientPreset(lease);
         cleanup.push({ kind: lease.kind, ...result, error: null });
       } catch (error) {
-        const message = errorMessage(error);
-        errors.push(message);
+        const message = boundNativeGradientDiagnostic(errorMessage(error));
+        addDiagnostic(message);
         cleanup.push({
           kind: lease.kind,
           removed: false,

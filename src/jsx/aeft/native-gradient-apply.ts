@@ -14,11 +14,22 @@ import {
   selectionScopeKey,
 } from "./selection-scope";
 import {
+  MAX_NATIVE_GRADIENT_DESCRIPTOR_PATH_DEPTH,
+  MAX_NATIVE_GRADIENT_DIAGNOSTIC_LENGTH,
+  MAX_NATIVE_GRADIENT_MATCH_NAME_LENGTH,
+  MAX_NATIVE_GRADIENT_TARGET_COUNT,
   normalizeNativeGradientHostVersion,
   resolveNativeGradientTemplateFamily,
   type NativeGradientApplyStatus,
 } from "../../js/shared/native-gradient-contract.ts";
-export type { NativeGradientApplyStatus } from "../../js/shared/native-gradient-contract.ts";
+import type {
+  NativeGradientApplyResult,
+  NativeGradientApplyTarget,
+} from "../../js/shared/native-gradient-contract.ts";
+export type {
+  NativeGradientApplyResult,
+  NativeGradientApplyStatus,
+} from "../../js/shared/native-gradient-contract.ts";
 
 export type NativeGradientPresetRecord = {
   runToken: string;
@@ -31,6 +42,7 @@ export type NativeGradientPresetRecord = {
 
 export type NativeGradientApplyRequest = {
   schemaVersion: 1;
+  platform?: string;
   expectedHostVersion: string;
   stopCount: number;
   includeDisabledTargets: boolean;
@@ -38,43 +50,6 @@ export type NativeGradientApplyRequest = {
     fill: NativeGradientPresetRecord;
     stroke: NativeGradientPresetRecord;
   };
-};
-
-export type NativeGradientApplyTarget = {
-  compId: number;
-  layerId: number;
-  layerIndex: number;
-  kind: NativeGradientKind;
-  propertyIndexPath: number[];
-  matchNamePath: string[];
-};
-
-export type NativeGradientApplyResult = {
-  status: NativeGradientApplyStatus;
-  primaryStatus: NativeGradientApplyStatus;
-  hostVersion: string;
-  target: NativeGradientApplyTarget | null;
-  targets: NativeGradientApplyTarget[];
-  selectedTargetCount: number;
-  attemptedTargetCount: number;
-  appliedTargetCount: number;
-  failedTargetIndex: number | null;
-  unknownCompletionTargetIndex: number | null;
-  skippedDisabledCount: number;
-  preservedStateCount: number;
-  mutationAttempted: boolean;
-  applyCompleted: boolean;
-  undoGroupOpened: boolean;
-  undoGroupCloseAttempted: boolean;
-  undoGroupClosed: boolean;
-  selectionRestoreAttempted: boolean;
-  selectionRestored: boolean;
-  applyError: {
-    name: string;
-    message: string;
-    line: number | null;
-    number: number | null;
-  } | null;
 };
 
 type ResolvedTarget = {
@@ -101,7 +76,6 @@ const STROKE_MATCH_NAME = "ADBE Vector Graphic - G-Stroke";
 const PAYLOAD_MATCH_NAME = "ADBE Vector Grad Colors";
 const TOKEN_PATTERN = /^[A-F0-9]{32}$/;
 const MAX_PRESET_BYTES = 2 * 1024 * 1024;
-const MAX_APPLY_ERROR_TEXT = 1024;
 
 const isPositiveInteger = (value: any) =>
   typeof value === "number" && isFinite(value) && value > 0 && Math.floor(value) === value;
@@ -136,18 +110,26 @@ const isSameLayerSlot = (left: any, right: any) => {
 };
 
 const resultFor = (hostVersion: string): NativeGradientApplyResult => ({
+  schemaVersion: 1,
   status: "invalid-request",
   primaryStatus: "invalid-request",
   hostVersion,
   target: null,
   targets: [],
   selectedTargetCount: 0,
+  selectedPropertyCount: 0,
   attemptedTargetCount: 0,
+  attemptedPropertyCount: 0,
   appliedTargetCount: 0,
+  appliedPropertyCount: 0,
   failedTargetIndex: null,
+  failedPropertyIndex: null,
   unknownCompletionTargetIndex: null,
+  unknownCompletionPropertyIndex: null,
   skippedDisabledCount: 0,
+  skippedDisabledBranchCount: 0,
   preservedStateCount: 0,
+  preservedPropertyCount: 0,
   mutationAttempted: false,
   applyCompleted: false,
   undoGroupOpened: false,
@@ -162,7 +144,7 @@ const boundedErrorText = (value: any) => {
   try {
     return String(value === undefined || value === null ? "" : value).substring(
       0,
-      MAX_APPLY_ERROR_TEXT
+      MAX_NATIVE_GRADIENT_DIAGNOSTIC_LENGTH
     );
   } catch (_error) {
     return "";
@@ -192,6 +174,25 @@ const failBeforeMutation = (
   result.status = status;
   result.primaryStatus = status;
   return result;
+};
+
+const clearSelectionEvidence = (result: NativeGradientApplyResult) => {
+  result.target = null;
+  result.targets.length = 0;
+  result.selectedTargetCount = 0;
+  result.selectedPropertyCount = 0;
+  result.attemptedTargetCount = 0;
+  result.attemptedPropertyCount = 0;
+  result.appliedTargetCount = 0;
+  result.appliedPropertyCount = 0;
+  result.failedTargetIndex = null;
+  result.failedPropertyIndex = null;
+  result.unknownCompletionTargetIndex = null;
+  result.unknownCompletionPropertyIndex = null;
+  result.skippedDisabledCount = 0;
+  result.skippedDisabledBranchCount = 0;
+  result.preservedStateCount = 0;
+  result.preservedPropertyCount = 0;
 };
 
 const canonicalFolderPath = (pathValue: string) => {
@@ -311,6 +312,7 @@ const isValidRequestEnvelope = (request: any) =>
     request &&
     typeof request === "object" &&
     request.schemaVersion === 1 &&
+    (request.platform === undefined || typeof request.platform === "string") &&
     typeof request.expectedHostVersion === "string" &&
     request.expectedHostVersion.length > 0 &&
     typeof request.includeDisabledTargets === "boolean" &&
@@ -349,6 +351,23 @@ type ResolvedTargetState = {
   preservedStateCount: number;
 };
 
+const descriptorWithinLimits = (descriptor: NativeGradientApplyTarget) => {
+  if (
+    descriptor.propertyIndexPath.length === 0 ||
+    descriptor.propertyIndexPath.length > MAX_NATIVE_GRADIENT_DESCRIPTOR_PATH_DEPTH ||
+    descriptor.propertyIndexPath.length !== descriptor.matchNamePath.length
+  ) {
+    return false;
+  }
+  for (let index = 0; index < descriptor.matchNamePath.length; index += 1) {
+    const matchName = descriptor.matchNamePath[index];
+    if (matchName.length === 0 || matchName.length > MAX_NATIVE_GRADIENT_MATCH_NAME_LENGTH) {
+      return false;
+    }
+  }
+  return true;
+};
+
 const appendResolvedTarget = (
   parent: any,
   payload: any,
@@ -378,6 +397,10 @@ const appendResolvedTarget = (
     for (let keyIndex = 0; keyIndex < state.keys.length; keyIndex += 1) {
       if (state.keys[keyIndex] === key) return;
     }
+    if (state.keys.length >= MAX_NATIVE_GRADIENT_TARGET_COUNT) {
+      state.invalid = true;
+      return;
+    }
     state.keys.push(key);
 
     if (
@@ -385,22 +408,34 @@ const appendResolvedTarget = (
       payload.numKeys !== 0 ||
       payload.expressionEnabled !== false
     ) {
+      if (state.preservedStateCount >= MAX_NATIVE_GRADIENT_TARGET_COUNT) {
+        state.invalid = true;
+        return;
+      }
       state.preservedStateCount += 1;
       return;
     }
 
+    const descriptor = {
+      compId: activeItem.id,
+      layerId: layer.id,
+      layerIndex: layer.index,
+      kind,
+      propertyIndexPath: path.propertyIndexPath,
+      matchNamePath: path.matchNamePath,
+    } satisfies NativeGradientApplyTarget;
+    if (
+      state.targets.length >= MAX_NATIVE_GRADIENT_TARGET_COUNT ||
+      !descriptorWithinLimits(descriptor)
+    ) {
+      state.invalid = true;
+      return;
+    }
     state.targets.push({
       layer,
       parent,
       payload,
-      descriptor: {
-        compId: activeItem.id,
-        layerId: layer.id,
-        layerIndex: layer.index,
-        kind,
-        propertyIndexPath: path.propertyIndexPath,
-        matchNamePath: path.matchNamePath,
-      },
+      descriptor,
     });
   } catch (_error) {
     state.invalid = true;
@@ -425,6 +460,10 @@ const collectResolvedTargets = (
     !includeDisabledTargets &&
     isSelectionBranchDisabled(property)
   ) {
+    if (state.skippedDisabledCount >= MAX_NATIVE_GRADIENT_TARGET_COUNT) {
+      state.invalid = true;
+      return;
+    }
     state.skippedDisabledCount += 1;
     return;
   }
@@ -436,6 +475,10 @@ const collectResolvedTargets = (
   }
   for (let index = 0; index < state.visitedKeys.length; index += 1) {
     if (state.visitedKeys[index] === visitedKey) return;
+  }
+  if (state.visitedKeys.length >= MAX_NATIVE_GRADIENT_TARGET_COUNT) {
+    state.invalid = true;
+    return;
   }
   state.visitedKeys.push(visitedKey);
 
@@ -525,10 +568,15 @@ const buildSelectionPath = (layer: any, property: any): PropertyPath | null => {
       for (let index = 0; index < visited.length; index += 1) {
         if (visited[index] === current) return null;
       }
-      if (visited.length >= 128) return null;
+      if (visited.length >= MAX_NATIVE_GRADIENT_DESCRIPTOR_PATH_DEPTH) return null;
       visited.push(current);
 
-      if (!isPositiveInteger(current.propertyIndex) || typeof current.matchName !== "string") {
+      if (
+        !isPositiveInteger(current.propertyIndex) ||
+        typeof current.matchName !== "string" ||
+        current.matchName.length === 0 ||
+        current.matchName.length > MAX_NATIVE_GRADIENT_MATCH_NAME_LENGTH
+      ) {
         return null;
       }
       propertyIndexPath.unshift(current.propertyIndex);
@@ -567,6 +615,7 @@ const captureSelection = (activeItem: any): LayerSelectionSnapshot[] | null => {
       }
       const selectedProperties = layer.selectedProperties;
       if (!selectedProperties || typeof selectedProperties.length !== "number") return null;
+      if (selectedProperties.length > MAX_NATIVE_GRADIENT_TARGET_COUNT) return null;
       const properties: PropertyPath[] = [];
       for (let offset = 0; offset < selectedProperties.length; offset += 1) {
         const path = buildSelectionPath(layer, selectedProperties[offset]);
@@ -763,6 +812,9 @@ export const applyNativeGradientPresetToSelectedTarget = (
   if (!isValidRequestEnvelope(request)) {
     return failBeforeMutation(result, "invalid-request");
   }
+  if (request.platform !== undefined && request.platform !== "darwin") {
+    return failBeforeMutation(result, "unsupported-platform");
+  }
   if (
     normalizeNativeGradientHostVersion(request.expectedHostVersion) !==
     normalizeNativeGradientHostVersion(hostVersion)
@@ -787,9 +839,15 @@ export const applyNativeGradientPresetToSelectedTarget = (
 
   const selected = resolveSelectedTargets(activeItem, request.includeDisabledTargets);
   result.selectedTargetCount = selected.targets.length;
+  result.selectedPropertyCount = selected.targets.length;
   result.skippedDisabledCount = selected.skippedDisabledCount;
+  result.skippedDisabledBranchCount = selected.skippedDisabledCount;
   result.preservedStateCount = selected.preservedStateCount;
-  if (selected.invalid) return failBeforeMutation(result, "unsupported-selected-gradient");
+  result.preservedPropertyCount = selected.preservedStateCount;
+  if (selected.invalid) {
+    clearSelectionEvidence(result);
+    return failBeforeMutation(result, "unsupported-selected-gradient");
+  }
   if (selected.targets.length === 0) {
     return failBeforeMutation(
       result,
@@ -804,14 +862,19 @@ export const applyNativeGradientPresetToSelectedTarget = (
     result.targets.push(selected.targets[index].descriptor);
   }
   const snapshot = captureSelection(activeItem);
-  if (!snapshot) return failBeforeMutation(result, "selection-snapshot-failed");
+  if (!snapshot) {
+    clearSelectionEvidence(result);
+    return failBeforeMutation(result, "selection-snapshot-failed");
+  }
   if (!selectionMatchesSnapshot(activeItem, snapshot)) {
+    clearSelectionEvidence(result);
     return failBeforeMutation(result, "selection-snapshot-failed");
   }
   for (let index = 0; index < selected.targets.length; index += 1) {
     const target = reResolveTarget(activeItem, selected.targets[index].descriptor);
     if (!target) {
       result.failedTargetIndex = index;
+      result.failedPropertyIndex = index;
       return failBeforeMutation(result, "target-drift");
     }
   }
@@ -854,9 +917,11 @@ export const applyNativeGradientPresetToSelectedTarget = (
         result.mutationAttempted = true;
         currentApplyAttempted = true;
         result.attemptedTargetCount += 1;
+        result.attemptedPropertyCount = result.attemptedTargetCount;
         target.layer.applyPreset(presetFiles[target.descriptor.kind]);
         currentApplyAttempted = false;
         result.appliedTargetCount += 1;
+        result.appliedPropertyCount = result.appliedTargetCount;
       }
       result.applyCompleted = true;
       result.primaryStatus = "ok";
@@ -864,8 +929,10 @@ export const applyNativeGradientPresetToSelectedTarget = (
       if (currentApplyAttempted) {
         result.applyError = captureApplyError(error);
         result.unknownCompletionTargetIndex = currentTargetIndex;
+        result.unknownCompletionPropertyIndex = currentTargetIndex;
       } else {
         result.failedTargetIndex = currentTargetIndex;
+        result.failedPropertyIndex = currentTargetIndex;
       }
       result.primaryStatus = currentTargetDrifted
         ? "target-drift"
