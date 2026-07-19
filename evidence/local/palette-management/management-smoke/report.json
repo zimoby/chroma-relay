@@ -1,0 +1,182 @@
+{
+  "capturedAt": "2026-07-18T00:32:18.614Z",
+  "passed": true,
+  "operations": [
+    "create",
+    "empty-strip-hidden (no write)",
+    "add-default-black",
+    "edit-new-color",
+    "rename",
+    "select",
+    "drag-cancel (no write)",
+    "drag-reorder-color",
+    "expand+format-switch (no write)",
+    "invalid-hex (no write)",
+    "update-color-hex",
+    "remove-color",
+    "select",
+    "two-step-delete",
+    "export-cancel (no-op)",
+    "import-cancel (no-op)",
+    "export-portable (no palette write)",
+    "export-extension-collision (no-op)",
+    "import-palette",
+    "two-step-delete-imported"
+  ],
+  "finalDocument": {
+    "schemaVersion": 2,
+    "revision": 12,
+    "activePaletteId": "palette-default",
+    "palettes": [
+      {
+        "id": "palette-default",
+        "name": "Palette 1",
+        "colors": [
+          {
+            "id": "a",
+            "rgba": [
+              0.2,
+              0.4,
+              0.6,
+              0.5019607843137255
+            ]
+          },
+          {
+            "id": "c",
+            "rgba": [
+              0.2,
+              0.35,
+              0.95,
+              0.5
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "mainState": {
+    "paletteRevision": 12,
+    "palette": [
+      {
+        "id": "a",
+        "rgba": [
+          0.2,
+          0.4,
+          0.6,
+          0.5019607843137255
+        ],
+        "css": "rgba(51, 102, 153, 0.5019607843137255)"
+      },
+      {
+        "id": "c",
+        "rgba": [
+          0.2,
+          0.35,
+          0.95,
+          0.5
+        ],
+        "css": "rgba(51, 89, 242, 0.5)"
+      }
+    ],
+    "activePalette": {
+      "id": "palette-default",
+      "name": "Palette 1"
+    },
+    "palettes": [
+      {
+        "id": "palette-default",
+        "name": "Palette 1",
+        "colorCount": 2
+      }
+    ],
+    "paletteError": null,
+    "settings": {
+      "available": true,
+      "schemaVersion": 3,
+      "revision": 0,
+      "layoutMode": "stretch",
+      "swatchSize": 32,
+      "includeDisabledColors": false,
+      "extractionPreset": "balanced",
+      "error": null
+    },
+    "activeOrientation": "vertical",
+    "pendingHostAction": null,
+    "pendingPaletteMutation": false,
+    "drag": null,
+    "removeMode": false,
+    "lastHostResult": null,
+    "lastResult": "Palette deleted",
+    "fixtureViewport": null,
+    "designState": "default"
+  },
+  "settingsState": {
+    "paletteRevision": 12,
+    "palette": [
+      {
+        "id": "a",
+        "css": "rgba(51, 102, 153, 0.5019607843137255)"
+      },
+      {
+        "id": "c",
+        "css": "rgba(51, 89, 242, 0.5)"
+      }
+    ],
+    "palettes": [
+      {
+        "id": "palette-default",
+        "name": "Palette 1",
+        "colorCount": 2,
+        "active": true
+      }
+    ],
+    "activePalette": {
+      "id": "palette-default",
+      "name": "Palette 1"
+    },
+    "paletteError": null,
+    "settings": {
+      "available": true,
+      "schemaVersion": 3,
+      "revision": 0,
+      "layoutMode": "stretch",
+      "swatchSize": 32,
+      "includeDisabledColors": false,
+      "extractionPreset": "balanced"
+    },
+    "activeTab": "palettes",
+    "pendingRequestId": null,
+    "expandedColorId": null,
+    "editorFormat": "hex",
+    "editorError": null,
+    "armedDeleteId": null,
+    "colorDrag": null,
+    "activeOrientation": null,
+    "pendingHostAction": null,
+    "lastResult": "Palette deleted",
+    "fixtureViewport": null
+  },
+  "counters": {
+    "main": {
+      "diskWrites": 12,
+      "emittedEvents": 12,
+      "receivedEvents": 12,
+      "hostCalls": 0
+    },
+    "settings": {
+      "diskWrites": 0,
+      "emittedEvents": 12,
+      "receivedEvents": 12,
+      "hostCalls": 0
+    }
+  },
+  "temporaryRoot": "/tmp/chroma-relay-management-9139-1784334731428",
+  "screenshots": [
+    "empty-palette.png",
+    "added-black-color.png",
+    "expanded-editor.png",
+    "armed-delete.png",
+    "imported-palette.png",
+    "final-settings.png"
+  ]
+}

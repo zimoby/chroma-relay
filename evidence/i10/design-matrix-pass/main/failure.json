@@ -1,0 +1,38 @@
+{
+  "capturedAt": "2026-07-17T11:13:09.078Z",
+  "design": "seam",
+  "panel": {
+    "page": "main",
+    "port": 8198,
+    "extensionId": "com.zimoby.chroma-relay.main",
+    "pageSuffix": "/main/index.html"
+  },
+  "target": {
+    "description": "",
+    "devtoolsFrontendUrl": "/devtools/inspector.html?ws=127.0.0.1:8198/devtools/page/C95D8F46F0B7B42EAEF3EE60B4ADEC33",
+    "id": "C95D8F46F0B7B42EAEF3EE60B4ADEC33",
+    "title": "Chroma Relay — Main",
+    "type": "page",
+    "url": "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/main/index.html",
+    "webSocketDebuggerUrl": "ws://127.0.0.1:8198/devtools/page/C95D8F46F0B7B42EAEF3EE60B4ADEC33"
+  },
+  "error": "Error: Interaction preview is incomplete\n    at capturePanel (file:///Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/scripts/cep-design-capture.mjs:341:17)\n    at async file:///Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/scripts/cep-design-capture.mjs:438:16",
+  "consoleEvidence": {
+    "console": [
+      {
+        "type": "log",
+        "values": [
+          "/Users/REDACTED/Library/Application Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/jsx/index.js"
+        ]
+      },
+      {
+        "type": "info",
+        "values": [
+          "[Chroma Relay][I11][main] loaded"
+        ]
+      }
+    ],
+    "exceptions": [],
+    "logs": []
+  }
+}

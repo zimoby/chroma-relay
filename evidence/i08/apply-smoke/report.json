@@ -1,0 +1,223 @@
+{
+  "capturedAt": "2026-07-17T11:49:56.312Z",
+  "passed": true,
+  "mode": "apply",
+  "temporaryRoot": "/private/tmp/chroma-relay-i08-apply",
+  "initialDocument": {
+    "schemaVersion": 1,
+    "revision": 0,
+    "colors": [
+      {
+        "id": "apply-exact",
+        "rgba": [
+          0.75,
+          0.5,
+          0.25,
+          1
+        ]
+      }
+    ]
+  },
+  "rapidAccepted": [
+    true,
+    true
+  ],
+  "appliedSnapshot": {
+    "state": {
+      "palette": [
+        {
+          "id": "apply-exact",
+          "rgba": [
+            0.75,
+            0.5,
+            0.25,
+            1
+          ],
+          "css": "rgba(191, 128, 64, 1)"
+        }
+      ],
+      "paletteRevision": 0,
+      "paletteError": null,
+      "settings": {
+        "available": true,
+        "schemaVersion": 2,
+        "revision": 0,
+        "layoutMode": "stretch",
+        "swatchSize": 32,
+        "includeDisabledColors": false,
+        "error": null
+      },
+      "activeOrientation": "vertical",
+      "pendingHostAction": null,
+      "pendingPaletteMutation": false,
+      "draggingId": null,
+      "lastHostResult": {
+        "status": "ok",
+        "appliedCount": 1,
+        "selectedPropertyCount": 5,
+        "unsupportedGradientCount": 1,
+        "unsupportedTextCount": 1,
+        "preservedStateCount": 2,
+        "failedCount": 0,
+        "undoGroupOpened": true
+      },
+      "lastResult": "Applied to 1 property; skipped 4",
+      "fixtureViewport": null,
+      "designState": "default"
+    },
+    "counters": {
+      "diskWrites": 0,
+      "emittedEvents": 0,
+      "receivedEvents": 0,
+      "hostCalls": 1
+    }
+  },
+  "beforeApply": {
+    "staticValue": [
+      0.12345679104328,
+      0.34567892551422,
+      0.56789124011993,
+      1
+    ],
+    "staticDimensions": 4,
+    "expressionValue": [
+      0.12345679104328,
+      0.34567892551422,
+      0.56789124011993,
+      1
+    ],
+    "expression": "value",
+    "expressionEnabled": true,
+    "expressionKeys": 0,
+    "keyframedValue": [
+      0.12345679104328,
+      0.34567892551422,
+      0.56789124011993,
+      1
+    ],
+    "keyCount": 2,
+    "keyOne": [
+      0.12345679104328,
+      0.34567892551422,
+      0.56789124011993,
+      1
+    ],
+    "keyTwo": [
+      0.12345679104328,
+      0.34567892551422,
+      0.56789124011993,
+      1
+    ],
+    "selectedLayerCount": 2,
+    "selectedPropertyCount": 4
+  },
+  "afterApply": {
+    "staticValue": [
+      0.75,
+      0.5,
+      0.25,
+      1
+    ],
+    "staticDimensions": 4,
+    "expressionValue": [
+      0.12345679104328,
+      0.34567892551422,
+      0.56789124011993,
+      1
+    ],
+    "expression": "value",
+    "expressionEnabled": true,
+    "expressionKeys": 0,
+    "keyframedValue": [
+      0.12345679104328,
+      0.34567892551422,
+      0.56789124011993,
+      1
+    ],
+    "keyCount": 2,
+    "keyOne": [
+      0.12345679104328,
+      0.34567892551422,
+      0.56789124011993,
+      1
+    ],
+    "keyTwo": [
+      0.12345679104328,
+      0.34567892551422,
+      0.56789124011993,
+      1
+    ],
+    "selectedLayerCount": 2,
+    "selectedPropertyCount": 4
+  },
+  "undo": {
+    "ok": true,
+    "commandId": 16
+  },
+  "afterUndo": {
+    "staticValue": [
+      0.12345679104328,
+      0.34567892551422,
+      0.56789124011993,
+      1
+    ],
+    "staticDimensions": 4,
+    "expressionValue": [
+      0.12345679104328,
+      0.34567892551422,
+      0.56789124011993,
+      1
+    ],
+    "expression": "value",
+    "expressionEnabled": true,
+    "expressionKeys": 0,
+    "keyframedValue": [
+      0.12345679104328,
+      0.34567892551422,
+      0.56789124011993,
+      1
+    ],
+    "keyCount": 2,
+    "keyOne": [
+      0.12345679104328,
+      0.34567892551422,
+      0.56789124011993,
+      1
+    ],
+    "keyTwo": [
+      0.12345679104328,
+      0.34567892551422,
+      0.56789124011993,
+      1
+    ],
+    "selectedLayerCount": 2,
+    "selectedPropertyCount": 4
+  },
+  "consoleEvidence": {
+    "console": [
+      {
+        "type": "log",
+        "values": [
+          "/Users/REDACTED/Library/Application Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/jsx/index.js"
+        ]
+      },
+      {
+        "type": "info",
+        "values": [
+          "[Chroma Relay][I11][main] loaded"
+        ]
+      },
+      {
+        "type": "log",
+        "values": [
+          "[0.75,0.5,0.25,1]"
+        ]
+      }
+    ],
+    "exceptions": [],
+    "logs": []
+  },
+  "screenshots": [
+    "main-applied.png"
+  ]
+}

@@ -1,0 +1,11 @@
+{
+  "capturedAt": "2026-07-17T02:45:59.350Z",
+  "panel": {
+    "page": "settings",
+    "port": 8199,
+    "extensionId": "com.zimoby.chroma-relay.settings",
+    "pageSuffix": "/settings/index.html"
+  },
+  "error": "TypeError: fetch failed\n    at node:internal/deps/undici/undici:14976:13\n    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)\n    at async getTargets (file:///Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/scripts/cep-cdp.mjs:139:20)\n    at async inspectPanel (file:///Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/scripts/cep-cdp.mjs:251:21)\n    at async runInspect (file:///Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/scripts/cep-cdp.mjs:450:54)",
+  "consoleEvidence": null
+}

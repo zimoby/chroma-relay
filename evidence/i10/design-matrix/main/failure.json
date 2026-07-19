@@ -1,0 +1,44 @@
+{
+  "capturedAt": "2026-07-17T05:10:40.097Z",
+  "design": "seam",
+  "panel": {
+    "page": "main",
+    "port": 8198,
+    "extensionId": "com.zimoby.chroma-relay.main",
+    "pageSuffix": "/main/index.html"
+  },
+  "target": {
+    "description": "",
+    "devtoolsFrontendUrl": "/devtools/inspector.html?ws=127.0.0.1:8198/devtools/page/C95D8F46F0B7B42EAEF3EE60B4ADEC33",
+    "id": "C95D8F46F0B7B42EAEF3EE60B4ADEC33",
+    "title": "Chroma Relay — Main",
+    "type": "page",
+    "url": "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/main/index.html",
+    "webSocketDebuggerUrl": "ws://127.0.0.1:8198/devtools/page/C95D8F46F0B7B42EAEF3EE60B4ADEC33"
+  },
+  "error": "Error: Main compositor is 267x124; resize the real panel to at least 200x200 before fixture capture\n    at capturePanel (file:///Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/scripts/cep-design-capture.mjs:257:15)\n    at async file:///Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/scripts/cep-design-capture.mjs:436:16",
+  "consoleEvidence": {
+    "console": [
+      {
+        "type": "log",
+        "values": [
+          "/Users/REDACTED/Library/Application Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/jsx/index.js"
+        ]
+      },
+      {
+        "type": "log",
+        "values": [
+          "buildContextMenu"
+        ]
+      },
+      {
+        "type": "info",
+        "values": [
+          "[Chroma Relay][I05][main] loaded"
+        ]
+      }
+    ],
+    "exceptions": [],
+    "logs": []
+  }
+}

@@ -1,0 +1,726 @@
+{
+  "capturedAt": "2026-07-17T20:46:54.476Z",
+  "passed": true,
+  "temporaryRoot": "/private/tmp/chroma-relay-i07-host",
+  "before": {
+    "fillA": [
+      0.12345679104328,
+      0.34567892551422,
+      0.56789124011993,
+      1
+    ],
+    "fillB": [
+      0.12345679104328,
+      0.34567892551422,
+      0.56789124011993,
+      1
+    ],
+    "secondColor": [
+      0.15999999642372,
+      0.74000000953674,
+      0.41999998688698,
+      1
+    ],
+    "disabledColor": [
+      0.81999999284744,
+      0.17000000178814,
+      0.28000000119209,
+      1
+    ],
+    "disabledGroupEnabled": false,
+    "selectedLayerCount": 2,
+    "selectedPropertyCount": 4
+  },
+  "after": {
+    "fillA": [
+      0.12345679104328,
+      0.34567892551422,
+      0.56789124011993,
+      1
+    ],
+    "fillB": [
+      0.12345679104328,
+      0.34567892551422,
+      0.56789124011993,
+      1
+    ],
+    "secondColor": [
+      0.15999999642372,
+      0.74000000953674,
+      0.41999998688698,
+      1
+    ],
+    "disabledColor": [
+      0.81999999284744,
+      0.17000000178814,
+      0.28000000119209,
+      1
+    ],
+    "disabledGroupEnabled": false,
+    "selectedLayerCount": 2,
+    "selectedPropertyCount": 4
+  },
+  "rapidAccepted": [
+    true,
+    true
+  ],
+  "collectedSnapshot": {
+    "state": {
+      "palette": [
+        {
+          "id": "color-1-1",
+          "rgba": [
+            0.12345679104328,
+            0.34567892551422,
+            0.56789124011993,
+            1
+          ],
+          "css": "rgba(31, 88, 145, 1)"
+        }
+      ],
+      "paletteRevision": 1,
+      "paletteError": null,
+      "settings": {
+        "available": true,
+        "schemaVersion": 3,
+        "revision": 0,
+        "layoutMode": "stretch",
+        "swatchSize": 32,
+        "includeDisabledColors": false,
+        "extractionPreset": "balanced",
+        "error": null
+      },
+      "activeOrientation": "vertical",
+      "pendingHostAction": null,
+      "pendingPaletteMutation": false,
+      "draggingId": null,
+      "lastHostResult": {
+        "status": "ok",
+        "colors": [
+          [
+            0.12345679104328,
+            0.34567892551422,
+            0.56789124011993,
+            1
+          ]
+        ],
+        "selectedPropertyCount": 5,
+        "unsupportedGradientCount": 1,
+        "unsupportedTextCount": 1,
+        "readErrorCount": 0
+      },
+      "lastResult": "Added 1 color; skipped 2 unsupported",
+      "fixtureViewport": null,
+      "designState": "default"
+    },
+    "counters": {
+      "diskWrites": 1,
+      "emittedEvents": 0,
+      "receivedEvents": 0,
+      "hostCalls": 1
+    }
+  },
+  "stored": {
+    "schemaVersion": 1,
+    "revision": 1,
+    "colors": [
+      {
+        "id": "color-1-1",
+        "rgba": [
+          0.12345679104328,
+          0.34567892551422,
+          0.56789124011993,
+          1
+        ]
+      }
+    ]
+  },
+  "groupSelection": {
+    "selected": 1
+  },
+  "groupSnapshot": {
+    "state": {
+      "palette": [
+        {
+          "id": "color-1-1",
+          "rgba": [
+            0.12345679104328,
+            0.34567892551422,
+            0.56789124011993,
+            1
+          ],
+          "css": "rgba(31, 88, 145, 1)"
+        }
+      ],
+      "paletteRevision": 1,
+      "paletteError": null,
+      "settings": {
+        "available": true,
+        "schemaVersion": 3,
+        "revision": 0,
+        "layoutMode": "stretch",
+        "swatchSize": 32,
+        "includeDisabledColors": false,
+        "extractionPreset": "balanced",
+        "error": null
+      },
+      "activeOrientation": "vertical",
+      "pendingHostAction": null,
+      "pendingPaletteMutation": false,
+      "draggingId": null,
+      "lastHostResult": {
+        "status": "ok",
+        "colors": [
+          [
+            0.12345679104328,
+            0.34567892551422,
+            0.56789124011993,
+            1
+          ]
+        ],
+        "selectedPropertyCount": 5,
+        "unsupportedGradientCount": 0,
+        "unsupportedTextCount": 0,
+        "readErrorCount": 0
+      },
+      "lastResult": "Selected colors are already in the palette",
+      "fixtureViewport": null,
+      "designState": "default"
+    },
+    "counters": {
+      "diskWrites": 1,
+      "emittedEvents": 0,
+      "receivedEvents": 0,
+      "hostCalls": 2
+    }
+  },
+  "wholeLayerSelection": {
+    "selectedLayers": 2,
+    "selectedNames": [
+      "CP_SECOND_COLOR_FIXTURE",
+      "CP_COLOR_FIXTURE"
+    ]
+  },
+  "wholeLayerSnapshot": {
+    "state": {
+      "palette": [
+        {
+          "id": "color-1-1",
+          "rgba": [
+            0.12345679104328,
+            0.34567892551422,
+            0.56789124011993,
+            1
+          ],
+          "css": "rgba(31, 88, 145, 1)"
+        },
+        {
+          "id": "color-2-1",
+          "rgba": [
+            0.15999999642372,
+            0.74000000953674,
+            0.41999998688698,
+            1
+          ],
+          "css": "rgba(41, 189, 107, 1)"
+        },
+        {
+          "id": "color-2-2",
+          "rgba": [
+            1,
+            0,
+            0,
+            1
+          ],
+          "css": "rgba(255, 0, 0, 1)"
+        },
+        {
+          "id": "color-2-3",
+          "rgba": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "css": "rgba(0, 0, 0, 1)"
+        }
+      ],
+      "paletteRevision": 2,
+      "paletteError": null,
+      "settings": {
+        "available": true,
+        "schemaVersion": 3,
+        "revision": 0,
+        "layoutMode": "stretch",
+        "swatchSize": 32,
+        "includeDisabledColors": false,
+        "extractionPreset": "balanced",
+        "error": null
+      },
+      "activeOrientation": "vertical",
+      "pendingHostAction": null,
+      "pendingPaletteMutation": false,
+      "draggingId": null,
+      "lastHostResult": {
+        "status": "ok",
+        "colors": [
+          [
+            0.15999999642372,
+            0.74000000953674,
+            0.41999998688698,
+            1
+          ],
+          [
+            1,
+            0,
+            0,
+            1
+          ],
+          [
+            0,
+            0,
+            0,
+            1
+          ],
+          [
+            0.12345679104328,
+            0.34567892551422,
+            0.56789124011993,
+            1
+          ]
+        ],
+        "selectedPropertyCount": 205,
+        "unsupportedGradientCount": 1,
+        "unsupportedTextCount": 0,
+        "readErrorCount": 0
+      },
+      "lastResult": "Added 3 colors; skipped 1 unsupported",
+      "fixtureViewport": null,
+      "designState": "default"
+    },
+    "counters": {
+      "diskWrites": 2,
+      "emittedEvents": 0,
+      "receivedEvents": 0,
+      "hostCalls": 3
+    }
+  },
+  "disabledSelection": {
+    "selectedLayers": 1,
+    "selectedProperties": 1,
+    "disabledGroupEnabled": false,
+    "color": [
+      0.81999999284744,
+      0.17000000178814,
+      0.28000000119209,
+      1
+    ]
+  },
+  "disabledSkippedSnapshot": {
+    "state": {
+      "palette": [
+        {
+          "id": "color-1-1",
+          "rgba": [
+            0.12345679104328,
+            0.34567892551422,
+            0.56789124011993,
+            1
+          ],
+          "css": "rgba(31, 88, 145, 1)"
+        },
+        {
+          "id": "color-2-1",
+          "rgba": [
+            0.15999999642372,
+            0.74000000953674,
+            0.41999998688698,
+            1
+          ],
+          "css": "rgba(41, 189, 107, 1)"
+        },
+        {
+          "id": "color-2-2",
+          "rgba": [
+            1,
+            0,
+            0,
+            1
+          ],
+          "css": "rgba(255, 0, 0, 1)"
+        },
+        {
+          "id": "color-2-3",
+          "rgba": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "css": "rgba(0, 0, 0, 1)"
+        }
+      ],
+      "paletteRevision": 2,
+      "paletteError": null,
+      "settings": {
+        "available": true,
+        "schemaVersion": 3,
+        "revision": 0,
+        "layoutMode": "stretch",
+        "swatchSize": 32,
+        "includeDisabledColors": false,
+        "extractionPreset": "balanced",
+        "error": null
+      },
+      "activeOrientation": "vertical",
+      "pendingHostAction": null,
+      "pendingPaletteMutation": false,
+      "draggingId": null,
+      "lastHostResult": {
+        "status": "no-supported-colors",
+        "colors": [],
+        "selectedPropertyCount": 0,
+        "unsupportedGradientCount": 0,
+        "unsupportedTextCount": 0,
+        "readErrorCount": 0
+      },
+      "lastResult": "No colors or supported image found in selection",
+      "fixtureViewport": null,
+      "designState": "default"
+    },
+    "counters": {
+      "diskWrites": 2,
+      "emittedEvents": 0,
+      "receivedEvents": 0,
+      "hostCalls": 4
+    }
+  },
+  "disabledIncludedSelection": {
+    "selectedLayers": 1,
+    "selectedProperties": 1,
+    "disabledGroupEnabled": false,
+    "color": [
+      0.81999999284744,
+      0.17000000178814,
+      0.28000000119209,
+      1
+    ]
+  },
+  "disabledIncludedSnapshot": {
+    "state": {
+      "palette": [
+        {
+          "id": "color-1-1",
+          "rgba": [
+            0.12345679104328,
+            0.34567892551422,
+            0.56789124011993,
+            1
+          ],
+          "css": "rgba(31, 88, 145, 1)"
+        },
+        {
+          "id": "color-2-1",
+          "rgba": [
+            0.15999999642372,
+            0.74000000953674,
+            0.41999998688698,
+            1
+          ],
+          "css": "rgba(41, 189, 107, 1)"
+        },
+        {
+          "id": "color-2-2",
+          "rgba": [
+            1,
+            0,
+            0,
+            1
+          ],
+          "css": "rgba(255, 0, 0, 1)"
+        },
+        {
+          "id": "color-2-3",
+          "rgba": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "css": "rgba(0, 0, 0, 1)"
+        },
+        {
+          "id": "color-3-1",
+          "rgba": [
+            0.81999999284744,
+            0.17000000178814,
+            0.28000000119209,
+            1
+          ],
+          "css": "rgba(209, 43, 71, 1)"
+        }
+      ],
+      "paletteRevision": 3,
+      "paletteError": null,
+      "settings": {
+        "available": true,
+        "schemaVersion": 3,
+        "revision": 1,
+        "layoutMode": "stretch",
+        "swatchSize": 32,
+        "includeDisabledColors": true,
+        "extractionPreset": "balanced",
+        "error": null
+      },
+      "activeOrientation": "vertical",
+      "pendingHostAction": null,
+      "pendingPaletteMutation": false,
+      "draggingId": null,
+      "lastHostResult": {
+        "status": "ok",
+        "colors": [
+          [
+            0.81999999284744,
+            0.17000000178814,
+            0.28000000119209,
+            1
+          ],
+          [
+            1,
+            0,
+            0,
+            1
+          ]
+        ],
+        "selectedPropertyCount": 61,
+        "unsupportedGradientCount": 0,
+        "unsupportedTextCount": 0,
+        "readErrorCount": 0
+      },
+      "lastResult": "Added 1 color",
+      "fixtureViewport": null,
+      "designState": "default"
+    },
+    "counters": {
+      "diskWrites": 1,
+      "emittedEvents": 0,
+      "receivedEvents": 0,
+      "hostCalls": 1
+    }
+  },
+  "finalStored": {
+    "schemaVersion": 1,
+    "revision": 3,
+    "colors": [
+      {
+        "id": "color-1-1",
+        "rgba": [
+          0.12345679104328,
+          0.34567892551422,
+          0.56789124011993,
+          1
+        ]
+      },
+      {
+        "id": "color-2-1",
+        "rgba": [
+          0.15999999642372,
+          0.74000000953674,
+          0.41999998688698,
+          1
+        ]
+      },
+      {
+        "id": "color-2-2",
+        "rgba": [
+          1,
+          0,
+          0,
+          1
+        ]
+      },
+      {
+        "id": "color-2-3",
+        "rgba": [
+          0,
+          0,
+          0,
+          1
+        ]
+      },
+      {
+        "id": "color-3-1",
+        "rgba": [
+          0.81999999284744,
+          0.17000000178814,
+          0.28000000119209,
+          1
+        ]
+      }
+    ]
+  },
+  "deselected": {
+    "selectedLayers": 0
+  },
+  "emptySnapshot": {
+    "state": {
+      "palette": [
+        {
+          "id": "color-1-1",
+          "rgba": [
+            0.12345679104328,
+            0.34567892551422,
+            0.56789124011993,
+            1
+          ],
+          "css": "rgba(31, 88, 145, 1)"
+        },
+        {
+          "id": "color-2-1",
+          "rgba": [
+            0.15999999642372,
+            0.74000000953674,
+            0.41999998688698,
+            1
+          ],
+          "css": "rgba(41, 189, 107, 1)"
+        },
+        {
+          "id": "color-2-2",
+          "rgba": [
+            1,
+            0,
+            0,
+            1
+          ],
+          "css": "rgba(255, 0, 0, 1)"
+        },
+        {
+          "id": "color-2-3",
+          "rgba": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "css": "rgba(0, 0, 0, 1)"
+        },
+        {
+          "id": "color-3-1",
+          "rgba": [
+            0.81999999284744,
+            0.17000000178814,
+            0.28000000119209,
+            1
+          ],
+          "css": "rgba(209, 43, 71, 1)"
+        }
+      ],
+      "paletteRevision": 3,
+      "paletteError": null,
+      "settings": {
+        "available": true,
+        "schemaVersion": 3,
+        "revision": 1,
+        "layoutMode": "stretch",
+        "swatchSize": 32,
+        "includeDisabledColors": true,
+        "extractionPreset": "balanced",
+        "error": null
+      },
+      "activeOrientation": "vertical",
+      "pendingHostAction": null,
+      "pendingPaletteMutation": false,
+      "draggingId": null,
+      "lastHostResult": {
+        "status": "no-selected-layers",
+        "colors": [],
+        "selectedPropertyCount": 0,
+        "unsupportedGradientCount": 0,
+        "unsupportedTextCount": 0,
+        "readErrorCount": 0
+      },
+      "lastResult": "Select layers or a JPEG/PNG in the Project panel",
+      "fixtureViewport": null,
+      "designState": "default"
+    },
+    "counters": {
+      "diskWrites": 1,
+      "emittedEvents": 0,
+      "receivedEvents": 0,
+      "hostCalls": 2
+    }
+  },
+  "restored": {
+    "selectedLayers": 2
+  },
+  "consoleEvidence": {
+    "console": [
+      {
+        "type": "log",
+        "values": [
+          "/Users/REDACTED/Library/Application Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/jsx/index.js"
+        ]
+      },
+      {
+        "type": "info",
+        "values": [
+          "[Chroma Relay][I11][main] loaded"
+        ]
+      },
+      {
+        "type": "log",
+        "values": [
+          "false"
+        ]
+      },
+      {
+        "type": "log",
+        "values": [
+          "false"
+        ]
+      },
+      {
+        "type": "log",
+        "values": [
+          "false"
+        ]
+      },
+      {
+        "type": "log",
+        "values": [
+          "false"
+        ]
+      },
+      {
+        "type": "log",
+        "values": [
+          "/Users/REDACTED/Library/Application Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/jsx/index.js"
+        ]
+      },
+      {
+        "type": "info",
+        "values": [
+          "[Chroma Relay][I11][main] loaded"
+        ]
+      },
+      {
+        "type": "log",
+        "values": [
+          "true"
+        ]
+      },
+      {
+        "type": "log",
+        "values": [
+          "true"
+        ]
+      }
+    ],
+    "exceptions": [],
+    "logs": []
+  },
+  "screenshots": [
+    "main-collected.png"
+  ]
+}

@@ -1,0 +1,5 @@
+I09 mutation smoke attempt 3
+Result: same focus-transport failure as attempt 2 after all mutation assertions through revision 3 passed.
+CDP rawKeyDown Tab also remained on swatch-d in the CEP target.
+Observed safety counters: diskWrites 3; hostCalls 0; no removal armed.
+Decision: stop retrying CDP native Tab. Add explicit CEP-compatible Space/Enter handling; validate DOM tab order/tabIndex plus the React keyboard path.

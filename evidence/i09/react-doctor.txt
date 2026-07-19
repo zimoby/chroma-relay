@@ -1,0 +1,92 @@
+^Dreact-doctor v0.0.17
+
+Scanning /Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay...
+
+- Detecting framework. Found Vite.
+✔ Detecting framework. Found Vite.
+- Detecting React version. Found React ^19.1.0.
+✔ Detecting React version. Found React ^19.1.0.
+- Detecting language. Found TypeScript.
+✔ Detecting language. Found TypeScript.
+- Detecting React Compiler. Not found.
+✔ Detecting React Compiler. Not found.
+- Found 39 source files.
+✔ Found 39 source files.
+
+- Running lint checks...
+- Running lint checks.
+✔ Running lint checks.
+- Detecting dead code...
+✔ Detecting dead code.
+ExtendScript Change
+  ⚠ Component "App" has 13 useState calls — consider useReducer for related state (2)
+    Group related state: `const [state, dispatch] = useReducer(reducer, { field1, field2, ... })`
+    src/js/main/main.tsx: 76
+    src/js/settings/settings.tsx: 34
+
+  ⚠ Component "App" is 488 lines — consider breaking it into smaller focused components
+    Extract logical sections into focused components: `<UserHeader />`, `<UserActions />`, etc.
+    src/js/main/main.tsx: 76
+
+  ⚠ 4 setState calls in a single useEffect — consider using useReducer or deriving state (5)
+    Combine into useReducer: `const [state, dispatch] = useReducer(reducer, initialState)`
+    src/js/main/main.tsx: 128, 144, 310
+    src/js/settings/settings.tsx: 47, 94
+
+  ⚠ Unused file (36)
+    This file is not imported by any other file in the project.
+    scripts/ae-i07-i08-cleanup.jsx
+    scripts/ae-i07-i08-setup.jsx
+    scripts/cep-functional-smoke.mjs
+    scripts/cep-persistence-smoke.mjs
+    scripts/run-react-doctor.mjs
+    tests/palette-domain.test.ts
+    src/js/index.scss
+    src/js/variables.scss
+    src/jsx/global.d.ts
+    src/jsx/index.ts
+    src/shared/shared.ts
+    src/js/main/index-react.tsx
+    src/js/main/main.scss
+    src/js/main/main.tsx
+    src/js/settings/index-react.tsx
+    src/js/settings/settings.scss
+    src/js/settings/settings.tsx
+    src/js/shared/layout-settings.ts
+    src/js/shared/palette-domain.ts
+    src/js/shared/palette-storage.ts
+    src/jsx/aeft/aeft-utils.ts
+    src/jsx/aeft/aeft.ts
+    src/jsx/aeft/color-apply.ts
+    src/jsx/lib/json2.js
+    src/jsx/utils/samples.ts
+    src/jsx/utils/utils.ts
+    src/js/lib/cep/cep_engine_extensions.js
+    src/js/lib/cep/csinterface.js
+    src/js/lib/cep/node.ts
+    src/js/lib/cep/vulcan.js
+    src/js/lib/utils/aeft.ts
+    src/js/lib/utils/bolt.ts
+    src/js/lib/utils/cep.ts
+    src/js/lib/utils/init-cep.ts
+    src/js/lib/utils/ppro.ts
+    src/js/lib/cep/es-types/index.ts
+
+  ⚠ Unused export: BUILD_MARKER (7)
+    src/js/shared/debug-api.ts
+
+  ⚠ Unused type: PanelPage (3)
+    src/js/shared/debug-api.ts
+
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │ React Doctor (www.react.doctor)                                     │
+  │                                                                     │
+  │ You are offline, could not calculate score. Reconnect to calculate. │
+  │                                                                     │
+  │ ⚠ 54 warnings  across 37/39 files  in 856ms                         │
+  └─────────────────────────────────────────────────────────────────────┘
+
+  Full diagnostics written to /var/folders/qj/dr1y9pvd6hb_v_kzs1rjccjh0000gn/T/react-doctor-f8b96330-eac3-4926-afc2-e1f3cd373eb4
+
+  Share your results: https://www.react.doctor/share?p=com.zimoby.chroma-relay&w=54&f=37
+

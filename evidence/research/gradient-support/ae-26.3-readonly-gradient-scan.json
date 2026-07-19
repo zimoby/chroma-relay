@@ -1,0 +1,322 @@
+{
+  "ok": true,
+  "aeVersion": "26.3x87",
+  "projectFile": null,
+  "itemCount": 30,
+  "compCount": 2,
+  "layerCount": 34,
+  "shapeGradientColors": {
+    "count": 20,
+    "valueTypes": {
+      "NO_VALUE": 20
+    },
+    "readSuccesses": 0,
+    "readFailures": 20,
+    "first": {
+      "comp": "Vidico_PMI-Frame-26",
+      "layerIndex": 1,
+      "layerName": "5 Outlines",
+      "path": "layer/2:ADBE Root Vectors Group/14:ADBE Vector Group/2:ADBE Vectors Group/4:ADBE Vector Graphic - G-Fill/11:ADBE Vector Grad Colors",
+      "property": {
+        "name": "Colors",
+        "matchName": "ADBE Vector Grad Colors",
+        "propertyValueType": "NO_VALUE",
+        "numKeys": 0,
+        "read": {
+          "ok": false,
+          "error": "Error: After Effects error: Can not get or set a value from this property (matchname is “ADBE Vector Grad Colors”). This property’s propertyValueType is PropertyValueType.NO_VALUE."
+        }
+      }
+    }
+  },
+  "layerStyleGradientColors": {
+    "count": 34,
+    "valueTypes": {
+      "NO_VALUE": 34
+    },
+    "readSuccesses": 0,
+    "readFailures": 34,
+    "first": {
+      "comp": "Vidico_PMI-Frame-26",
+      "layerIndex": 1,
+      "layerName": "5 Outlines",
+      "path": "layer/6:ADBE Layer Styles/9:gradientFill/enabled/3:gradientFill/gradient",
+      "property": {
+        "name": "Colors",
+        "matchName": "gradientFill/gradient",
+        "propertyValueType": "NO_VALUE",
+        "numKeys": 0,
+        "read": {
+          "ok": false,
+          "error": "Error: After Effects error: Can not get or set a value from this property (matchname is “gradientFill/gradient”). This property’s propertyValueType is PropertyValueType.NO_VALUE."
+        }
+      }
+    }
+  },
+  "gradientRampEffects": {
+    "count": 0,
+    "firstChildren": null
+  },
+  "fourColorGradientEffects": {
+    "count": 0,
+    "firstChildren": null
+  },
+  "firstShapeGradientGroup": {
+    "comp": "Vidico_PMI-Frame-26",
+    "layerIndex": 1,
+    "layerName": "5 Outlines",
+    "parentMatchName": "ADBE Vector Graphic - G-Fill",
+    "children": [
+      {
+        "name": "Blend Mode",
+        "matchName": "ADBE Vector Blend Mode",
+        "propertyValueType": "OneD",
+        "numKeys": 0,
+        "read": {
+          "ok": true,
+          "value": 1
+        }
+      },
+      {
+        "name": "Composite",
+        "matchName": "ADBE Vector Composite Order",
+        "propertyValueType": "OneD",
+        "numKeys": 0,
+        "read": {
+          "ok": true,
+          "value": 1
+        }
+      },
+      {
+        "name": "Fill Rule",
+        "matchName": "ADBE Vector Fill Rule",
+        "propertyValueType": "OneD",
+        "numKeys": 0,
+        "read": {
+          "ok": true,
+          "value": 1
+        }
+      },
+      {
+        "name": "Type",
+        "matchName": "ADBE Vector Grad Type",
+        "propertyValueType": "OneD",
+        "numKeys": 0,
+        "read": {
+          "ok": true,
+          "value": 1
+        }
+      },
+      {
+        "name": "Start Point",
+        "matchName": "ADBE Vector Grad Start Pt",
+        "propertyValueType": "TwoD_SPATIAL",
+        "numKeys": 0,
+        "read": {
+          "ok": true,
+          "value": [
+            -0.000244140625,
+            105.434143066406
+          ]
+        }
+      },
+      {
+        "name": "End Point",
+        "matchName": "ADBE Vector Grad End Pt",
+        "propertyValueType": "TwoD_SPATIAL",
+        "numKeys": 0,
+        "read": {
+          "ok": true,
+          "value": [
+            -0.000244140625,
+            -22.2247924804688
+          ]
+        }
+      },
+      {
+        "name": "Highlight Length",
+        "matchName": "ADBE Vector Grad HiLite Length",
+        "propertyValueType": "OneD",
+        "numKeys": 0,
+        "read": {
+          "ok": true,
+          "value": 0
+        }
+      },
+      {
+        "name": "Highlight Angle",
+        "matchName": "ADBE Vector Grad HiLite Angle",
+        "propertyValueType": "OneD",
+        "numKeys": 0,
+        "read": {
+          "ok": true,
+          "value": 0
+        }
+      },
+      {
+        "name": "Scale",
+        "matchName": "ADBE Vector Grad Scale",
+        "propertyValueType": "TwoD",
+        "numKeys": 0,
+        "read": {
+          "ok": true,
+          "value": [
+            100,
+            100
+          ]
+        }
+      },
+      {
+        "name": "Rotation",
+        "matchName": "ADBE Vector Grad Rotation",
+        "propertyValueType": "OneD",
+        "numKeys": 0,
+        "read": {
+          "ok": true,
+          "value": 0
+        }
+      },
+      {
+        "name": "Colors",
+        "matchName": "ADBE Vector Grad Colors",
+        "propertyValueType": "NO_VALUE",
+        "numKeys": 0,
+        "read": {
+          "ok": false,
+          "error": "Error: After Effects error: Can not get or set a value from this property (matchname is “ADBE Vector Grad Colors”). This property’s propertyValueType is PropertyValueType.NO_VALUE."
+        }
+      },
+      {
+        "name": "Opacity",
+        "matchName": "ADBE Vector Fill Opacity",
+        "propertyValueType": "OneD",
+        "numKeys": 0,
+        "read": {
+          "ok": true,
+          "value": 100
+        }
+      }
+    ]
+  },
+  "firstLayerStyleGradientOverlay": {
+    "comp": "Vidico_PMI-Frame-26",
+    "layerIndex": 1,
+    "layerName": "5 Outlines",
+    "parentMatchName": "gradientFill/enabled",
+    "children": [
+      {
+        "name": "Blend Mode",
+        "matchName": "gradientFill/mode2",
+        "propertyValueType": "OneD",
+        "numKeys": 0,
+        "read": {
+          "ok": true,
+          "value": 1
+        }
+      },
+      {
+        "name": "Opacity",
+        "matchName": "gradientFill/opacity",
+        "propertyValueType": "OneD",
+        "numKeys": 0,
+        "read": {
+          "ok": true,
+          "value": 100
+        }
+      },
+      {
+        "name": "Colors",
+        "matchName": "gradientFill/gradient",
+        "propertyValueType": "NO_VALUE",
+        "numKeys": 0,
+        "read": {
+          "ok": false,
+          "error": "Error: After Effects error: Can not get or set a value from this property (matchname is “gradientFill/gradient”). This property’s propertyValueType is PropertyValueType.NO_VALUE."
+        }
+      },
+      {
+        "name": "Gradient Smoothness",
+        "matchName": "gradientFill/gradientSmoothness",
+        "propertyValueType": "OneD",
+        "numKeys": 0,
+        "read": {
+          "ok": true,
+          "value": 100
+        }
+      },
+      {
+        "name": "Angle",
+        "matchName": "gradientFill/angle",
+        "propertyValueType": "OneD",
+        "numKeys": 0,
+        "read": {
+          "ok": true,
+          "value": 90
+        }
+      },
+      {
+        "name": "Style",
+        "matchName": "gradientFill/type",
+        "propertyValueType": "OneD",
+        "numKeys": 0,
+        "read": {
+          "ok": true,
+          "value": 1
+        }
+      },
+      {
+        "name": "Reverse",
+        "matchName": "gradientFill/reverse",
+        "propertyValueType": "OneD",
+        "numKeys": 0,
+        "read": {
+          "ok": true,
+          "value": 0
+        }
+      },
+      {
+        "name": "Align with Layer",
+        "matchName": "gradientFill/align",
+        "propertyValueType": "OneD",
+        "numKeys": 0,
+        "read": {
+          "ok": true,
+          "value": 1
+        }
+      },
+      {
+        "name": "Scale",
+        "matchName": "gradientFill/scale",
+        "propertyValueType": "OneD",
+        "numKeys": 0,
+        "read": {
+          "ok": true,
+          "value": 100
+        }
+      },
+      {
+        "name": "Offset",
+        "matchName": "gradientFill/offset",
+        "propertyValueType": "TwoD_SPATIAL",
+        "numKeys": 0,
+        "read": {
+          "ok": true,
+          "value": [
+            0,
+            0
+          ]
+        }
+      }
+    ]
+  },
+  "selectionBefore": {
+    "activeItemName": "Vidico_PMI-Frame-26",
+    "selectedLayers": 1,
+    "selectedProperties": 0
+  },
+  "selectionAfter": {
+    "activeItemName": "Vidico_PMI-Frame-26",
+    "selectedLayers": 1,
+    "selectedProperties": 0
+  }
+}

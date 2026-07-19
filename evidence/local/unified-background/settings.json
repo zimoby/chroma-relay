@@ -1,0 +1,453 @@
+{
+  "capturedAt": "2026-07-17T12:06:43.345Z",
+  "panel": {
+    "page": "settings",
+    "port": 8199,
+    "extensionId": "com.zimoby.chroma-relay.settings",
+    "pageSuffix": "/settings/index.html"
+  },
+  "target": {
+    "description": "",
+    "devtoolsFrontendUrl": "/devtools/inspector.html?ws=127.0.0.1:8199/devtools/page/85D5E14A66C65BDEF74B2A5B9CCE8D3C",
+    "id": "85D5E14A66C65BDEF74B2A5B9CCE8D3C",
+    "title": "Chroma Relay — Settings",
+    "type": "page",
+    "url": "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/settings/index.html",
+    "webSocketDebuggerUrl": "ws://127.0.0.1:8199/devtools/page/85D5E14A66C65BDEF74B2A5B9CCE8D3C"
+  },
+  "snapshot": {
+    "identity": {
+      "extensionId": "com.zimoby.chroma-relay.settings",
+      "page": "settings",
+      "version": "0.0.1",
+      "buildMarker": "I11 · 0.0.1",
+      "url": "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/settings/index.html",
+      "configRoot": "/private/tmp/chroma-relay-i05-settings",
+      "scripts": [
+        "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/assets/settings-CQ6zoaH8.cjs"
+      ],
+      "styles": [
+        "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/assets/debug-api-EMV6xW9J.css",
+        "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/assets/settings-CeKfuycQ.css"
+      ]
+    },
+    "state": {
+      "palette": [],
+      "settings": {
+        "available": true,
+        "schemaVersion": 2,
+        "revision": 10,
+        "layoutMode": "stretch",
+        "swatchSize": 32,
+        "includeDisabledColors": false
+      },
+      "activeOrientation": null,
+      "pendingHostAction": null,
+      "lastResult": "Stretch layout is active",
+      "fixtureViewport": null
+    },
+    "counters": {
+      "diskWrites": 0,
+      "emittedEvents": 0,
+      "receivedEvents": 0,
+      "hostCalls": 0
+    },
+    "geometry": {
+      "panel": {
+        "x": 0,
+        "y": 0,
+        "width": 378,
+        "height": 341
+      },
+      "controls": {
+        "layout-settings": {
+          "x": 12,
+          "y": 47,
+          "width": 320,
+          "height": 164
+        },
+        "layout-stretch": {
+          "x": 18,
+          "y": 94,
+          "width": 1,
+          "height": 1
+        },
+        "layout-fixed": {
+          "x": 113.5,
+          "y": 94,
+          "width": 1,
+          "height": 1
+        },
+        "swatch-size-slider": {
+          "x": 78,
+          "y": 130,
+          "width": 180.65625,
+          "height": 16
+        },
+        "swatch-size-input": {
+          "x": 268.65625,
+          "y": 126,
+          "width": 48,
+          "height": 24
+        },
+        "include-disabled-colors": {
+          "x": 12,
+          "y": 162.5,
+          "width": 13,
+          "height": 13
+        },
+        "status-output": {
+          "x": 12,
+          "y": 319,
+          "width": 354,
+          "height": 12
+        }
+      }
+    },
+    "methods": [
+      "dispatchClick",
+      "getCounters",
+      "getGeometry",
+      "getIdentity",
+      "getState",
+      "persistPalette",
+      "reload",
+      "reloadPalette",
+      "resetTestState",
+      "seedPalette",
+      "setDesignPreview",
+      "setFixtureViewport",
+      "setTemporaryConfigRoot"
+    ],
+    "readyState": "complete",
+    "bodyText": "Chroma Relay\nSettings · I11 · 0.0.1\nLayout\nOrientation still follows the Main panel automatically.\nStretch\nFixed\nColor size\npx\nInclude disabled colors\nRead colors inside disabled layers and groups.\nStretch layout is active"
+  },
+  "fixtureGeometry": {
+    "32x32": {
+      "state": {
+        "palette": [],
+        "settings": {
+          "available": true,
+          "schemaVersion": 2,
+          "revision": 10,
+          "layoutMode": "stretch",
+          "swatchSize": 32,
+          "includeDisabledColors": false
+        },
+        "activeOrientation": null,
+        "pendingHostAction": null,
+        "lastResult": "Stretch layout is active",
+        "fixtureViewport": {
+          "width": 32,
+          "height": 32
+        }
+      },
+      "geometry": {
+        "panel": {
+          "x": 0,
+          "y": 0,
+          "width": 32,
+          "height": 32
+        },
+        "controls": {
+          "layout-settings": {
+            "x": 12,
+            "y": 110,
+            "width": 205.34375,
+            "height": 192
+          },
+          "layout-stretch": {
+            "x": 18,
+            "y": 171,
+            "width": 1,
+            "height": 1
+          },
+          "layout-fixed": {
+            "x": 113.5,
+            "y": 171,
+            "width": 1,
+            "height": 1
+          },
+          "swatch-size-slider": {
+            "x": 78,
+            "y": 207,
+            "width": 70,
+            "height": 16
+          },
+          "swatch-size-input": {
+            "x": 154,
+            "y": 203,
+            "width": 48,
+            "height": 24
+          },
+          "include-disabled-colors": {
+            "x": 12,
+            "y": 239.5,
+            "width": 13,
+            "height": 13
+          },
+          "status-output": {
+            "x": 12,
+            "y": 310,
+            "width": 8,
+            "height": 48
+          }
+        }
+      }
+    },
+    "160x32": {
+      "state": {
+        "palette": [],
+        "settings": {
+          "available": true,
+          "schemaVersion": 2,
+          "revision": 10,
+          "layoutMode": "stretch",
+          "swatchSize": 32,
+          "includeDisabledColors": false
+        },
+        "activeOrientation": null,
+        "pendingHostAction": null,
+        "lastResult": "Stretch layout is active",
+        "fixtureViewport": {
+          "width": 160,
+          "height": 32
+        }
+      },
+      "geometry": {
+        "panel": {
+          "x": 0,
+          "y": 0,
+          "width": 160,
+          "height": 32
+        },
+        "controls": {
+          "layout-settings": {
+            "x": 12,
+            "y": 47,
+            "width": 205.34375,
+            "height": 192
+          },
+          "layout-stretch": {
+            "x": 18,
+            "y": 108,
+            "width": 1,
+            "height": 1
+          },
+          "layout-fixed": {
+            "x": 113.5,
+            "y": 108,
+            "width": 1,
+            "height": 1
+          },
+          "swatch-size-slider": {
+            "x": 78,
+            "y": 144,
+            "width": 70,
+            "height": 16
+          },
+          "swatch-size-input": {
+            "x": 154,
+            "y": 140,
+            "width": 48,
+            "height": 24
+          },
+          "include-disabled-colors": {
+            "x": 12,
+            "y": 176.5,
+            "width": 13,
+            "height": 13
+          },
+          "status-output": {
+            "x": 12,
+            "y": 247,
+            "width": 136,
+            "height": 12
+          }
+        }
+      }
+    },
+    "32x160": {
+      "state": {
+        "palette": [],
+        "settings": {
+          "available": true,
+          "schemaVersion": 2,
+          "revision": 10,
+          "layoutMode": "stretch",
+          "swatchSize": 32,
+          "includeDisabledColors": false
+        },
+        "activeOrientation": null,
+        "pendingHostAction": null,
+        "lastResult": "Stretch layout is active",
+        "fixtureViewport": {
+          "width": 32,
+          "height": 160
+        }
+      },
+      "geometry": {
+        "panel": {
+          "x": 0,
+          "y": 0,
+          "width": 32,
+          "height": 160
+        },
+        "controls": {
+          "layout-settings": {
+            "x": 12,
+            "y": 110,
+            "width": 205.34375,
+            "height": 192
+          },
+          "layout-stretch": {
+            "x": 18,
+            "y": 171,
+            "width": 1,
+            "height": 1
+          },
+          "layout-fixed": {
+            "x": 113.5,
+            "y": 171,
+            "width": 1,
+            "height": 1
+          },
+          "swatch-size-slider": {
+            "x": 78,
+            "y": 207,
+            "width": 70,
+            "height": 16
+          },
+          "swatch-size-input": {
+            "x": 154,
+            "y": 203,
+            "width": 48,
+            "height": 24
+          },
+          "include-disabled-colors": {
+            "x": 12,
+            "y": 239.5,
+            "width": 13,
+            "height": 13
+          },
+          "status-output": {
+            "x": 12,
+            "y": 310,
+            "width": 8,
+            "height": 48
+          }
+        }
+      }
+    },
+    "200x200": {
+      "state": {
+        "palette": [],
+        "settings": {
+          "available": true,
+          "schemaVersion": 2,
+          "revision": 10,
+          "layoutMode": "stretch",
+          "swatchSize": 32,
+          "includeDisabledColors": false
+        },
+        "activeOrientation": null,
+        "pendingHostAction": null,
+        "lastResult": "Stretch layout is active",
+        "fixtureViewport": {
+          "width": 200,
+          "height": 200
+        }
+      },
+      "geometry": {
+        "panel": {
+          "x": 0,
+          "y": 0,
+          "width": 200,
+          "height": 200
+        },
+        "controls": {
+          "layout-settings": {
+            "x": 12,
+            "y": 47,
+            "width": 205.34375,
+            "height": 192
+          },
+          "layout-stretch": {
+            "x": 18,
+            "y": 108,
+            "width": 1,
+            "height": 1
+          },
+          "layout-fixed": {
+            "x": 113.5,
+            "y": 108,
+            "width": 1,
+            "height": 1
+          },
+          "swatch-size-slider": {
+            "x": 78,
+            "y": 144,
+            "width": 70,
+            "height": 16
+          },
+          "swatch-size-input": {
+            "x": 154,
+            "y": 140,
+            "width": 48,
+            "height": 24
+          },
+          "include-disabled-colors": {
+            "x": 12,
+            "y": 176.5,
+            "width": 13,
+            "height": 13
+          },
+          "status-output": {
+            "x": 12,
+            "y": 247,
+            "width": 176,
+            "height": 12
+          }
+        }
+      }
+    }
+  },
+  "paletteSeed": null,
+  "interaction": {
+    "testId": "layout-stretch",
+    "expectedToDispatch": true,
+    "dispatched": true
+  },
+  "assetProof": {
+    "buildRoot": "/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/dist/cep",
+    "assets": [
+      "/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/dist/cep/assets/settings-CQ6zoaH8.cjs",
+      "/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/dist/cep/assets/debug-api-EMV6xW9J.css",
+      "/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/dist/cep/assets/settings-CeKfuycQ.css"
+    ]
+  },
+  "consoleEvidence": {
+    "console": [
+      {
+        "type": "log",
+        "values": [
+          "/Users/REDACTED/Library/Application Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/jsx/index.js"
+        ]
+      },
+      {
+        "type": "info",
+        "values": [
+          "[Chroma Relay][I11][settings] loaded"
+        ]
+      }
+    ],
+    "exceptions": [],
+    "logs": []
+  },
+  "ioPolicy": {
+    "evidenceDirectory": "/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/evidence/local/unified-background",
+    "temporaryConfigRoot": "/private/tmp/chroma-relay-i05-settings",
+    "temporaryRootCreated": false,
+    "productionConfigWrites": 0
+  }
+}

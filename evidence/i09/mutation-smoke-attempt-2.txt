@@ -1,0 +1,6 @@
+I09 mutation smoke attempt 2
+Result: failed after remove, keyboard reorder, and drag reorder passed.
+Failure: CDP keyDown Tab left focus on swatch-d; Space did not activate removal.
+Observed state: order d,c,a; revision 3; diskWrites 3; hostCalls 0; armedRemovalId null.
+Cause under test: CEP ignored CDP keyDown for browser default focus traversal.
+Next harness change: use Input.dispatchKeyEvent type rawKeyDown, then keyUp.

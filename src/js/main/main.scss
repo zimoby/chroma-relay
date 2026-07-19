@@ -1,0 +1,392 @@
+.chroma-relay-panel {
+  --cp-bg: #1c1d1f;
+  --cp-surface: #26282b;
+  --cp-surface-hover: #34373a;
+  --cp-separator: #111214;
+  --cp-border: #3f4246;
+  --cp-text: #d8dadd;
+  --cp-text-muted: #8f9398;
+  --cp-focus: #9ac9e4;
+  --cp-error: #e06d6d;
+  --cp-space: 2px;
+  --cp-timing: 80ms;
+
+  position: relative;
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  min-height: 100%;
+  overflow: hidden;
+  color: var(--cp-text);
+  background: var(--cp-bg);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+.chroma-relay-panel *,
+.chroma-relay-panel *::before,
+.chroma-relay-panel *::after {
+  box-sizing: border-box;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.palette-stage {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  gap: var(--cp-space);
+  padding: var(--cp-space);
+}
+
+.palette-strip {
+  display: flex;
+  flex: 1 1 auto;
+  gap: 1px;
+  min-width: 0;
+  min-height: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  background: transparent;
+  flex-wrap: nowrap;
+  scrollbar-width: none;
+}
+
+.palette-strip::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+.palette-swatch-shell {
+  position: relative;
+  display: flex;
+  flex: 1 0 24px;
+  min-width: 24px;
+  min-height: 24px;
+  overflow: hidden;
+}
+
+[data-layout-mode="fixed"] .palette-strip {
+  align-items: flex-start;
+}
+
+[data-layout-mode="fixed"] .palette-swatch-shell {
+  width: var(--cp-swatch-size);
+  height: var(--cp-swatch-size);
+  min-width: var(--cp-swatch-size);
+  min-height: var(--cp-swatch-size);
+  flex: 0 0 var(--cp-swatch-size);
+}
+
+.palette-swatch,
+.palette-add {
+  margin: 0;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.palette-swatch {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  cursor: default;
+  box-shadow: inset 0 1px rgb(255 255 255 / 14%);
+  transition:
+    box-shadow var(--cp-timing) linear,
+    filter var(--cp-timing) linear;
+}
+
+.palette-swatch[draggable="true"] {
+  cursor: grab;
+}
+
+.palette-swatch[draggable="true"]:active {
+  cursor: grabbing;
+}
+
+.palette-swatch-shell.is-dragging .palette-swatch {
+  filter: brightness(0.58) saturate(0.7);
+  opacity: 0.42;
+}
+
+.palette-swatch-shell.is-drop-before::before,
+.palette-swatch-shell.is-drop-after::after {
+  position: absolute;
+  z-index: 21;
+  background: #f4f5f6;
+  box-shadow: 0 0 0 1px rgb(17 18 20 / 0.9);
+  content: "";
+  pointer-events: none;
+}
+
+.palette-swatch-shell.is-drop-before,
+.palette-swatch-shell.is-drop-after {
+  overflow: visible;
+}
+
+[data-orientation="horizontal"] .palette-swatch-shell.is-drop-before::before,
+[data-orientation="horizontal"] .palette-swatch-shell.is-drop-after::after {
+  inset-block: 0;
+  width: 2px;
+}
+
+[data-orientation="horizontal"] .palette-swatch-shell.is-drop-before::before {
+  inset-inline-start: -3px;
+}
+
+[data-orientation="horizontal"] .palette-swatch-shell.is-drop-after::after {
+  inset-inline-end: -3px;
+}
+
+[data-orientation="horizontal"] .palette-swatch-shell.is-drop-before {
+  margin-inline-start: 4px;
+}
+
+[data-orientation="horizontal"] .palette-swatch-shell.is-drop-after {
+  margin-inline-end: 4px;
+}
+
+[data-orientation="vertical"] .palette-swatch-shell.is-drop-before::before,
+[data-orientation="vertical"] .palette-swatch-shell.is-drop-after::after {
+  inset-inline: 0;
+  height: 2px;
+}
+
+[data-orientation="vertical"] .palette-swatch-shell.is-drop-before::before {
+  inset-block-start: -3px;
+}
+
+[data-orientation="vertical"] .palette-swatch-shell.is-drop-after::after {
+  inset-block-end: -3px;
+}
+
+[data-orientation="vertical"] .palette-swatch-shell.is-drop-before {
+  margin-block-start: 4px;
+}
+
+[data-orientation="vertical"] .palette-swatch-shell.is-drop-after {
+  margin-block-end: 4px;
+}
+
+.palette-swatch::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+  background: rgb(255 255 255 / 0%);
+  pointer-events: none;
+  transition: background var(--cp-timing) linear;
+}
+
+.palette-swatch-shell:hover .palette-swatch::after,
+.palette-swatch-shell.is-preview-hover .palette-swatch::after {
+  background: rgb(255 255 255 / 10%);
+}
+
+.palette-swatch:focus-visible,
+.palette-swatch-shell.is-preview-focus .palette-swatch {
+  z-index: 2;
+  outline: 0;
+  box-shadow:
+    inset 0 0 0 1px #f4f5f6,
+    inset 0 0 0 3px #111214;
+}
+
+.drag-indicator {
+  position: absolute;
+  z-index: 3;
+  top: 50%;
+  left: 50%;
+  width: 2px;
+  height: 2px;
+  border-radius: 50%;
+  opacity: 0;
+  background: rgb(255 255 255 / 88%);
+  box-shadow: -4px 0 rgb(255 255 255 / 88%), 4px 0 rgb(255 255 255 / 88%);
+  transform: translate(-50%, -50%);
+}
+
+.is-preview-selected .palette-swatch {
+  z-index: 1;
+  box-shadow: inset 0 0 0 2px rgb(255 255 255 / 90%);
+}
+
+.is-preview-selected .drag-indicator {
+  opacity: 1;
+}
+
+[data-remove-mode="true"] .palette-swatch:not(:disabled) {
+  box-shadow:
+    inset 0 0 0 1px var(--cp-separator),
+    inset 0 0 0 3px #f08a8a;
+  cursor: pointer;
+}
+
+.palette-drag-preview {
+  position: fixed;
+  z-index: 20;
+  display: block;
+  box-sizing: border-box;
+  border: 2px solid #f4f5f6;
+  box-shadow:
+    0 0 0 1px rgb(17 18 20 / 0.9),
+    0 5px 14px rgb(0 0 0 / 0.58);
+  opacity: 0.94;
+  pointer-events: none;
+  transform: translate(-50%, -50%) scale(0.78);
+}
+
+.palette-drag-preview::after {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  color: rgb(255 255 255 / 0.88);
+  content: "···";
+  font-size: 10px;
+  letter-spacing: 1px;
+  line-height: 1;
+  place-items: center;
+  text-shadow: 0 1px 2px rgb(0 0 0 / 0.8);
+}
+
+.palette-add {
+  position: relative;
+  flex: 0 0 24px;
+  width: 24px;
+  min-width: 24px;
+  min-height: 24px;
+  border: 1px solid var(--cp-border);
+  background: var(--cp-surface);
+  transition:
+    border-color var(--cp-timing) linear,
+    background var(--cp-timing) linear;
+}
+
+.palette-add:hover:not(:disabled) {
+  border-color: #666a70;
+  background: var(--cp-surface-hover);
+}
+
+.palette-add:focus-visible {
+  outline: 2px solid var(--cp-focus);
+  outline-offset: -2px;
+}
+
+.palette-add:disabled {
+  border-color: #343639;
+  color: #65696e;
+  background: #242628;
+}
+
+.add-glyph::before,
+.add-glyph::after {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  content: "";
+  background: currentColor;
+  transform: translate(-50%, -50%);
+}
+
+.add-glyph::before {
+  width: 9px;
+  height: 1px;
+}
+
+.add-glyph::after {
+  width: 1px;
+  height: 9px;
+}
+
+.palette-empty {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  min-width: 0;
+  padding: 0 6px;
+  overflow: hidden;
+  color: var(--cp-text-muted);
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+.palette-status {
+  position: absolute;
+  z-index: 8;
+  right: 6px;
+  bottom: 6px;
+  left: 6px;
+  display: block;
+  padding: 4px 6px;
+  overflow: hidden;
+  color: var(--cp-text-muted);
+  background: rgb(17 18 20 / 90%);
+  font-size: 10px;
+  line-height: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.palette-status:empty {
+  display: none;
+}
+
+.palette-status.is-error {
+  border-left: 2px solid var(--cp-error);
+  color: #f0b2b2;
+}
+
+[data-orientation="vertical"] .palette-stage {
+  flex-direction: column;
+}
+
+[data-orientation="vertical"] .palette-strip {
+  flex-direction: column;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+[data-orientation="vertical"] .palette-swatch-shell {
+  min-width: 0;
+  min-height: 24px;
+}
+
+[data-orientation="vertical"] .palette-add {
+  flex-basis: 24px;
+  width: 100%;
+  height: 24px;
+}
+
+[data-layout-mode="fixed"] .palette-strip {
+  flex: 0 1 auto;
+}
+
+[data-layout-mode="fixed"] .palette-add {
+  width: var(--cp-swatch-size);
+  height: var(--cp-swatch-size);
+  min-width: var(--cp-swatch-size);
+  min-height: var(--cp-swatch-size);
+  flex: 0 0 var(--cp-swatch-size);
+  align-self: flex-start;
+}
+
+@media (max-width: 132px) {
+  [data-orientation="vertical"][data-layout-mode="stretch"] .palette-add {
+    width: 24px;
+    min-width: 24px;
+    align-self: flex-start;
+  }
+}

@@ -1,0 +1,483 @@
+{
+  "capturedAt": "2026-07-17T03:13:56.416Z",
+  "direction": "seam",
+  "panel": {
+    "page": "main",
+    "port": 8198,
+    "extensionId": "com.zimoby.chroma-relay.main",
+    "pageSuffix": "/main/index.html"
+  },
+  "target": {
+    "description": "",
+    "devtoolsFrontendUrl": "/devtools/inspector.html?ws=127.0.0.1:8198/devtools/page/C95D8F46F0B7B42EAEF3EE60B4ADEC33",
+    "id": "C95D8F46F0B7B42EAEF3EE60B4ADEC33",
+    "title": "Chroma Relay — Main",
+    "type": "page",
+    "url": "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/main/index.html",
+    "webSocketDebuggerUrl": "ws://127.0.0.1:8198/devtools/page/C95D8F46F0B7B42EAEF3EE60B4ADEC33"
+  },
+  "identity": {
+    "extensionId": "com.zimoby.chroma-relay.main",
+    "page": "main",
+    "version": "0.0.1",
+    "buildMarker": "I03 · 0.0.1",
+    "url": "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/main/index.html",
+    "configRoot": "/private/tmp/chroma-relay-i03-design-main",
+    "scripts": [
+      "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/assets/main-ns52ztOe.cjs"
+    ],
+    "styles": [
+      "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/assets/debug-api-EMV6xW9J.css",
+      "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/assets/main-DF1JFR90.css"
+    ]
+  },
+  "captures": {
+    "32x32": {
+      "file": "32x32.png",
+      "state": {
+        "palette": [
+          {
+            "id": "coral",
+            "css": "#d8664b"
+          },
+          {
+            "id": "leaf",
+            "css": "#74a56a"
+          },
+          {
+            "id": "sky",
+            "css": "#5f8fca"
+          }
+        ],
+        "settings": {
+          "available": false
+        },
+        "activeOrientation": null,
+        "pendingHostAction": null,
+        "lastResult": null,
+        "fixtureViewport": {
+          "width": 32,
+          "height": 32
+        },
+        "designDirection": "seam",
+        "designState": "default"
+      },
+      "geometry": {
+        "panel": {
+          "x": 0,
+          "y": 0,
+          "width": 32,
+          "height": 32
+        },
+        "controls": {
+          "palette-strip": {
+            "x": 0,
+            "y": 0,
+            "width": 0,
+            "height": 0
+          },
+          "swatch-coral": {
+            "x": 0,
+            "y": 0,
+            "width": 0,
+            "height": 0
+          },
+          "remove-coral": {
+            "x": 0,
+            "y": 0,
+            "width": 0,
+            "height": 0
+          },
+          "swatch-leaf": {
+            "x": 0,
+            "y": 0,
+            "width": 0,
+            "height": 0
+          },
+          "remove-leaf": {
+            "x": 0,
+            "y": 0,
+            "width": 0,
+            "height": 0
+          },
+          "swatch-sky": {
+            "x": 0,
+            "y": 0,
+            "width": 0,
+            "height": 0
+          },
+          "remove-sky": {
+            "x": 0,
+            "y": 0,
+            "width": 0,
+            "height": 0
+          },
+          "palette-add": {
+            "x": 3,
+            "y": 3,
+            "width": 26,
+            "height": 26
+          },
+          "status-output": {
+            "x": 0,
+            "y": 0,
+            "width": 0,
+            "height": 0
+          }
+        }
+      }
+    },
+    "160x32": {
+      "file": "160x32.png",
+      "state": {
+        "palette": [
+          {
+            "id": "coral",
+            "css": "#d8664b"
+          },
+          {
+            "id": "leaf",
+            "css": "#74a56a"
+          },
+          {
+            "id": "sky",
+            "css": "#5f8fca"
+          }
+        ],
+        "settings": {
+          "available": false
+        },
+        "activeOrientation": null,
+        "pendingHostAction": null,
+        "lastResult": null,
+        "fixtureViewport": {
+          "width": 160,
+          "height": 32
+        },
+        "designDirection": "seam",
+        "designState": "default"
+      },
+      "geometry": {
+        "panel": {
+          "x": 0,
+          "y": 0,
+          "width": 160,
+          "height": 32
+        },
+        "controls": {
+          "palette-strip": {
+            "x": 2,
+            "y": 2,
+            "width": 128,
+            "height": 28
+          },
+          "swatch-coral": {
+            "x": 2,
+            "y": 2,
+            "width": 42,
+            "height": 28
+          },
+          "remove-coral": {
+            "x": 29,
+            "y": 4,
+            "width": 13,
+            "height": 13
+          },
+          "swatch-leaf": {
+            "x": 45,
+            "y": 2,
+            "width": 42,
+            "height": 28
+          },
+          "remove-leaf": {
+            "x": 72,
+            "y": 4,
+            "width": 13,
+            "height": 13
+          },
+          "swatch-sky": {
+            "x": 88,
+            "y": 2,
+            "width": 42,
+            "height": 28
+          },
+          "remove-sky": {
+            "x": 115,
+            "y": 4,
+            "width": 13,
+            "height": 13
+          },
+          "palette-add": {
+            "x": 132,
+            "y": 2,
+            "width": 26,
+            "height": 28
+          },
+          "status-output": {
+            "x": 0,
+            "y": 0,
+            "width": 0,
+            "height": 0
+          }
+        }
+      }
+    },
+    "32x160": {
+      "file": "32x160.png",
+      "state": {
+        "palette": [
+          {
+            "id": "coral",
+            "css": "#d8664b"
+          },
+          {
+            "id": "leaf",
+            "css": "#74a56a"
+          },
+          {
+            "id": "sky",
+            "css": "#5f8fca"
+          }
+        ],
+        "settings": {
+          "available": false
+        },
+        "activeOrientation": null,
+        "pendingHostAction": null,
+        "lastResult": null,
+        "fixtureViewport": {
+          "width": 32,
+          "height": 160
+        },
+        "designDirection": "seam",
+        "designState": "default"
+      },
+      "geometry": {
+        "panel": {
+          "x": 0,
+          "y": 0,
+          "width": 32,
+          "height": 160
+        },
+        "controls": {
+          "palette-strip": {
+            "x": 2,
+            "y": 2,
+            "width": 28,
+            "height": 128
+          },
+          "swatch-coral": {
+            "x": 2,
+            "y": 2,
+            "width": 28,
+            "height": 42
+          },
+          "remove-coral": {
+            "x": 15,
+            "y": 4,
+            "width": 13,
+            "height": 13
+          },
+          "swatch-leaf": {
+            "x": 2,
+            "y": 45,
+            "width": 28,
+            "height": 42
+          },
+          "remove-leaf": {
+            "x": 15,
+            "y": 47,
+            "width": 13,
+            "height": 13
+          },
+          "swatch-sky": {
+            "x": 2,
+            "y": 88,
+            "width": 28,
+            "height": 42
+          },
+          "remove-sky": {
+            "x": 15,
+            "y": 90,
+            "width": 13,
+            "height": 13
+          },
+          "palette-add": {
+            "x": 2,
+            "y": 132,
+            "width": 28,
+            "height": 26
+          },
+          "status-output": {
+            "x": 0,
+            "y": 0,
+            "width": 0,
+            "height": 0
+          }
+        }
+      }
+    },
+    "200x200": {
+      "file": "200x200.png",
+      "state": {
+        "palette": [
+          {
+            "id": "coral",
+            "css": "#d8664b"
+          },
+          {
+            "id": "leaf",
+            "css": "#74a56a"
+          },
+          {
+            "id": "sky",
+            "css": "#5f8fca"
+          }
+        ],
+        "settings": {
+          "available": false
+        },
+        "activeOrientation": null,
+        "pendingHostAction": null,
+        "lastResult": null,
+        "fixtureViewport": {
+          "width": 200,
+          "height": 200
+        },
+        "designDirection": "seam",
+        "designState": "default"
+      },
+      "geometry": {
+        "panel": {
+          "x": 0,
+          "y": 0,
+          "width": 200,
+          "height": 200
+        },
+        "controls": {
+          "palette-strip": {
+            "x": 2,
+            "y": 2,
+            "width": 168,
+            "height": 196
+          },
+          "swatch-coral": {
+            "x": 2,
+            "y": 2,
+            "width": 55.3359375,
+            "height": 196
+          },
+          "remove-coral": {
+            "x": 42.3359375,
+            "y": 4,
+            "width": 13,
+            "height": 13
+          },
+          "swatch-leaf": {
+            "x": 58.3359375,
+            "y": 2,
+            "width": 55.3359375,
+            "height": 196
+          },
+          "remove-leaf": {
+            "x": 98.671875,
+            "y": 4,
+            "width": 13,
+            "height": 13
+          },
+          "swatch-sky": {
+            "x": 114.671875,
+            "y": 2,
+            "width": 55.3359375,
+            "height": 196
+          },
+          "remove-sky": {
+            "x": 155.0078125,
+            "y": 4,
+            "width": 13,
+            "height": 13
+          },
+          "palette-add": {
+            "x": 172,
+            "y": 2,
+            "width": 26,
+            "height": 196
+          },
+          "status-output": {
+            "x": 0,
+            "y": 0,
+            "width": 0,
+            "height": 0
+          }
+        }
+      }
+    },
+    "state-interaction": {
+      "file": "state-interaction.png",
+      "evidence": {
+        "swatchCount": 3,
+        "previewClassCount": 3,
+        "addDisabled": false,
+        "statusText": ""
+      }
+    },
+    "state-empty": {
+      "file": "state-empty.png",
+      "evidence": {
+        "swatchCount": 0,
+        "previewClassCount": 0,
+        "addDisabled": false,
+        "statusText": "Select color properties, then add"
+      }
+    },
+    "state-disabled": {
+      "file": "state-disabled.png",
+      "evidence": {
+        "swatchCount": 3,
+        "previewClassCount": 0,
+        "addDisabled": true,
+        "statusText": ""
+      }
+    },
+    "state-error": {
+      "file": "state-error.png",
+      "evidence": {
+        "swatchCount": 3,
+        "previewClassCount": 0,
+        "addDisabled": false,
+        "statusText": "No supported colors selected"
+      }
+    }
+  },
+  "counters": {
+    "diskWrites": 0,
+    "emittedEvents": 0,
+    "receivedEvents": 0,
+    "hostCalls": 0
+  },
+  "consoleEvidence": {
+    "console": [
+      {
+        "type": "log",
+        "values": [
+          "/Users/REDACTED/Library/Application Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/jsx/index.js"
+        ]
+      },
+      {
+        "type": "log",
+        "values": [
+          "buildContextMenu"
+        ]
+      },
+      {
+        "type": "info",
+        "values": [
+          "[Chroma Relay][I02][main] loaded"
+        ]
+      }
+    ],
+    "exceptions": [],
+    "logs": []
+  },
+  "note": "Fixture orientation is an I03 debug preview; automatic ResizeObserver behavior belongs to I04."
+}

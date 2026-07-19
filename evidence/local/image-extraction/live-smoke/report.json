@@ -1,0 +1,1224 @@
+{
+  "capturedAt": "2026-07-17T20:45:31.145Z",
+  "passed": true,
+  "mode": "image",
+  "temporaryRoot": "/private/tmp/chroma-relay-image-extraction",
+  "cases": [
+    {
+      "fixture": {
+        "format": "png",
+        "path": "/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/tests/fixtures/image-extraction/fixture.png"
+      },
+      "preset": "balanced",
+      "imported": {
+        "ok": true,
+        "id": 232,
+        "name": "CP_IMAGE_FIXTURE_PNG",
+        "path": "/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/tests/fixtures/image-extraction/fixture.png",
+        "selectedItems": 1
+      },
+      "elapsedMs": 625,
+      "state": {
+        "palette": [
+          {
+            "id": "color-1-1",
+            "rgba": [
+              0.807843137254902,
+              0.2784313725490196,
+              0.30980392156862746,
+              1
+            ],
+            "css": "rgba(206, 71, 79, 1)"
+          },
+          {
+            "id": "color-1-2",
+            "rgba": [
+              0.9529411764705882,
+              0.7490196078431373,
+              0.24313725490196078,
+              0.7607843137254902
+            ],
+            "css": "rgba(243, 191, 62, 0.7607843137254902)"
+          },
+          {
+            "id": "color-1-3",
+            "rgba": [
+              0.6705882352941176,
+              0.5450980392156862,
+              0.3215686274509804,
+              1
+            ],
+            "css": "rgba(171, 139, 82, 1)"
+          },
+          {
+            "id": "color-1-4",
+            "rgba": [
+              0.3215686274509804,
+              0.6392156862745098,
+              0.48627450980392156,
+              1
+            ],
+            "css": "rgba(82, 163, 124, 1)"
+          },
+          {
+            "id": "color-1-5",
+            "rgba": [
+              0.29411764705882354,
+              0.29411764705882354,
+              0.5529411764705883,
+              1
+            ],
+            "css": "rgba(75, 75, 141, 1)"
+          }
+        ],
+        "paletteRevision": 1,
+        "paletteError": null,
+        "settings": {
+          "available": true,
+          "schemaVersion": 3,
+          "revision": 1,
+          "layoutMode": "fixed",
+          "swatchSize": 40,
+          "includeDisabledColors": false,
+          "extractionPreset": "balanced",
+          "error": null
+        },
+        "activeOrientation": "vertical",
+        "pendingHostAction": null,
+        "pendingPaletteMutation": false,
+        "draggingId": null,
+        "lastHostResult": {
+          "image": {
+            "status": "ok",
+            "path": "/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/tests/fixtures/image-extraction/fixture.png",
+            "name": "CP_IMAGE_FIXTURE_PNG",
+            "format": "png",
+            "selectedImageCount": 1
+          },
+          "extraction": {
+            "preset": "balanced",
+            "colors": [
+              [
+                0.807843137254902,
+                0.2784313725490196,
+                0.30980392156862746,
+                1
+              ],
+              [
+                0.9529411764705882,
+                0.7490196078431373,
+                0.24313725490196078,
+                0.7607843137254902
+              ],
+              [
+                0.6705882352941176,
+                0.5450980392156862,
+                0.3215686274509804,
+                1
+              ],
+              [
+                0.3215686274509804,
+                0.6392156862745098,
+                0.48627450980392156,
+                1
+              ],
+              [
+                0.29411764705882354,
+                0.29411764705882354,
+                0.5529411764705883,
+                1
+              ]
+            ],
+            "fallbackUsed": false,
+            "inputPixelCount": 11520,
+            "uniqueColorCount": 8063
+          }
+        },
+        "lastResult": "Added 5 colors from CP_IMAGE_FIXTURE_PNG",
+        "fixtureViewport": null,
+        "designState": "default"
+      },
+      "counters": {
+        "diskWrites": 1,
+        "emittedEvents": 0,
+        "receivedEvents": 0,
+        "hostCalls": 1
+      },
+      "stored": {
+        "schemaVersion": 1,
+        "revision": 1,
+        "colors": [
+          {
+            "id": "color-1-1",
+            "rgba": [
+              0.807843137254902,
+              0.2784313725490196,
+              0.30980392156862746,
+              1
+            ]
+          },
+          {
+            "id": "color-1-2",
+            "rgba": [
+              0.9529411764705882,
+              0.7490196078431373,
+              0.24313725490196078,
+              0.7607843137254902
+            ]
+          },
+          {
+            "id": "color-1-3",
+            "rgba": [
+              0.6705882352941176,
+              0.5450980392156862,
+              0.3215686274509804,
+              1
+            ]
+          },
+          {
+            "id": "color-1-4",
+            "rgba": [
+              0.3215686274509804,
+              0.6392156862745098,
+              0.48627450980392156,
+              1
+            ]
+          },
+          {
+            "id": "color-1-5",
+            "rgba": [
+              0.29411764705882354,
+              0.29411764705882354,
+              0.5529411764705883,
+              1
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "fixture": {
+        "format": "png",
+        "path": "/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/tests/fixtures/image-extraction/fixture.png"
+      },
+      "preset": "tonal",
+      "imported": {
+        "ok": true,
+        "id": 233,
+        "name": "CP_IMAGE_FIXTURE_PNG",
+        "path": "/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/tests/fixtures/image-extraction/fixture.png",
+        "selectedItems": 1
+      },
+      "elapsedMs": 187,
+      "state": {
+        "palette": [
+          {
+            "id": "color-1-1",
+            "rgba": [
+              0.796078431372549,
+              0.33725490196078434,
+              0.3058823529411765,
+              0.996078431372549
+            ],
+            "css": "rgba(203, 86, 78, 0.996078431372549)"
+          },
+          {
+            "id": "color-1-2",
+            "rgba": [
+              0.8156862745098039,
+              0.6588235294117647,
+              0.2784313725490196,
+              0.8862745098039215
+            ],
+            "css": "rgba(208, 168, 71, 0.8862745098039215)"
+          },
+          {
+            "id": "color-1-3",
+            "rgba": [
+              0.3686274509803922,
+              0.6666666666666666,
+              0.45098039215686275,
+              1
+            ],
+            "css": "rgba(94, 170, 115, 1)"
+          },
+          {
+            "id": "color-1-4",
+            "rgba": [
+              0.2823529411764706,
+              0.4823529411764706,
+              0.5607843137254902,
+              1
+            ],
+            "css": "rgba(72, 123, 143, 1)"
+          },
+          {
+            "id": "color-1-5",
+            "rgba": [
+              0.3686274509803922,
+              0.21568627450980393,
+              0.5058823529411764,
+              1
+            ],
+            "css": "rgba(94, 55, 129, 1)"
+          }
+        ],
+        "paletteRevision": 1,
+        "paletteError": null,
+        "settings": {
+          "available": true,
+          "schemaVersion": 3,
+          "revision": 1,
+          "layoutMode": "fixed",
+          "swatchSize": 40,
+          "includeDisabledColors": false,
+          "extractionPreset": "tonal",
+          "error": null
+        },
+        "activeOrientation": "vertical",
+        "pendingHostAction": null,
+        "pendingPaletteMutation": false,
+        "draggingId": null,
+        "lastHostResult": {
+          "image": {
+            "status": "ok",
+            "path": "/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/tests/fixtures/image-extraction/fixture.png",
+            "name": "CP_IMAGE_FIXTURE_PNG",
+            "format": "png",
+            "selectedImageCount": 1
+          },
+          "extraction": {
+            "preset": "tonal",
+            "colors": [
+              [
+                0.796078431372549,
+                0.33725490196078434,
+                0.3058823529411765,
+                0.996078431372549
+              ],
+              [
+                0.8156862745098039,
+                0.6588235294117647,
+                0.2784313725490196,
+                0.8862745098039215
+              ],
+              [
+                0.3686274509803922,
+                0.6666666666666666,
+                0.45098039215686275,
+                1
+              ],
+              [
+                0.2823529411764706,
+                0.4823529411764706,
+                0.5607843137254902,
+                1
+              ],
+              [
+                0.3686274509803922,
+                0.21568627450980393,
+                0.5058823529411764,
+                1
+              ]
+            ],
+            "fallbackUsed": false,
+            "inputPixelCount": 11520,
+            "uniqueColorCount": 8063
+          }
+        },
+        "lastResult": "Added 5 colors from CP_IMAGE_FIXTURE_PNG",
+        "fixtureViewport": null,
+        "designState": "default"
+      },
+      "counters": {
+        "diskWrites": 1,
+        "emittedEvents": 0,
+        "receivedEvents": 0,
+        "hostCalls": 1
+      },
+      "stored": {
+        "schemaVersion": 1,
+        "revision": 1,
+        "colors": [
+          {
+            "id": "color-1-1",
+            "rgba": [
+              0.796078431372549,
+              0.33725490196078434,
+              0.3058823529411765,
+              0.996078431372549
+            ]
+          },
+          {
+            "id": "color-1-2",
+            "rgba": [
+              0.8156862745098039,
+              0.6588235294117647,
+              0.2784313725490196,
+              0.8862745098039215
+            ]
+          },
+          {
+            "id": "color-1-3",
+            "rgba": [
+              0.3686274509803922,
+              0.6666666666666666,
+              0.45098039215686275,
+              1
+            ]
+          },
+          {
+            "id": "color-1-4",
+            "rgba": [
+              0.2823529411764706,
+              0.4823529411764706,
+              0.5607843137254902,
+              1
+            ]
+          },
+          {
+            "id": "color-1-5",
+            "rgba": [
+              0.3686274509803922,
+              0.21568627450980393,
+              0.5058823529411764,
+              1
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "fixture": {
+        "format": "png",
+        "path": "/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/tests/fixtures/image-extraction/fixture.png"
+      },
+      "preset": "contrast",
+      "imported": {
+        "ok": true,
+        "id": 234,
+        "name": "CP_IMAGE_FIXTURE_PNG",
+        "path": "/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/tests/fixtures/image-extraction/fixture.png",
+        "selectedItems": 1
+      },
+      "elapsedMs": 515,
+      "state": {
+        "palette": [
+          {
+            "id": "color-1-1",
+            "rgba": [
+              0.9215686274509803,
+              0.2901960784313726,
+              0.3215686274509804,
+              1
+            ],
+            "css": "rgba(235, 74, 82, 1)"
+          },
+          {
+            "id": "color-1-2",
+            "rgba": [
+              0.9686274509803922,
+              0.7568627450980392,
+              0.24313725490196078,
+              0.7450980392156863
+            ],
+            "css": "rgba(247, 193, 62, 0.7450980392156863)"
+          },
+          {
+            "id": "color-1-3",
+            "rgba": [
+              0.21176470588235294,
+              0.7450980392156863,
+              0.47058823529411764,
+              1
+            ],
+            "css": "rgba(54, 190, 120, 1)"
+          },
+          {
+            "id": "color-1-4",
+            "rgba": [
+              0.8313725490196079,
+              0.25882352941176473,
+              0.3058823529411765,
+              1
+            ],
+            "css": "rgba(212, 66, 78, 1)"
+          },
+          {
+            "id": "color-1-5",
+            "rgba": [
+              0.9568627450980393,
+              0.7490196078431373,
+              0.24313725490196078,
+              0.7568627450980392
+            ],
+            "css": "rgba(244, 191, 62, 0.7568627450980392)"
+          }
+        ],
+        "paletteRevision": 1,
+        "paletteError": null,
+        "settings": {
+          "available": true,
+          "schemaVersion": 3,
+          "revision": 1,
+          "layoutMode": "fixed",
+          "swatchSize": 40,
+          "includeDisabledColors": false,
+          "extractionPreset": "contrast",
+          "error": null
+        },
+        "activeOrientation": "vertical",
+        "pendingHostAction": null,
+        "pendingPaletteMutation": false,
+        "draggingId": null,
+        "lastHostResult": {
+          "image": {
+            "status": "ok",
+            "path": "/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/tests/fixtures/image-extraction/fixture.png",
+            "name": "CP_IMAGE_FIXTURE_PNG",
+            "format": "png",
+            "selectedImageCount": 1
+          },
+          "extraction": {
+            "preset": "contrast",
+            "colors": [
+              [
+                0.9215686274509803,
+                0.2901960784313726,
+                0.3215686274509804,
+                1
+              ],
+              [
+                0.9686274509803922,
+                0.7568627450980392,
+                0.24313725490196078,
+                0.7450980392156863
+              ],
+              [
+                0.21176470588235294,
+                0.7450980392156863,
+                0.47058823529411764,
+                1
+              ],
+              [
+                0.8313725490196079,
+                0.25882352941176473,
+                0.3058823529411765,
+                1
+              ],
+              [
+                0.9568627450980393,
+                0.7490196078431373,
+                0.24313725490196078,
+                0.7568627450980392
+              ]
+            ],
+            "fallbackUsed": true,
+            "inputPixelCount": 11520,
+            "uniqueColorCount": 8063
+          }
+        },
+        "lastResult": "Added 5 colors from CP_IMAGE_FIXTURE_PNG",
+        "fixtureViewport": null,
+        "designState": "default"
+      },
+      "counters": {
+        "diskWrites": 1,
+        "emittedEvents": 0,
+        "receivedEvents": 0,
+        "hostCalls": 1
+      },
+      "stored": {
+        "schemaVersion": 1,
+        "revision": 1,
+        "colors": [
+          {
+            "id": "color-1-1",
+            "rgba": [
+              0.9215686274509803,
+              0.2901960784313726,
+              0.3215686274509804,
+              1
+            ]
+          },
+          {
+            "id": "color-1-2",
+            "rgba": [
+              0.9686274509803922,
+              0.7568627450980392,
+              0.24313725490196078,
+              0.7450980392156863
+            ]
+          },
+          {
+            "id": "color-1-3",
+            "rgba": [
+              0.21176470588235294,
+              0.7450980392156863,
+              0.47058823529411764,
+              1
+            ]
+          },
+          {
+            "id": "color-1-4",
+            "rgba": [
+              0.8313725490196079,
+              0.25882352941176473,
+              0.3058823529411765,
+              1
+            ]
+          },
+          {
+            "id": "color-1-5",
+            "rgba": [
+              0.9568627450980393,
+              0.7490196078431373,
+              0.24313725490196078,
+              0.7568627450980392
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "fixture": {
+        "format": "jpg",
+        "path": "/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/tests/fixtures/image-extraction/fixture.jpg"
+      },
+      "preset": "balanced",
+      "imported": {
+        "ok": true,
+        "id": 235,
+        "name": "CP_IMAGE_FIXTURE_JPG",
+        "path": "/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/tests/fixtures/image-extraction/fixture.jpg",
+        "selectedItems": 1
+      },
+      "elapsedMs": 516,
+      "state": {
+        "palette": [
+          {
+            "id": "color-1-1",
+            "rgba": [
+              0.8117647058823529,
+              0.27450980392156865,
+              0.30980392156862746,
+              1
+            ],
+            "css": "rgba(207, 70, 79, 1)"
+          },
+          {
+            "id": "color-1-2",
+            "rgba": [
+              0.9411764705882353,
+              0.8470588235294118,
+              0.6078431372549019,
+              1
+            ],
+            "css": "rgba(240, 216, 155, 1)"
+          },
+          {
+            "id": "color-1-3",
+            "rgba": [
+              0.6745098039215687,
+              0.5450980392156862,
+              0.3176470588235294,
+              1
+            ],
+            "css": "rgba(172, 139, 81, 1)"
+          },
+          {
+            "id": "color-1-4",
+            "rgba": [
+              0.3215686274509804,
+              0.6352941176470588,
+              0.48627450980392156,
+              1
+            ],
+            "css": "rgba(82, 162, 124, 1)"
+          },
+          {
+            "id": "color-1-5",
+            "rgba": [
+              0.29411764705882354,
+              0.2901960784313726,
+              0.5529411764705883,
+              1
+            ],
+            "css": "rgba(75, 74, 141, 1)"
+          }
+        ],
+        "paletteRevision": 1,
+        "paletteError": null,
+        "settings": {
+          "available": true,
+          "schemaVersion": 3,
+          "revision": 1,
+          "layoutMode": "fixed",
+          "swatchSize": 40,
+          "includeDisabledColors": false,
+          "extractionPreset": "balanced",
+          "error": null
+        },
+        "activeOrientation": "vertical",
+        "pendingHostAction": null,
+        "pendingPaletteMutation": false,
+        "draggingId": null,
+        "lastHostResult": {
+          "image": {
+            "status": "ok",
+            "path": "/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/tests/fixtures/image-extraction/fixture.jpg",
+            "name": "CP_IMAGE_FIXTURE_JPG",
+            "format": "jpg",
+            "selectedImageCount": 1
+          },
+          "extraction": {
+            "preset": "balanced",
+            "colors": [
+              [
+                0.8117647058823529,
+                0.27450980392156865,
+                0.30980392156862746,
+                1
+              ],
+              [
+                0.9411764705882353,
+                0.8470588235294118,
+                0.6078431372549019,
+                1
+              ],
+              [
+                0.6745098039215687,
+                0.5450980392156862,
+                0.3176470588235294,
+                1
+              ],
+              [
+                0.3215686274509804,
+                0.6352941176470588,
+                0.48627450980392156,
+                1
+              ],
+              [
+                0.29411764705882354,
+                0.2901960784313726,
+                0.5529411764705883,
+                1
+              ]
+            ],
+            "fallbackUsed": false,
+            "inputPixelCount": 12288,
+            "uniqueColorCount": 7363
+          }
+        },
+        "lastResult": "Added 5 colors from CP_IMAGE_FIXTURE_JPG",
+        "fixtureViewport": null,
+        "designState": "default"
+      },
+      "counters": {
+        "diskWrites": 1,
+        "emittedEvents": 0,
+        "receivedEvents": 0,
+        "hostCalls": 1
+      },
+      "stored": {
+        "schemaVersion": 1,
+        "revision": 1,
+        "colors": [
+          {
+            "id": "color-1-1",
+            "rgba": [
+              0.8117647058823529,
+              0.27450980392156865,
+              0.30980392156862746,
+              1
+            ]
+          },
+          {
+            "id": "color-1-2",
+            "rgba": [
+              0.9411764705882353,
+              0.8470588235294118,
+              0.6078431372549019,
+              1
+            ]
+          },
+          {
+            "id": "color-1-3",
+            "rgba": [
+              0.6745098039215687,
+              0.5450980392156862,
+              0.3176470588235294,
+              1
+            ]
+          },
+          {
+            "id": "color-1-4",
+            "rgba": [
+              0.3215686274509804,
+              0.6352941176470588,
+              0.48627450980392156,
+              1
+            ]
+          },
+          {
+            "id": "color-1-5",
+            "rgba": [
+              0.29411764705882354,
+              0.2901960784313726,
+              0.5529411764705883,
+              1
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "fixture": {
+        "format": "jpg",
+        "path": "/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/tests/fixtures/image-extraction/fixture.jpg"
+      },
+      "preset": "tonal",
+      "imported": {
+        "ok": true,
+        "id": 236,
+        "name": "CP_IMAGE_FIXTURE_JPG",
+        "path": "/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/tests/fixtures/image-extraction/fixture.jpg",
+        "selectedItems": 1
+      },
+      "elapsedMs": 185,
+      "state": {
+        "palette": [
+          {
+            "id": "color-1-1",
+            "rgba": [
+              0.788235294117647,
+              0.2980392156862745,
+              0.3137254901960784,
+              1
+            ],
+            "css": "rgba(201, 76, 80, 1)"
+          },
+          {
+            "id": "color-1-2",
+            "rgba": [
+              0.8196078431372549,
+              0.6627450980392157,
+              0.3607843137254902,
+              1
+            ],
+            "css": "rgba(209, 169, 92, 1)"
+          },
+          {
+            "id": "color-1-3",
+            "rgba": [
+              0.3607843137254902,
+              0.6705882352941176,
+              0.4588235294117647,
+              1
+            ],
+            "css": "rgba(92, 171, 117, 1)"
+          },
+          {
+            "id": "color-1-4",
+            "rgba": [
+              0.6431372549019608,
+              0.7137254901960784,
+              0.7058823529411765,
+              1
+            ],
+            "css": "rgba(164, 182, 180, 1)"
+          },
+          {
+            "id": "color-1-5",
+            "rgba": [
+              0.29411764705882354,
+              0.3176470588235294,
+              0.5529411764705883,
+              1
+            ],
+            "css": "rgba(75, 81, 141, 1)"
+          }
+        ],
+        "paletteRevision": 1,
+        "paletteError": null,
+        "settings": {
+          "available": true,
+          "schemaVersion": 3,
+          "revision": 1,
+          "layoutMode": "fixed",
+          "swatchSize": 40,
+          "includeDisabledColors": false,
+          "extractionPreset": "tonal",
+          "error": null
+        },
+        "activeOrientation": "vertical",
+        "pendingHostAction": null,
+        "pendingPaletteMutation": false,
+        "draggingId": null,
+        "lastHostResult": {
+          "image": {
+            "status": "ok",
+            "path": "/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/tests/fixtures/image-extraction/fixture.jpg",
+            "name": "CP_IMAGE_FIXTURE_JPG",
+            "format": "jpg",
+            "selectedImageCount": 1
+          },
+          "extraction": {
+            "preset": "tonal",
+            "colors": [
+              [
+                0.788235294117647,
+                0.2980392156862745,
+                0.3137254901960784,
+                1
+              ],
+              [
+                0.8196078431372549,
+                0.6627450980392157,
+                0.3607843137254902,
+                1
+              ],
+              [
+                0.3607843137254902,
+                0.6705882352941176,
+                0.4588235294117647,
+                1
+              ],
+              [
+                0.6431372549019608,
+                0.7137254901960784,
+                0.7058823529411765,
+                1
+              ],
+              [
+                0.29411764705882354,
+                0.3176470588235294,
+                0.5529411764705883,
+                1
+              ]
+            ],
+            "fallbackUsed": false,
+            "inputPixelCount": 12288,
+            "uniqueColorCount": 7363
+          }
+        },
+        "lastResult": "Added 5 colors from CP_IMAGE_FIXTURE_JPG",
+        "fixtureViewport": null,
+        "designState": "default"
+      },
+      "counters": {
+        "diskWrites": 1,
+        "emittedEvents": 0,
+        "receivedEvents": 0,
+        "hostCalls": 1
+      },
+      "stored": {
+        "schemaVersion": 1,
+        "revision": 1,
+        "colors": [
+          {
+            "id": "color-1-1",
+            "rgba": [
+              0.788235294117647,
+              0.2980392156862745,
+              0.3137254901960784,
+              1
+            ]
+          },
+          {
+            "id": "color-1-2",
+            "rgba": [
+              0.8196078431372549,
+              0.6627450980392157,
+              0.3607843137254902,
+              1
+            ]
+          },
+          {
+            "id": "color-1-3",
+            "rgba": [
+              0.3607843137254902,
+              0.6705882352941176,
+              0.4588235294117647,
+              1
+            ]
+          },
+          {
+            "id": "color-1-4",
+            "rgba": [
+              0.6431372549019608,
+              0.7137254901960784,
+              0.7058823529411765,
+              1
+            ]
+          },
+          {
+            "id": "color-1-5",
+            "rgba": [
+              0.29411764705882354,
+              0.3176470588235294,
+              0.5529411764705883,
+              1
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "fixture": {
+        "format": "jpg",
+        "path": "/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/tests/fixtures/image-extraction/fixture.jpg"
+      },
+      "preset": "contrast",
+      "imported": {
+        "ok": true,
+        "id": 237,
+        "name": "CP_IMAGE_FIXTURE_JPG",
+        "path": "/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/tests/fixtures/image-extraction/fixture.jpg",
+        "selectedItems": 1
+      },
+      "elapsedMs": 116,
+      "state": {
+        "palette": [
+          {
+            "id": "color-1-1",
+            "rgba": [
+              0.9490196078431372,
+              0.9490196078431372,
+              0.9490196078431372,
+              1
+            ],
+            "css": "rgba(242, 242, 242, 1)"
+          },
+          {
+            "id": "color-1-2",
+            "rgba": [
+              0.9215686274509803,
+              0.2901960784313726,
+              0.3215686274509804,
+              1
+            ],
+            "css": "rgba(235, 74, 82, 1)"
+          },
+          {
+            "id": "color-1-3",
+            "rgba": [
+              0.7803921568627451,
+              0.5058823529411764,
+              0.2627450980392157,
+              1
+            ],
+            "css": "rgba(199, 129, 67, 1)"
+          },
+          {
+            "id": "color-1-4",
+            "rgba": [
+              0.21176470588235294,
+              0.7411764705882353,
+              0.47058823529411764,
+              1
+            ],
+            "css": "rgba(54, 189, 120, 1)"
+          },
+          {
+            "id": "color-1-5",
+            "rgba": [
+              0.3803921568627451,
+              0.14901960784313725,
+              0.5019607843137255,
+              1
+            ],
+            "css": "rgba(97, 38, 128, 1)"
+          }
+        ],
+        "paletteRevision": 1,
+        "paletteError": null,
+        "settings": {
+          "available": true,
+          "schemaVersion": 3,
+          "revision": 1,
+          "layoutMode": "fixed",
+          "swatchSize": 40,
+          "includeDisabledColors": false,
+          "extractionPreset": "contrast",
+          "error": null
+        },
+        "activeOrientation": "vertical",
+        "pendingHostAction": null,
+        "pendingPaletteMutation": false,
+        "draggingId": null,
+        "lastHostResult": {
+          "image": {
+            "status": "ok",
+            "path": "/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/tests/fixtures/image-extraction/fixture.jpg",
+            "name": "CP_IMAGE_FIXTURE_JPG",
+            "format": "jpg",
+            "selectedImageCount": 1
+          },
+          "extraction": {
+            "preset": "contrast",
+            "colors": [
+              [
+                0.9490196078431372,
+                0.9490196078431372,
+                0.9490196078431372,
+                1
+              ],
+              [
+                0.9215686274509803,
+                0.2901960784313726,
+                0.3215686274509804,
+                1
+              ],
+              [
+                0.7803921568627451,
+                0.5058823529411764,
+                0.2627450980392157,
+                1
+              ],
+              [
+                0.21176470588235294,
+                0.7411764705882353,
+                0.47058823529411764,
+                1
+              ],
+              [
+                0.3803921568627451,
+                0.14901960784313725,
+                0.5019607843137255,
+                1
+              ]
+            ],
+            "fallbackUsed": false,
+            "inputPixelCount": 12288,
+            "uniqueColorCount": 7363
+          }
+        },
+        "lastResult": "Added 5 colors from CP_IMAGE_FIXTURE_JPG",
+        "fixtureViewport": null,
+        "designState": "default"
+      },
+      "counters": {
+        "diskWrites": 1,
+        "emittedEvents": 0,
+        "receivedEvents": 0,
+        "hostCalls": 1
+      },
+      "stored": {
+        "schemaVersion": 1,
+        "revision": 1,
+        "colors": [
+          {
+            "id": "color-1-1",
+            "rgba": [
+              0.9490196078431372,
+              0.9490196078431372,
+              0.9490196078431372,
+              1
+            ]
+          },
+          {
+            "id": "color-1-2",
+            "rgba": [
+              0.9215686274509803,
+              0.2901960784313726,
+              0.3215686274509804,
+              1
+            ]
+          },
+          {
+            "id": "color-1-3",
+            "rgba": [
+              0.7803921568627451,
+              0.5058823529411764,
+              0.2627450980392157,
+              1
+            ]
+          },
+          {
+            "id": "color-1-4",
+            "rgba": [
+              0.21176470588235294,
+              0.7411764705882353,
+              0.47058823529411764,
+              1
+            ]
+          },
+          {
+            "id": "color-1-5",
+            "rgba": [
+              0.3803921568627451,
+              0.14901960784313725,
+              0.5019607843137255,
+              1
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "visualGeometry": {
+    "orientation": "vertical",
+    "swatchCount": 5,
+    "addAfterLast": true,
+    "addInsideStage": true,
+    "statusDoesNotCoverAdd": true
+  },
+  "consoleEvidence": {
+    "console": [
+      {
+        "type": "log",
+        "values": [
+          "/Users/REDACTED/Library/Application Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/jsx/index.js"
+        ]
+      },
+      {
+        "type": "info",
+        "values": [
+          "[Chroma Relay][I11][main] loaded"
+        ]
+      },
+      {
+        "type": "log",
+        "values": [
+          "false"
+        ]
+      },
+      {
+        "type": "log",
+        "values": [
+          "false"
+        ]
+      },
+      {
+        "type": "log",
+        "values": [
+          "false"
+        ]
+      },
+      {
+        "type": "log",
+        "values": [
+          "false"
+        ]
+      },
+      {
+        "type": "log",
+        "values": [
+          "false"
+        ]
+      },
+      {
+        "type": "log",
+        "values": [
+          "false"
+        ]
+      }
+    ],
+    "exceptions": [],
+    "logs": []
+  },
+  "screenshots": [
+    "main-image-extracted.png"
+  ]
+}

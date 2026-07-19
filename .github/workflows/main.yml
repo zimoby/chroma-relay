@@ -1,0 +1,54 @@
+name: ZXP Release
+
+on:
+  push:
+    tags:
+      - "*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    strategy:
+      matrix:
+        node-version: [22.22.3]
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          persist-credentials: false
+      - name: Use Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v2
+        with:
+          node-version: ${{ matrix.node-version }}
+      # AE_NATIVE_GRADIENT_READ_TOKEN must be a fine-grained read-only Contents token scoped to zimoby/ae-native-gradient-toolkit.
+      - name: Install dependencies
+        shell: bash
+        env:
+          AE_NATIVE_GRADIENT_READ_TOKEN: ${{ secrets.AE_NATIVE_GRADIENT_READ_TOKEN }}
+          GIT_CONFIG_COUNT: "2"
+          GIT_CONFIG_KEY_0: url.https://github.com/.insteadOf
+          GIT_CONFIG_VALUE_0: ssh://git@github.com/
+          GIT_CONFIG_KEY_1: credential.helper
+          GIT_CONFIG_VALUE_1: >-
+            !f() { test "$1" = get || exit 0; printf '%s\n' 'username=x-access-token' "password=$AE_NATIVE_GRADIENT_READ_TOKEN"; }; f
+        run: |
+          if [ -z "$AE_NATIVE_GRADIENT_READ_TOKEN" ]; then
+            echo "::error::AE_NATIVE_GRADIENT_READ_TOKEN is required for the private Git dependency" >&2
+            exit 1
+          fi
+          npm ci
+      - run: npm run zxp
+
+      - name: GitHub Release
+        uses: softprops/action-gh-release@v1
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_NAME: ${{ steps.extract_names.outputs.SOURCE_NAME }}
+          SOURCE_BRANCH: ${{ steps.extract_names.outputs.SOURCE_BRANCH }}
+          SOURCE_TAG: ${{ steps.extract_names.outputs.SOURCE_TAG }}
+        with:
+          files: "./dist/zxp/*"

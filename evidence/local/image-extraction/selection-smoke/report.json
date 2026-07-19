@@ -1,0 +1,1195 @@
+{
+  "capturedAt": "2026-07-17T20:44:49.020Z",
+  "passed": true,
+  "mode": "image-selection",
+  "temporaryRoot": "/private/tmp/chroma-relay-image-selection",
+  "staleCleanup": {
+    "removed": []
+  },
+  "colorFixture": {
+    "ok": true,
+    "compName": "CP_I07_I08_FIXTURE",
+    "exactColor": [
+      0.12345679104328,
+      0.34567892551422,
+      0.56789124011993,
+      1
+    ],
+    "duplicateColor": [
+      0.12345679104328,
+      0.34567892551422,
+      0.56789124011993,
+      1
+    ],
+    "expressionEnabled": true,
+    "keyframedColor": [
+      0.12345679104328,
+      0.34567892551422,
+      0.56789124011993,
+      1
+    ],
+    "keyCount": 2,
+    "gradientCreated": true,
+    "disabledGroupEnabled": false,
+    "disabledColor": [
+      0.81999999284744,
+      0.17000000178814,
+      0.28000000119209,
+      1
+    ],
+    "secondColor": [
+      0.15999999642372,
+      0.74000000953674,
+      0.41999998688698,
+      1
+    ],
+    "selectedLayerCount": 2,
+    "shapeSelectedPropertyCount": 4,
+    "textSelectedPropertyCount": 1
+  },
+  "layerFixture": {
+    "ok": true,
+    "compId": 216,
+    "itemId": 215,
+    "path": "/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/tests/fixtures/image-extraction/fixture.png",
+    "selectedLayers": 1,
+    "selectedItems": 0
+  },
+  "cases": [
+    {
+      "name": "selected-layer-source",
+      "selection": {
+        "ok": true,
+        "selectedLayers": 1,
+        "selectedItems": 0
+      },
+      "probe": {
+        "colors": {
+          "status": "no-supported-colors",
+          "colors": [],
+          "selectedPropertyCount": 0,
+          "unsupportedGradientCount": 0,
+          "unsupportedTextCount": 0,
+          "readErrorCount": 0
+        },
+        "image": {
+          "status": "ok",
+          "path": "/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/tests/fixtures/image-extraction/fixture.png",
+          "name": "CP_IMAGE_LAYER_PNG",
+          "format": "png",
+          "selectedImageCount": 1
+        }
+      },
+      "accepted": true,
+      "elapsedMs": 514,
+      "state": {
+        "palette": [
+          {
+            "id": "color-1-1",
+            "rgba": [
+              0.807843137254902,
+              0.2784313725490196,
+              0.30980392156862746,
+              1
+            ],
+            "css": "rgba(206, 71, 79, 1)"
+          },
+          {
+            "id": "color-1-2",
+            "rgba": [
+              0.9529411764705882,
+              0.7490196078431373,
+              0.24313725490196078,
+              0.7607843137254902
+            ],
+            "css": "rgba(243, 191, 62, 0.7607843137254902)"
+          },
+          {
+            "id": "color-1-3",
+            "rgba": [
+              0.6705882352941176,
+              0.5450980392156862,
+              0.3215686274509804,
+              1
+            ],
+            "css": "rgba(171, 139, 82, 1)"
+          },
+          {
+            "id": "color-1-4",
+            "rgba": [
+              0.3215686274509804,
+              0.6392156862745098,
+              0.48627450980392156,
+              1
+            ],
+            "css": "rgba(82, 163, 124, 1)"
+          },
+          {
+            "id": "color-1-5",
+            "rgba": [
+              0.29411764705882354,
+              0.29411764705882354,
+              0.5529411764705883,
+              1
+            ],
+            "css": "rgba(75, 75, 141, 1)"
+          }
+        ],
+        "paletteRevision": 1,
+        "paletteError": null,
+        "settings": {
+          "available": true,
+          "schemaVersion": 3,
+          "revision": 1,
+          "layoutMode": "fixed",
+          "swatchSize": 40,
+          "includeDisabledColors": false,
+          "extractionPreset": "balanced",
+          "error": null
+        },
+        "activeOrientation": "vertical",
+        "pendingHostAction": null,
+        "pendingPaletteMutation": false,
+        "draggingId": null,
+        "lastHostResult": {
+          "image": {
+            "status": "ok",
+            "path": "/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/tests/fixtures/image-extraction/fixture.png",
+            "name": "CP_IMAGE_LAYER_PNG",
+            "format": "png",
+            "selectedImageCount": 1
+          },
+          "extraction": {
+            "preset": "balanced",
+            "colors": [
+              [
+                0.807843137254902,
+                0.2784313725490196,
+                0.30980392156862746,
+                1
+              ],
+              [
+                0.9529411764705882,
+                0.7490196078431373,
+                0.24313725490196078,
+                0.7607843137254902
+              ],
+              [
+                0.6705882352941176,
+                0.5450980392156862,
+                0.3215686274509804,
+                1
+              ],
+              [
+                0.3215686274509804,
+                0.6392156862745098,
+                0.48627450980392156,
+                1
+              ],
+              [
+                0.29411764705882354,
+                0.29411764705882354,
+                0.5529411764705883,
+                1
+              ]
+            ],
+            "fallbackUsed": false,
+            "inputPixelCount": 11520,
+            "uniqueColorCount": 8063
+          }
+        },
+        "lastResult": "Added 5 colors from CP_IMAGE_LAYER_PNG",
+        "fixtureViewport": null,
+        "designState": "default"
+      },
+      "snapshot": {
+        "state": {
+          "palette": [
+            {
+              "id": "color-1-1",
+              "rgba": [
+                0.807843137254902,
+                0.2784313725490196,
+                0.30980392156862746,
+                1
+              ],
+              "css": "rgba(206, 71, 79, 1)"
+            },
+            {
+              "id": "color-1-2",
+              "rgba": [
+                0.9529411764705882,
+                0.7490196078431373,
+                0.24313725490196078,
+                0.7607843137254902
+              ],
+              "css": "rgba(243, 191, 62, 0.7607843137254902)"
+            },
+            {
+              "id": "color-1-3",
+              "rgba": [
+                0.6705882352941176,
+                0.5450980392156862,
+                0.3215686274509804,
+                1
+              ],
+              "css": "rgba(171, 139, 82, 1)"
+            },
+            {
+              "id": "color-1-4",
+              "rgba": [
+                0.3215686274509804,
+                0.6392156862745098,
+                0.48627450980392156,
+                1
+              ],
+              "css": "rgba(82, 163, 124, 1)"
+            },
+            {
+              "id": "color-1-5",
+              "rgba": [
+                0.29411764705882354,
+                0.29411764705882354,
+                0.5529411764705883,
+                1
+              ],
+              "css": "rgba(75, 75, 141, 1)"
+            }
+          ],
+          "paletteRevision": 1,
+          "paletteError": null,
+          "settings": {
+            "available": true,
+            "schemaVersion": 3,
+            "revision": 1,
+            "layoutMode": "fixed",
+            "swatchSize": 40,
+            "includeDisabledColors": false,
+            "extractionPreset": "balanced",
+            "error": null
+          },
+          "activeOrientation": "vertical",
+          "pendingHostAction": null,
+          "pendingPaletteMutation": false,
+          "draggingId": null,
+          "lastHostResult": {
+            "image": {
+              "status": "ok",
+              "path": "/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/tests/fixtures/image-extraction/fixture.png",
+              "name": "CP_IMAGE_LAYER_PNG",
+              "format": "png",
+              "selectedImageCount": 1
+            },
+            "extraction": {
+              "preset": "balanced",
+              "colors": [
+                [
+                  0.807843137254902,
+                  0.2784313725490196,
+                  0.30980392156862746,
+                  1
+                ],
+                [
+                  0.9529411764705882,
+                  0.7490196078431373,
+                  0.24313725490196078,
+                  0.7607843137254902
+                ],
+                [
+                  0.6705882352941176,
+                  0.5450980392156862,
+                  0.3215686274509804,
+                  1
+                ],
+                [
+                  0.3215686274509804,
+                  0.6392156862745098,
+                  0.48627450980392156,
+                  1
+                ],
+                [
+                  0.29411764705882354,
+                  0.29411764705882354,
+                  0.5529411764705883,
+                  1
+                ]
+              ],
+              "fallbackUsed": false,
+              "inputPixelCount": 11520,
+              "uniqueColorCount": 8063
+            }
+          },
+          "lastResult": "Added 5 colors from CP_IMAGE_LAYER_PNG",
+          "fixtureViewport": null,
+          "designState": "default"
+        },
+        "counters": {
+          "diskWrites": 1,
+          "emittedEvents": 0,
+          "receivedEvents": 0,
+          "hostCalls": 1
+        }
+      },
+      "stored": {
+        "schemaVersion": 1,
+        "revision": 1,
+        "colors": [
+          {
+            "id": "color-1-1",
+            "rgba": [
+              0.807843137254902,
+              0.2784313725490196,
+              0.30980392156862746,
+              1
+            ]
+          },
+          {
+            "id": "color-1-2",
+            "rgba": [
+              0.9529411764705882,
+              0.7490196078431373,
+              0.24313725490196078,
+              0.7607843137254902
+            ]
+          },
+          {
+            "id": "color-1-3",
+            "rgba": [
+              0.6705882352941176,
+              0.5450980392156862,
+              0.3215686274509804,
+              1
+            ]
+          },
+          {
+            "id": "color-1-4",
+            "rgba": [
+              0.3215686274509804,
+              0.6392156862745098,
+              0.48627450980392156,
+              1
+            ]
+          },
+          {
+            "id": "color-1-5",
+            "rgba": [
+              0.29411764705882354,
+              0.29411764705882354,
+              0.5529411764705883,
+              1
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "project-layer-same-source-deduped",
+      "selection": {
+        "ok": true,
+        "selectedLayers": 1,
+        "selectedItems": 1
+      },
+      "probe": {
+        "colors": {
+          "status": "no-supported-colors",
+          "colors": [],
+          "selectedPropertyCount": 0,
+          "unsupportedGradientCount": 0,
+          "unsupportedTextCount": 0,
+          "readErrorCount": 0
+        },
+        "image": {
+          "status": "ok",
+          "path": "/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/tests/fixtures/image-extraction/fixture.png",
+          "name": "CP_IMAGE_LAYER_PNG",
+          "format": "png",
+          "selectedImageCount": 1
+        }
+      },
+      "accepted": true,
+      "elapsedMs": 547,
+      "state": {
+        "palette": [
+          {
+            "id": "color-1-1",
+            "rgba": [
+              0.807843137254902,
+              0.2784313725490196,
+              0.30980392156862746,
+              1
+            ],
+            "css": "rgba(206, 71, 79, 1)"
+          },
+          {
+            "id": "color-1-2",
+            "rgba": [
+              0.9529411764705882,
+              0.7490196078431373,
+              0.24313725490196078,
+              0.7607843137254902
+            ],
+            "css": "rgba(243, 191, 62, 0.7607843137254902)"
+          },
+          {
+            "id": "color-1-3",
+            "rgba": [
+              0.6705882352941176,
+              0.5450980392156862,
+              0.3215686274509804,
+              1
+            ],
+            "css": "rgba(171, 139, 82, 1)"
+          },
+          {
+            "id": "color-1-4",
+            "rgba": [
+              0.3215686274509804,
+              0.6392156862745098,
+              0.48627450980392156,
+              1
+            ],
+            "css": "rgba(82, 163, 124, 1)"
+          },
+          {
+            "id": "color-1-5",
+            "rgba": [
+              0.29411764705882354,
+              0.29411764705882354,
+              0.5529411764705883,
+              1
+            ],
+            "css": "rgba(75, 75, 141, 1)"
+          }
+        ],
+        "paletteRevision": 1,
+        "paletteError": null,
+        "settings": {
+          "available": true,
+          "schemaVersion": 3,
+          "revision": 1,
+          "layoutMode": "fixed",
+          "swatchSize": 40,
+          "includeDisabledColors": false,
+          "extractionPreset": "balanced",
+          "error": null
+        },
+        "activeOrientation": "vertical",
+        "pendingHostAction": null,
+        "pendingPaletteMutation": false,
+        "draggingId": null,
+        "lastHostResult": {
+          "image": {
+            "status": "ok",
+            "path": "/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/tests/fixtures/image-extraction/fixture.png",
+            "name": "CP_IMAGE_LAYER_PNG",
+            "format": "png",
+            "selectedImageCount": 1
+          },
+          "extraction": {
+            "preset": "balanced",
+            "colors": [
+              [
+                0.807843137254902,
+                0.2784313725490196,
+                0.30980392156862746,
+                1
+              ],
+              [
+                0.9529411764705882,
+                0.7490196078431373,
+                0.24313725490196078,
+                0.7607843137254902
+              ],
+              [
+                0.6705882352941176,
+                0.5450980392156862,
+                0.3215686274509804,
+                1
+              ],
+              [
+                0.3215686274509804,
+                0.6392156862745098,
+                0.48627450980392156,
+                1
+              ],
+              [
+                0.29411764705882354,
+                0.29411764705882354,
+                0.5529411764705883,
+                1
+              ]
+            ],
+            "fallbackUsed": false,
+            "inputPixelCount": 11520,
+            "uniqueColorCount": 8063
+          }
+        },
+        "lastResult": "Added 5 colors from CP_IMAGE_LAYER_PNG",
+        "fixtureViewport": null,
+        "designState": "default"
+      },
+      "snapshot": {
+        "state": {
+          "palette": [
+            {
+              "id": "color-1-1",
+              "rgba": [
+                0.807843137254902,
+                0.2784313725490196,
+                0.30980392156862746,
+                1
+              ],
+              "css": "rgba(206, 71, 79, 1)"
+            },
+            {
+              "id": "color-1-2",
+              "rgba": [
+                0.9529411764705882,
+                0.7490196078431373,
+                0.24313725490196078,
+                0.7607843137254902
+              ],
+              "css": "rgba(243, 191, 62, 0.7607843137254902)"
+            },
+            {
+              "id": "color-1-3",
+              "rgba": [
+                0.6705882352941176,
+                0.5450980392156862,
+                0.3215686274509804,
+                1
+              ],
+              "css": "rgba(171, 139, 82, 1)"
+            },
+            {
+              "id": "color-1-4",
+              "rgba": [
+                0.3215686274509804,
+                0.6392156862745098,
+                0.48627450980392156,
+                1
+              ],
+              "css": "rgba(82, 163, 124, 1)"
+            },
+            {
+              "id": "color-1-5",
+              "rgba": [
+                0.29411764705882354,
+                0.29411764705882354,
+                0.5529411764705883,
+                1
+              ],
+              "css": "rgba(75, 75, 141, 1)"
+            }
+          ],
+          "paletteRevision": 1,
+          "paletteError": null,
+          "settings": {
+            "available": true,
+            "schemaVersion": 3,
+            "revision": 1,
+            "layoutMode": "fixed",
+            "swatchSize": 40,
+            "includeDisabledColors": false,
+            "extractionPreset": "balanced",
+            "error": null
+          },
+          "activeOrientation": "vertical",
+          "pendingHostAction": null,
+          "pendingPaletteMutation": false,
+          "draggingId": null,
+          "lastHostResult": {
+            "image": {
+              "status": "ok",
+              "path": "/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/tests/fixtures/image-extraction/fixture.png",
+              "name": "CP_IMAGE_LAYER_PNG",
+              "format": "png",
+              "selectedImageCount": 1
+            },
+            "extraction": {
+              "preset": "balanced",
+              "colors": [
+                [
+                  0.807843137254902,
+                  0.2784313725490196,
+                  0.30980392156862746,
+                  1
+                ],
+                [
+                  0.9529411764705882,
+                  0.7490196078431373,
+                  0.24313725490196078,
+                  0.7607843137254902
+                ],
+                [
+                  0.6705882352941176,
+                  0.5450980392156862,
+                  0.3215686274509804,
+                  1
+                ],
+                [
+                  0.3215686274509804,
+                  0.6392156862745098,
+                  0.48627450980392156,
+                  1
+                ],
+                [
+                  0.29411764705882354,
+                  0.29411764705882354,
+                  0.5529411764705883,
+                  1
+                ]
+              ],
+              "fallbackUsed": false,
+              "inputPixelCount": 11520,
+              "uniqueColorCount": 8063
+            }
+          },
+          "lastResult": "Added 5 colors from CP_IMAGE_LAYER_PNG",
+          "fixtureViewport": null,
+          "designState": "default"
+        },
+        "counters": {
+          "diskWrites": 1,
+          "emittedEvents": 0,
+          "receivedEvents": 0,
+          "hostCalls": 1
+        }
+      },
+      "stored": {
+        "schemaVersion": 1,
+        "revision": 1,
+        "colors": [
+          {
+            "id": "color-1-1",
+            "rgba": [
+              0.807843137254902,
+              0.2784313725490196,
+              0.30980392156862746,
+              1
+            ]
+          },
+          {
+            "id": "color-1-2",
+            "rgba": [
+              0.9529411764705882,
+              0.7490196078431373,
+              0.24313725490196078,
+              0.7607843137254902
+            ]
+          },
+          {
+            "id": "color-1-3",
+            "rgba": [
+              0.6705882352941176,
+              0.5450980392156862,
+              0.3215686274509804,
+              1
+            ]
+          },
+          {
+            "id": "color-1-4",
+            "rgba": [
+              0.3215686274509804,
+              0.6392156862745098,
+              0.48627450980392156,
+              1
+            ]
+          },
+          {
+            "id": "color-1-5",
+            "rgba": [
+              0.29411764705882354,
+              0.29411764705882354,
+              0.5529411764705883,
+              1
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "name": "multiple-images-rejected",
+      "selection": {
+        "selectedItems": 2
+      },
+      "probe": {
+        "colors": {
+          "status": "no-selected-layers",
+          "colors": [],
+          "selectedPropertyCount": 0,
+          "unsupportedGradientCount": 0,
+          "unsupportedTextCount": 0,
+          "readErrorCount": 0
+        },
+        "image": {
+          "status": "multiple-images",
+          "path": null,
+          "name": null,
+          "format": null,
+          "selectedImageCount": 2
+        }
+      },
+      "accepted": true,
+      "elapsedMs": 123,
+      "state": {
+        "palette": [],
+        "paletteRevision": 0,
+        "paletteError": null,
+        "settings": {
+          "available": true,
+          "schemaVersion": 3,
+          "revision": 1,
+          "layoutMode": "fixed",
+          "swatchSize": 40,
+          "includeDisabledColors": false,
+          "extractionPreset": "balanced",
+          "error": null
+        },
+        "activeOrientation": "vertical",
+        "pendingHostAction": null,
+        "pendingPaletteMutation": false,
+        "draggingId": null,
+        "lastHostResult": {
+          "status": "no-selected-layers",
+          "colors": [],
+          "selectedPropertyCount": 0,
+          "unsupportedGradientCount": 0,
+          "unsupportedTextCount": 0,
+          "readErrorCount": 0
+        },
+        "lastResult": "Select one image at a time",
+        "fixtureViewport": null,
+        "designState": "default"
+      },
+      "snapshot": {
+        "state": {
+          "palette": [],
+          "paletteRevision": 0,
+          "paletteError": null,
+          "settings": {
+            "available": true,
+            "schemaVersion": 3,
+            "revision": 1,
+            "layoutMode": "fixed",
+            "swatchSize": 40,
+            "includeDisabledColors": false,
+            "extractionPreset": "balanced",
+            "error": null
+          },
+          "activeOrientation": "vertical",
+          "pendingHostAction": null,
+          "pendingPaletteMutation": false,
+          "draggingId": null,
+          "lastHostResult": {
+            "status": "no-selected-layers",
+            "colors": [],
+            "selectedPropertyCount": 0,
+            "unsupportedGradientCount": 0,
+            "unsupportedTextCount": 0,
+            "readErrorCount": 0
+          },
+          "lastResult": "Select one image at a time",
+          "fixtureViewport": null,
+          "designState": "default"
+        },
+        "counters": {
+          "diskWrites": 0,
+          "emittedEvents": 0,
+          "receivedEvents": 0,
+          "hostCalls": 1
+        }
+      },
+      "stored": {
+        "schemaVersion": 1,
+        "revision": 0,
+        "colors": []
+      }
+    },
+    {
+      "name": "colors-and-image-rejected",
+      "selection": {
+        "ok": true,
+        "selectedLayers": 1,
+        "selectedItems": 1,
+        "selectedProperties": 1
+      },
+      "probe": {
+        "colors": {
+          "status": "ok",
+          "colors": [
+            [
+              0.12345679104328,
+              0.34567892551422,
+              0.56789124011993,
+              1
+            ]
+          ],
+          "selectedPropertyCount": 1,
+          "unsupportedGradientCount": 0,
+          "unsupportedTextCount": 0,
+          "readErrorCount": 0
+        },
+        "image": {
+          "status": "ok",
+          "path": "/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/tests/fixtures/image-extraction/fixture.png",
+          "name": "CP_IMAGE_LAYER_PNG",
+          "format": "png",
+          "selectedImageCount": 1
+        }
+      },
+      "accepted": true,
+      "elapsedMs": 64,
+      "state": {
+        "palette": [],
+        "paletteRevision": 0,
+        "paletteError": null,
+        "settings": {
+          "available": true,
+          "schemaVersion": 3,
+          "revision": 1,
+          "layoutMode": "fixed",
+          "swatchSize": 40,
+          "includeDisabledColors": false,
+          "extractionPreset": "balanced",
+          "error": null
+        },
+        "activeOrientation": "vertical",
+        "pendingHostAction": null,
+        "pendingPaletteMutation": false,
+        "draggingId": null,
+        "lastHostResult": {
+          "status": "ok",
+          "colors": [
+            [
+              0.12345679104328,
+              0.34567892551422,
+              0.56789124011993,
+              1
+            ]
+          ],
+          "selectedPropertyCount": 1,
+          "unsupportedGradientCount": 0,
+          "unsupportedTextCount": 0,
+          "readErrorCount": 0
+        },
+        "lastResult": "Choose selected colors or one image, not both",
+        "fixtureViewport": null,
+        "designState": "default"
+      },
+      "snapshot": {
+        "state": {
+          "palette": [],
+          "paletteRevision": 0,
+          "paletteError": null,
+          "settings": {
+            "available": true,
+            "schemaVersion": 3,
+            "revision": 1,
+            "layoutMode": "fixed",
+            "swatchSize": 40,
+            "includeDisabledColors": false,
+            "extractionPreset": "balanced",
+            "error": null
+          },
+          "activeOrientation": "vertical",
+          "pendingHostAction": null,
+          "pendingPaletteMutation": false,
+          "draggingId": null,
+          "lastHostResult": {
+            "status": "ok",
+            "colors": [
+              [
+                0.12345679104328,
+                0.34567892551422,
+                0.56789124011993,
+                1
+              ]
+            ],
+            "selectedPropertyCount": 1,
+            "unsupportedGradientCount": 0,
+            "unsupportedTextCount": 0,
+            "readErrorCount": 0
+          },
+          "lastResult": "Choose selected colors or one image, not both",
+          "fixtureViewport": null,
+          "designState": "default"
+        },
+        "counters": {
+          "diskWrites": 0,
+          "emittedEvents": 0,
+          "receivedEvents": 0,
+          "hostCalls": 1
+        }
+      },
+      "stored": {
+        "schemaVersion": 1,
+        "revision": 0,
+        "colors": []
+      }
+    },
+    {
+      "name": "unsupported-gif-rejected",
+      "selection": {
+        "selectedItems": 1
+      },
+      "probe": {
+        "colors": {
+          "status": "no-selected-layers",
+          "colors": [],
+          "selectedPropertyCount": 0,
+          "unsupportedGradientCount": 0,
+          "unsupportedTextCount": 0,
+          "readErrorCount": 0
+        },
+        "image": {
+          "status": "unsupported-image",
+          "path": null,
+          "name": "CP_IMAGE_UNSUPPORTED_GIF",
+          "format": "gif",
+          "selectedImageCount": 1
+        }
+      },
+      "accepted": true,
+      "elapsedMs": 43,
+      "state": {
+        "palette": [],
+        "paletteRevision": 0,
+        "paletteError": null,
+        "settings": {
+          "available": true,
+          "schemaVersion": 3,
+          "revision": 1,
+          "layoutMode": "fixed",
+          "swatchSize": 40,
+          "includeDisabledColors": false,
+          "extractionPreset": "balanced",
+          "error": null
+        },
+        "activeOrientation": "vertical",
+        "pendingHostAction": null,
+        "pendingPaletteMutation": false,
+        "draggingId": null,
+        "lastHostResult": {
+          "status": "no-selected-layers",
+          "colors": [],
+          "selectedPropertyCount": 0,
+          "unsupportedGradientCount": 0,
+          "unsupportedTextCount": 0,
+          "readErrorCount": 0
+        },
+        "lastResult": "GIF is not supported; choose JPEG or PNG",
+        "fixtureViewport": null,
+        "designState": "default"
+      },
+      "snapshot": {
+        "state": {
+          "palette": [],
+          "paletteRevision": 0,
+          "paletteError": null,
+          "settings": {
+            "available": true,
+            "schemaVersion": 3,
+            "revision": 1,
+            "layoutMode": "fixed",
+            "swatchSize": 40,
+            "includeDisabledColors": false,
+            "extractionPreset": "balanced",
+            "error": null
+          },
+          "activeOrientation": "vertical",
+          "pendingHostAction": null,
+          "pendingPaletteMutation": false,
+          "draggingId": null,
+          "lastHostResult": {
+            "status": "no-selected-layers",
+            "colors": [],
+            "selectedPropertyCount": 0,
+            "unsupportedGradientCount": 0,
+            "unsupportedTextCount": 0,
+            "readErrorCount": 0
+          },
+          "lastResult": "GIF is not supported; choose JPEG or PNG",
+          "fixtureViewport": null,
+          "designState": "default"
+        },
+        "counters": {
+          "diskWrites": 0,
+          "emittedEvents": 0,
+          "receivedEvents": 0,
+          "hostCalls": 1
+        }
+      },
+      "stored": {
+        "schemaVersion": 1,
+        "revision": 0,
+        "colors": []
+      }
+    },
+    {
+      "name": "corrupt-png-decode-rejected",
+      "selection": {
+        "selectedItems": 1
+      },
+      "probe": {
+        "colors": {
+          "status": "no-selected-layers",
+          "colors": [],
+          "selectedPropertyCount": 0,
+          "unsupportedGradientCount": 0,
+          "unsupportedTextCount": 0,
+          "readErrorCount": 0
+        },
+        "image": {
+          "status": "ok",
+          "path": "/private/tmp/chroma-relay-image-selection/corrupt.png",
+          "name": "CP_IMAGE_CORRUPT_PNG",
+          "format": "png",
+          "selectedImageCount": 1
+        }
+      },
+      "accepted": true,
+      "elapsedMs": 93,
+      "state": {
+        "palette": [],
+        "paletteRevision": 0,
+        "paletteError": null,
+        "settings": {
+          "available": true,
+          "schemaVersion": 3,
+          "revision": 1,
+          "layoutMode": "fixed",
+          "swatchSize": 40,
+          "includeDisabledColors": false,
+          "extractionPreset": "balanced",
+          "error": null
+        },
+        "activeOrientation": "vertical",
+        "pendingHostAction": null,
+        "pendingPaletteMutation": false,
+        "draggingId": null,
+        "lastHostResult": {
+          "status": "no-selected-layers",
+          "colors": [],
+          "selectedPropertyCount": 0,
+          "unsupportedGradientCount": 0,
+          "unsupportedTextCount": 0,
+          "readErrorCount": 0
+        },
+        "lastResult": "Could not extract colors from the selected image",
+        "fixtureViewport": null,
+        "designState": "default"
+      },
+      "snapshot": {
+        "state": {
+          "palette": [],
+          "paletteRevision": 0,
+          "paletteError": null,
+          "settings": {
+            "available": true,
+            "schemaVersion": 3,
+            "revision": 1,
+            "layoutMode": "fixed",
+            "swatchSize": 40,
+            "includeDisabledColors": false,
+            "extractionPreset": "balanced",
+            "error": null
+          },
+          "activeOrientation": "vertical",
+          "pendingHostAction": null,
+          "pendingPaletteMutation": false,
+          "draggingId": null,
+          "lastHostResult": {
+            "status": "no-selected-layers",
+            "colors": [],
+            "selectedPropertyCount": 0,
+            "unsupportedGradientCount": 0,
+            "unsupportedTextCount": 0,
+            "readErrorCount": 0
+          },
+          "lastResult": "Could not extract colors from the selected image",
+          "fixtureViewport": null,
+          "designState": "default"
+        },
+        "counters": {
+          "diskWrites": 0,
+          "emittedEvents": 0,
+          "receivedEvents": 0,
+          "hostCalls": 1
+        }
+      },
+      "stored": {
+        "schemaVersion": 1,
+        "revision": 0,
+        "colors": []
+      }
+    }
+  ],
+  "cleanup": {
+    "removed": [
+      "CP_IMAGE_LAYER_FIXTURE",
+      "CP_I07_I08_FIXTURE",
+      "CP_IMAGE_UNSUPPORTED_GIF",
+      "CP_IMAGE_SECOND_JPG",
+      "CP_IMAGE_LAYER_PNG",
+      "CP_IMAGE_CORRUPT_PNG"
+    ]
+  },
+  "consoleEvidence": {
+    "console": [
+      {
+        "type": "log",
+        "values": [
+          "/Users/REDACTED/Library/Application Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/jsx/index.js"
+        ]
+      },
+      {
+        "type": "info",
+        "values": [
+          "[Chroma Relay][I11][main] loaded"
+        ]
+      },
+      {
+        "type": "log",
+        "values": [
+          "false"
+        ]
+      },
+      {
+        "type": "log",
+        "values": [
+          "false"
+        ]
+      },
+      {
+        "type": "log",
+        "values": [
+          "false"
+        ]
+      },
+      {
+        "type": "log",
+        "values": [
+          "false"
+        ]
+      },
+      {
+        "type": "log",
+        "values": [
+          "false"
+        ]
+      },
+      {
+        "type": "log",
+        "values": [
+          "false"
+        ]
+      }
+    ],
+    "exceptions": [],
+    "logs": []
+  },
+  "screenshots": [
+    "main-selection-gates.png"
+  ]
+}

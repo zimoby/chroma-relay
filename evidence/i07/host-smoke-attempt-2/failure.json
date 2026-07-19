@@ -1,0 +1,29 @@
+{
+  "capturedAt": "2026-07-17T04:42:19.360Z",
+  "passed": false,
+  "error": "Error: Read-only collection assertion failed: {\"rapidAccepted\":[true,true],\"counters\":{\"diskWrites\":1,\"emittedEvents\":0,\"receivedEvents\":0,\"hostCalls\":1},\"hostResult\":{\"status\":\"ok\",\"colors\":[[0.12345679104328,0.34567892551422,0.56789124011993,1]],\"selectedPropertyCount\":4,\"unsupportedGradientCount\":0,\"unsupportedTextCount\":1,\"readErrorCount\":0},\"palette\":[{\"id\":\"color-1-1\",\"rgba\":[0.12345679104328,0.34567892551422,0.56789124011993,1],\"css\":\"rgba(31, 88, 145, 1)\"}],\"stored\":{\"schemaVersion\":1,\"revision\":1,\"colors\":[{\"id\":\"color-1-1\",\"rgba\":[0.12345679104328,0.34567892551422,0.56789124011993,1]}]},\"before\":{\"fillA\":[0.12345679104328,0.34567892551422,0.56789124011993,1],\"fillB\":[0.12345679104328,0.34567892551422,0.56789124011993,1],\"selectedLayerCount\":2,\"selectedPropertyCount\":3},\"after\":{\"fillA\":[0.12345679104328,0.34567892551422,0.56789124011993,1],\"fillB\":[0.12345679104328,0.34567892551422,0.56789124011993,1],\"selectedLayerCount\":2,\"selectedPropertyCount\":3}}\n    at run (file:///Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/scripts/cep-functional-smoke.mjs:267:13)",
+  "consoleEvidence": {
+    "console": [
+      {
+        "type": "log",
+        "values": [
+          "/Users/REDACTED/Library/Application Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/jsx/index.js"
+        ]
+      },
+      {
+        "type": "log",
+        "values": [
+          "buildContextMenu"
+        ]
+      },
+      {
+        "type": "info",
+        "values": [
+          "[Chroma Relay][I05][main] loaded"
+        ]
+      }
+    ],
+    "exceptions": [],
+    "logs": []
+  }
+}

@@ -1,0 +1,58 @@
+{
+  "passed": false,
+  "track": "B",
+  "runToken": "track-b-mrr9z2t3-3a7b07fad1c3efa2",
+  "failure": "Error: Unexpected panel identity: {\"extensionId\":\"com.zimoby.chroma-relay.main\",\"page\":\"main\",\"version\":\"0.0.1\",\"buildMarker\":\"Palette v2 · 0.0.1\",\"url\":\"file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/main/index.html?track-b-dev=mrr9x00m\",\"configRoot\":null,\"scripts\":[\"file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/assets/main-BNvXtjmW.cjs\"],\"styles\":[\"file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/assets/palette-storage-EMV6xW9J.css\",\"file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/assets/main-C-cTTglL.css\"]}\n    at fail (file:///Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/scripts/run-live-ae-tests.mjs:144:9)\n    at requireCondition (file:///Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/scripts/run-live-ae-tests.mjs:147:19)\n    at main (file:///Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/scripts/run-live-ae-tests.mjs:1104:5)",
+  "originalProject": null,
+  "failureScreenshot": "/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/evidence/local/native-gradient/track-b-apply-ae25/track-b-mrr9z2t3-3a7b07fad1c3efa2/main-on-failure.png",
+  "failureScreenshotError": null,
+  "consoleEvidence": {
+    "console": [
+      {
+        "type": "log",
+        "values": [
+          "/Users/REDACTED/Library/Application Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/jsx/index.js"
+        ]
+      },
+      {
+        "type": "info",
+        "values": [
+          "[Chroma Relay][I11][main] loaded"
+        ]
+      }
+    ],
+    "exceptions": []
+  },
+  "cleanup": {
+    "client": true,
+    "panel": "Timed out waiting for exact original panel state",
+    "project": {
+      "restored": true,
+      "notRequired": true
+    },
+    "projectRegistration": {
+      "released": true,
+      "notRequired": true
+    },
+    "rendererLeases": {
+      "verified": true,
+      "operationCleanupVerified": true,
+      "roots": [],
+      "errors": []
+    },
+    "temp": "preserved at /private/tmp/chroma-relay-native-gradient-apply-track-b-mrr9z2t3-3a7b07fad1c3efa2",
+    "injection": {
+      "installed": false,
+      "owner": null,
+      "count": 0,
+      "pendingSettled": false
+    },
+    "lock": true,
+    "busyListener": true,
+    "injectionAbsent": true
+  },
+  "cleanupErrors": [
+    "panel cleanup: Timed out waiting for exact original panel state",
+    "temporary cleanup: preserved at /private/tmp/chroma-relay-native-gradient-apply-track-b-mrr9z2t3-3a7b07fad1c3efa2"
+  ]
+}

@@ -1,0 +1,55 @@
+{
+  "passed": false,
+  "track": "B",
+  "runToken": "track-b-mrrdekol-d520786109782c85",
+  "failure": "Error: Main debug API and state did not stabilize\n    at fail (file:///Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/scripts/run-live-ae-tests.mjs:145:9)\n    at waitForDebug (file:///Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/scripts/run-live-ae-tests.mjs:311:26)\n    at async main (file:///Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/scripts/run-live-ae-tests.mjs:1169:5)",
+  "originalProject": null,
+  "failureScreenshot": "/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/evidence/local/native-gradient/track-b-apply-ae25/track-b-mrrdekol-d520786109782c85/main-on-failure.png",
+  "failureScreenshotError": null,
+  "consoleEvidence": {
+    "console": [
+      {
+        "type": "log",
+        "values": [
+          "/Users/REDACTED/Library/Application Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/jsx/index.js"
+        ]
+      },
+      {
+        "type": "info",
+        "values": [
+          "[Chroma Relay][I11][main] loaded"
+        ]
+      }
+    ],
+    "exceptions": []
+  },
+  "cleanup": {
+    "client": true,
+    "panel": {
+      "restored": true,
+      "notRequired": true
+    },
+    "project": {
+      "restored": true,
+      "notRequired": true
+    },
+    "projectRegistration": {
+      "released": true,
+      "notRequired": true
+    },
+    "rendererLeases": {
+      "verified": true,
+      "operationCleanupVerified": true,
+      "roots": [],
+      "errors": []
+    },
+    "temp": "preserved at /private/tmp/chroma-relay-native-gradient-apply-track-b-mrrdekol-d520786109782c85",
+    "injection": "Error: Chroma Relay debug API unavailable\n    at <anonymous>:3:19\n    at <anonymous>:5:3",
+    "lock": true,
+    "busyListener": true
+  },
+  "cleanupErrors": [
+    "injection cleanup: Error: Chroma Relay debug API unavailable\n    at <anonymous>:3:19\n    at <anonymous>:5:3",
+    "temporary cleanup: preserved at /private/tmp/chroma-relay-native-gradient-apply-track-b-mrrdekol-d520786109782c85"
+  ]
+}

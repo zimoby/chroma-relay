@@ -1,0 +1,29 @@
+{
+  "capturedAt": "2026-07-17T06:18:06.519Z",
+  "passed": false,
+  "error": "Error: Single undo-group assertion failed: {\"undo\":{\"ok\":true,\"commandId\":2371},\"beforeApply\":{\"staticValue\":[0.12345679104328,0.34567892551422,0.56789124011993,1],\"staticDimensions\":4,\"expressionValue\":[0.12345679104328,0.34567892551422,0.56789124011993,1],\"expression\":\"value\",\"expressionEnabled\":true,\"expressionKeys\":0,\"keyframedValue\":[0.12345679104328,0.34567892551422,0.56789124011993,1],\"keyCount\":2,\"keyOne\":[0.12345679104328,0.34567892551422,0.56789124011993,1],\"keyTwo\":[0.12345679104328,0.34567892551422,0.56789124011993,1],\"selectedLayerCount\":2,\"selectedPropertyCount\":4},\"afterUndo\":{\"staticValue\":[0.75,0.5,0.25,1],\"staticDimensions\":4,\"expressionValue\":[0.12345679104328,0.34567892551422,0.56789124011993,1],\"expression\":\"value\",\"expressionEnabled\":true,\"expressionKeys\":0,\"keyframedValue\":[0.12345679104328,0.34567892551422,0.56789124011993,1],\"keyCount\":2,\"keyOne\":[0.12345679104328,0.34567892551422,0.56789124011993,1],\"keyTwo\":[0.12345679104328,0.34567892551422,0.56789124011993,1],\"selectedLayerCount\":2,\"selectedPropertyCount\":4}}\n    at run (file:///Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/scripts/cep-functional-smoke.mjs:613:15)",
+  "consoleEvidence": {
+    "console": [
+      {
+        "type": "log",
+        "values": [
+          "/Users/REDACTED/Library/Application Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/jsx/index.js"
+        ]
+      },
+      {
+        "type": "info",
+        "values": [
+          "[Chroma Relay][I11][main] loaded"
+        ]
+      },
+      {
+        "type": "log",
+        "values": [
+          "[0.75,0.5,0.25,1]"
+        ]
+      }
+    ],
+    "exceptions": [],
+    "logs": []
+  }
+}

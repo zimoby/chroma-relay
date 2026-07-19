@@ -1,0 +1,730 @@
+{
+  "capturedAt": "2026-07-17T12:23:17.266Z",
+  "panel": {
+    "page": "main",
+    "port": 8198,
+    "extensionId": "com.zimoby.chroma-relay.main",
+    "pageSuffix": "/main/index.html"
+  },
+  "target": {
+    "description": "",
+    "devtoolsFrontendUrl": "/devtools/inspector.html?ws=127.0.0.1:8198/devtools/page/C95D8F46F0B7B42EAEF3EE60B4ADEC33",
+    "id": "C95D8F46F0B7B42EAEF3EE60B4ADEC33",
+    "title": "Chroma Relay — Main",
+    "type": "page",
+    "url": "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/main/index.html",
+    "webSocketDebuggerUrl": "ws://127.0.0.1:8198/devtools/page/C95D8F46F0B7B42EAEF3EE60B4ADEC33"
+  },
+  "snapshot": {
+    "identity": {
+      "extensionId": "com.zimoby.chroma-relay.main",
+      "page": "main",
+      "version": "0.0.1",
+      "buildMarker": "I11 · 0.0.1",
+      "url": "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/main/index.html",
+      "configRoot": "/private/tmp/chroma-relay-i05-main",
+      "scripts": [
+        "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/assets/main-ra_zXo87.cjs"
+      ],
+      "styles": [
+        "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/assets/debug-api-EMV6xW9J.css",
+        "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/assets/main-Dwj0x94X.css"
+      ]
+    },
+    "state": {
+      "palette": [
+        {
+          "id": "fixture-cyan",
+          "rgba": [
+            0,
+            0.7176470588235294,
+            0.7803921568627451,
+            1
+          ],
+          "css": "rgba(0, 183, 199, 1)"
+        },
+        {
+          "id": "fixture-magenta",
+          "rgba": [
+            0.7607843137254902,
+            0.22745098039215686,
+            0.6470588235294118,
+            1
+          ],
+          "css": "rgba(194, 58, 165, 1)"
+        },
+        {
+          "id": "color-1-1",
+          "rgba": [
+            0.50222120098039,
+            0.13101758769914,
+            0.13101758769914,
+            1
+          ],
+          "css": "rgba(128, 33, 33, 1)"
+        }
+      ],
+      "paletteRevision": 1,
+      "paletteError": null,
+      "settings": {
+        "available": true,
+        "schemaVersion": 2,
+        "revision": 0,
+        "layoutMode": "stretch",
+        "swatchSize": 32,
+        "includeDisabledColors": false,
+        "error": null
+      },
+      "activeOrientation": "vertical",
+      "pendingHostAction": null,
+      "pendingPaletteMutation": false,
+      "draggingId": null,
+      "lastHostResult": null,
+      "lastResult": null,
+      "fixtureViewport": null,
+      "designState": "default"
+    },
+    "counters": {
+      "diskWrites": 0,
+      "emittedEvents": 0,
+      "receivedEvents": 0,
+      "hostCalls": 0
+    },
+    "geometry": {
+      "panel": {
+        "x": 0,
+        "y": 0,
+        "width": 259,
+        "height": 321
+      },
+      "controls": {
+        "palette-strip": {
+          "x": 2,
+          "y": 2,
+          "width": 255,
+          "height": 291
+        },
+        "swatch-fixture-cyan": {
+          "x": 2,
+          "y": 2,
+          "width": 255,
+          "height": 96.3359375
+        },
+        "remove-fixture-cyan": {
+          "x": 242,
+          "y": 4,
+          "width": 13,
+          "height": 13
+        },
+        "swatch-fixture-magenta": {
+          "x": 2,
+          "y": 99.3359375,
+          "width": 255,
+          "height": 96.3359375
+        },
+        "remove-fixture-magenta": {
+          "x": 242,
+          "y": 101.3359375,
+          "width": 13,
+          "height": 13
+        },
+        "swatch-color-1-1": {
+          "x": 2,
+          "y": 196.671875,
+          "width": 255,
+          "height": 96.3359375
+        },
+        "remove-color-1-1": {
+          "x": 242,
+          "y": 198.671875,
+          "width": 13,
+          "height": 13
+        },
+        "palette-add": {
+          "x": 2,
+          "y": 295,
+          "width": 255,
+          "height": 24
+        },
+        "status-output": {
+          "x": 0,
+          "y": 0,
+          "width": 0,
+          "height": 0
+        }
+      }
+    },
+    "methods": [
+      "dispatchClick",
+      "getCounters",
+      "getGeometry",
+      "getIdentity",
+      "getState",
+      "persistPalette",
+      "reload",
+      "reloadPalette",
+      "resetTestState",
+      "seedPalette",
+      "setDesignPreview",
+      "setFixtureViewport",
+      "setTemporaryConfigRoot"
+    ],
+    "readyState": "complete",
+    "bodyText": "Chroma Relay · I11 · 0.0.1"
+  },
+  "fixtureGeometry": {
+    "32x32": {
+      "state": {
+        "palette": [
+          {
+            "id": "fixture-cyan",
+            "rgba": [
+              0,
+              0.7176470588235294,
+              0.7803921568627451,
+              1
+            ],
+            "css": "rgba(0, 183, 199, 1)"
+          },
+          {
+            "id": "fixture-magenta",
+            "rgba": [
+              0.7607843137254902,
+              0.22745098039215686,
+              0.6470588235294118,
+              1
+            ],
+            "css": "rgba(194, 58, 165, 1)"
+          },
+          {
+            "id": "color-1-1",
+            "rgba": [
+              0.50222120098039,
+              0.13101758769914,
+              0.13101758769914,
+              1
+            ],
+            "css": "rgba(128, 33, 33, 1)"
+          }
+        ],
+        "paletteRevision": 1,
+        "paletteError": null,
+        "settings": {
+          "available": true,
+          "schemaVersion": 2,
+          "revision": 0,
+          "layoutMode": "stretch",
+          "swatchSize": 32,
+          "includeDisabledColors": false,
+          "error": null
+        },
+        "activeOrientation": "horizontal",
+        "pendingHostAction": null,
+        "pendingPaletteMutation": false,
+        "draggingId": null,
+        "lastHostResult": null,
+        "lastResult": null,
+        "fixtureViewport": {
+          "width": 32,
+          "height": 32
+        },
+        "designState": "default"
+      },
+      "geometry": {
+        "panel": {
+          "x": 0,
+          "y": 0,
+          "width": 32,
+          "height": 32
+        },
+        "controls": {
+          "palette-strip": {
+            "x": 2,
+            "y": 2,
+            "width": 2,
+            "height": 28
+          },
+          "swatch-fixture-cyan": {
+            "x": 2,
+            "y": 2,
+            "width": 24,
+            "height": 28
+          },
+          "remove-fixture-cyan": {
+            "x": 11,
+            "y": 4,
+            "width": 13,
+            "height": 13
+          },
+          "swatch-fixture-magenta": {
+            "x": 27,
+            "y": 2,
+            "width": 24,
+            "height": 28
+          },
+          "remove-fixture-magenta": {
+            "x": 36,
+            "y": 4,
+            "width": 13,
+            "height": 13
+          },
+          "swatch-color-1-1": {
+            "x": 52,
+            "y": 2,
+            "width": 24,
+            "height": 28
+          },
+          "remove-color-1-1": {
+            "x": 61,
+            "y": 4,
+            "width": 13,
+            "height": 13
+          },
+          "palette-add": {
+            "x": 6,
+            "y": 2,
+            "width": 24,
+            "height": 28
+          },
+          "status-output": {
+            "x": 0,
+            "y": 0,
+            "width": 0,
+            "height": 0
+          }
+        }
+      }
+    },
+    "160x32": {
+      "state": {
+        "palette": [
+          {
+            "id": "fixture-cyan",
+            "rgba": [
+              0,
+              0.7176470588235294,
+              0.7803921568627451,
+              1
+            ],
+            "css": "rgba(0, 183, 199, 1)"
+          },
+          {
+            "id": "fixture-magenta",
+            "rgba": [
+              0.7607843137254902,
+              0.22745098039215686,
+              0.6470588235294118,
+              1
+            ],
+            "css": "rgba(194, 58, 165, 1)"
+          },
+          {
+            "id": "color-1-1",
+            "rgba": [
+              0.50222120098039,
+              0.13101758769914,
+              0.13101758769914,
+              1
+            ],
+            "css": "rgba(128, 33, 33, 1)"
+          }
+        ],
+        "paletteRevision": 1,
+        "paletteError": null,
+        "settings": {
+          "available": true,
+          "schemaVersion": 2,
+          "revision": 0,
+          "layoutMode": "stretch",
+          "swatchSize": 32,
+          "includeDisabledColors": false,
+          "error": null
+        },
+        "activeOrientation": "horizontal",
+        "pendingHostAction": null,
+        "pendingPaletteMutation": false,
+        "draggingId": null,
+        "lastHostResult": null,
+        "lastResult": null,
+        "fixtureViewport": {
+          "width": 160,
+          "height": 32
+        },
+        "designState": "default"
+      },
+      "geometry": {
+        "panel": {
+          "x": 0,
+          "y": 0,
+          "width": 160,
+          "height": 32
+        },
+        "controls": {
+          "palette-strip": {
+            "x": 2,
+            "y": 2,
+            "width": 130,
+            "height": 28
+          },
+          "swatch-fixture-cyan": {
+            "x": 2,
+            "y": 2,
+            "width": 42.6640625,
+            "height": 28
+          },
+          "remove-fixture-cyan": {
+            "x": 29.6640625,
+            "y": 4,
+            "width": 13,
+            "height": 13
+          },
+          "swatch-fixture-magenta": {
+            "x": 45.6640625,
+            "y": 2,
+            "width": 42.6640625,
+            "height": 28
+          },
+          "remove-fixture-magenta": {
+            "x": 73.328125,
+            "y": 4,
+            "width": 13,
+            "height": 13
+          },
+          "swatch-color-1-1": {
+            "x": 89.328125,
+            "y": 2,
+            "width": 42.6640625,
+            "height": 28
+          },
+          "remove-color-1-1": {
+            "x": 116.9921875,
+            "y": 4,
+            "width": 13,
+            "height": 13
+          },
+          "palette-add": {
+            "x": 134,
+            "y": 2,
+            "width": 24,
+            "height": 28
+          },
+          "status-output": {
+            "x": 0,
+            "y": 0,
+            "width": 0,
+            "height": 0
+          }
+        }
+      }
+    },
+    "32x160": {
+      "state": {
+        "palette": [
+          {
+            "id": "fixture-cyan",
+            "rgba": [
+              0,
+              0.7176470588235294,
+              0.7803921568627451,
+              1
+            ],
+            "css": "rgba(0, 183, 199, 1)"
+          },
+          {
+            "id": "fixture-magenta",
+            "rgba": [
+              0.7607843137254902,
+              0.22745098039215686,
+              0.6470588235294118,
+              1
+            ],
+            "css": "rgba(194, 58, 165, 1)"
+          },
+          {
+            "id": "color-1-1",
+            "rgba": [
+              0.50222120098039,
+              0.13101758769914,
+              0.13101758769914,
+              1
+            ],
+            "css": "rgba(128, 33, 33, 1)"
+          }
+        ],
+        "paletteRevision": 1,
+        "paletteError": null,
+        "settings": {
+          "available": true,
+          "schemaVersion": 2,
+          "revision": 0,
+          "layoutMode": "stretch",
+          "swatchSize": 32,
+          "includeDisabledColors": false,
+          "error": null
+        },
+        "activeOrientation": "vertical",
+        "pendingHostAction": null,
+        "pendingPaletteMutation": false,
+        "draggingId": null,
+        "lastHostResult": null,
+        "lastResult": null,
+        "fixtureViewport": {
+          "width": 32,
+          "height": 160
+        },
+        "designState": "default"
+      },
+      "geometry": {
+        "panel": {
+          "x": 0,
+          "y": 0,
+          "width": 32,
+          "height": 160
+        },
+        "controls": {
+          "palette-strip": {
+            "x": 2,
+            "y": 2,
+            "width": 28,
+            "height": 130
+          },
+          "swatch-fixture-cyan": {
+            "x": 2,
+            "y": 2,
+            "width": 28,
+            "height": 42.6640625
+          },
+          "remove-fixture-cyan": {
+            "x": 15,
+            "y": 4,
+            "width": 13,
+            "height": 13
+          },
+          "swatch-fixture-magenta": {
+            "x": 2,
+            "y": 45.6640625,
+            "width": 28,
+            "height": 42.6640625
+          },
+          "remove-fixture-magenta": {
+            "x": 15,
+            "y": 47.6640625,
+            "width": 13,
+            "height": 13
+          },
+          "swatch-color-1-1": {
+            "x": 2,
+            "y": 89.328125,
+            "width": 28,
+            "height": 42.6640625
+          },
+          "remove-color-1-1": {
+            "x": 15,
+            "y": 91.328125,
+            "width": 13,
+            "height": 13
+          },
+          "palette-add": {
+            "x": 2,
+            "y": 134,
+            "width": 28,
+            "height": 24
+          },
+          "status-output": {
+            "x": 0,
+            "y": 0,
+            "width": 0,
+            "height": 0
+          }
+        }
+      }
+    },
+    "200x200": {
+      "state": {
+        "palette": [
+          {
+            "id": "fixture-cyan",
+            "rgba": [
+              0,
+              0.7176470588235294,
+              0.7803921568627451,
+              1
+            ],
+            "css": "rgba(0, 183, 199, 1)"
+          },
+          {
+            "id": "fixture-magenta",
+            "rgba": [
+              0.7607843137254902,
+              0.22745098039215686,
+              0.6470588235294118,
+              1
+            ],
+            "css": "rgba(194, 58, 165, 1)"
+          },
+          {
+            "id": "color-1-1",
+            "rgba": [
+              0.50222120098039,
+              0.13101758769914,
+              0.13101758769914,
+              1
+            ],
+            "css": "rgba(128, 33, 33, 1)"
+          }
+        ],
+        "paletteRevision": 1,
+        "paletteError": null,
+        "settings": {
+          "available": true,
+          "schemaVersion": 2,
+          "revision": 0,
+          "layoutMode": "stretch",
+          "swatchSize": 32,
+          "includeDisabledColors": false,
+          "error": null
+        },
+        "activeOrientation": "horizontal",
+        "pendingHostAction": null,
+        "pendingPaletteMutation": false,
+        "draggingId": null,
+        "lastHostResult": null,
+        "lastResult": null,
+        "fixtureViewport": {
+          "width": 200,
+          "height": 200
+        },
+        "designState": "default"
+      },
+      "geometry": {
+        "panel": {
+          "x": 0,
+          "y": 0,
+          "width": 200,
+          "height": 200
+        },
+        "controls": {
+          "palette-strip": {
+            "x": 2,
+            "y": 2,
+            "width": 170,
+            "height": 196
+          },
+          "swatch-fixture-cyan": {
+            "x": 2,
+            "y": 2,
+            "width": 56,
+            "height": 196
+          },
+          "remove-fixture-cyan": {
+            "x": 43,
+            "y": 4,
+            "width": 13,
+            "height": 13
+          },
+          "swatch-fixture-magenta": {
+            "x": 59,
+            "y": 2,
+            "width": 56,
+            "height": 196
+          },
+          "remove-fixture-magenta": {
+            "x": 100,
+            "y": 4,
+            "width": 13,
+            "height": 13
+          },
+          "swatch-color-1-1": {
+            "x": 116,
+            "y": 2,
+            "width": 56,
+            "height": 196
+          },
+          "remove-color-1-1": {
+            "x": 157,
+            "y": 4,
+            "width": 13,
+            "height": 13
+          },
+          "palette-add": {
+            "x": 174,
+            "y": 2,
+            "width": 24,
+            "height": 196
+          },
+          "status-output": {
+            "x": 0,
+            "y": 0,
+            "width": 0,
+            "height": 0
+          }
+        }
+      }
+    }
+  },
+  "paletteSeed": [
+    {
+      "id": "fixture-cyan",
+      "rgba": [
+        0,
+        0.7176470588235294,
+        0.7803921568627451,
+        1
+      ],
+      "css": "rgba(0, 183, 199, 1)"
+    },
+    {
+      "id": "fixture-magenta",
+      "rgba": [
+        0.7607843137254902,
+        0.22745098039215686,
+        0.6470588235294118,
+        1
+      ],
+      "css": "rgba(194, 58, 165, 1)"
+    }
+  ],
+  "interaction": {
+    "testId": "palette-add",
+    "expectedToDispatch": true,
+    "dispatched": true
+  },
+  "assetProof": {
+    "buildRoot": "/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/dist/cep",
+    "assets": [
+      "/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/dist/cep/assets/main-ra_zXo87.cjs",
+      "/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/dist/cep/assets/debug-api-EMV6xW9J.css",
+      "/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/dist/cep/assets/main-Dwj0x94X.css"
+    ]
+  },
+  "consoleEvidence": {
+    "console": [
+      {
+        "type": "log",
+        "values": [
+          "/Users/REDACTED/Library/Application Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/jsx/index.js"
+        ]
+      },
+      {
+        "type": "info",
+        "values": [
+          "[Chroma Relay][I11][main] loaded"
+        ]
+      },
+      {
+        "type": "log",
+        "values": [
+          "false"
+        ]
+      }
+    ],
+    "exceptions": [],
+    "logs": []
+  },
+  "ioPolicy": {
+    "evidenceDirectory": "/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/evidence/local/settings-no-status",
+    "temporaryConfigRoot": "/private/tmp/chroma-relay-i05-main",
+    "temporaryRootCreated": false,
+    "productionConfigWrites": 0
+  }
+}

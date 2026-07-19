@@ -1,0 +1,71 @@
+{
+  "capturedAt": "2026-07-17T20:45:46.597Z",
+  "passed": false,
+  "error": "Error: No-selection status changed palette state or reported incorrectly\n    at run (file:///Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/scripts/cep-functional-smoke.mjs:1593:13)",
+  "consoleEvidence": {
+    "console": [
+      {
+        "type": "log",
+        "values": [
+          "/Users/REDACTED/Library/Application Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/jsx/index.js"
+        ]
+      },
+      {
+        "type": "info",
+        "values": [
+          "[Chroma Relay][I11][main] loaded"
+        ]
+      },
+      {
+        "type": "log",
+        "values": [
+          "false"
+        ]
+      },
+      {
+        "type": "log",
+        "values": [
+          "false"
+        ]
+      },
+      {
+        "type": "log",
+        "values": [
+          "false"
+        ]
+      },
+      {
+        "type": "log",
+        "values": [
+          "false"
+        ]
+      },
+      {
+        "type": "log",
+        "values": [
+          "/Users/REDACTED/Library/Application Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/jsx/index.js"
+        ]
+      },
+      {
+        "type": "info",
+        "values": [
+          "[Chroma Relay][I11][main] loaded"
+        ]
+      },
+      {
+        "type": "log",
+        "values": [
+          "true"
+        ]
+      },
+      {
+        "type": "log",
+        "values": [
+          "true"
+        ]
+      }
+    ],
+    "exceptions": [],
+    "logs": []
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "capturedAt": "2026-07-17T04:43:35.761Z",
+  "passed": false,
+  "error": "Error: Recursive selected-group assertion failed: {\"groupSelection\":{\"selected\":1},\"hostResult\":{\"status\":\"ok\",\"colors\":[[0.12345679104328,0.34567892551422,0.56789124011993,1],[1,0,0,1]],\"selectedPropertyCount\":67,\"unsupportedGradientCount\":1,\"unsupportedTextCount\":0,\"readErrorCount\":0},\"counters\":{\"diskWrites\":2,\"emittedEvents\":0,\"receivedEvents\":0,\"hostCalls\":2},\"state\":{\"palette\":[{\"id\":\"color-1-1\",\"rgba\":[0.12345679104328,0.34567892551422,0.56789124011993,1],\"css\":\"rgba(31, 88, 145, 1)\"},{\"id\":\"color-2-2\",\"rgba\":[1,0,0,1],\"css\":\"rgba(255, 0, 0, 1)\"}],\"paletteRevision\":2,\"paletteError\":null,\"settings\":{\"available\":true,\"schemaVersion\":1,\"revision\":0,\"layoutMode\":\"stretch\",\"swatchSize\":32,\"error\":null},\"activeOrientation\":\"horizontal\",\"pendingHostAction\":null,\"lastHostResult\":{\"status\":\"ok\",\"colors\":[[0.12345679104328,0.34567892551422,0.56789124011993,1],[1,0,0,1]],\"selectedPropertyCount\":67,\"unsupportedGradientCount\":1,\"unsupportedTextCount\":0,\"readErrorCount\":0},\"lastResult\":\"Added 1 color; skipped 1 unsupported\",\"fixtureViewport\":null,\"designState\":\"default\"}}\n    at run (file:///Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/scripts/cep-functional-smoke.mjs:303:13)",
+  "consoleEvidence": {
+    "console": [
+      {
+        "type": "log",
+        "values": [
+          "/Users/REDACTED/Library/Application Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/jsx/index.js"
+        ]
+      },
+      {
+        "type": "log",
+        "values": [
+          "buildContextMenu"
+        ]
+      },
+      {
+        "type": "info",
+        "values": [
+          "[Chroma Relay][I05][main] loaded"
+        ]
+      }
+    ],
+    "exceptions": [],
+    "logs": []
+  }
+}

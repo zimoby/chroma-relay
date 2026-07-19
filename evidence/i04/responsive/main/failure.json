@@ -1,0 +1,44 @@
+{
+  "capturedAt": "2026-07-17T03:26:11.103Z",
+  "design": "seam",
+  "panel": {
+    "page": "main",
+    "port": 8198,
+    "extensionId": "com.zimoby.chroma-relay.main",
+    "pageSuffix": "/main/index.html"
+  },
+  "target": {
+    "description": "",
+    "devtoolsFrontendUrl": "/devtools/inspector.html?ws=127.0.0.1:8198/devtools/page/C95D8F46F0B7B42EAEF3EE60B4ADEC33",
+    "id": "C95D8F46F0B7B42EAEF3EE60B4ADEC33",
+    "title": "Chroma Relay — Main",
+    "type": "page",
+    "url": "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/main/index.html",
+    "webSocketDebuggerUrl": "ws://127.0.0.1:8198/devtools/page/C95D8F46F0B7B42EAEF3EE60B4ADEC33"
+  },
+  "error": "Error: Unable to capture screenshot\n    at WebSocket.<anonymous> (file:///Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/scripts/cep-design-capture.mjs:65:41)\n    at callListener (/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/node_modules/ws/lib/event-target.js:290:14)\n    at WebSocket.onMessage (/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/node_modules/ws/lib/event-target.js:209:9)\n    at WebSocket.emit (node:events:519:28)\n    at Receiver.receiverOnMessage (/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/node_modules/ws/lib/websocket.js:1239:20)\n    at Receiver.emit (node:events:519:28)\n    at Receiver.dataMessage (/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/node_modules/ws/lib/receiver.js:633:14)\n    at /Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/node_modules/ws/lib/receiver.js:566:12\n    at /Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/node_modules/ws/lib/permessage-deflate.js:309:9\n    at /Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/node_modules/ws/lib/permessage-deflate.js:392:7",
+  "consoleEvidence": {
+    "console": [
+      {
+        "type": "log",
+        "values": [
+          "/Users/REDACTED/Library/Application Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/jsx/index.js"
+        ]
+      },
+      {
+        "type": "log",
+        "values": [
+          "buildContextMenu"
+        ]
+      },
+      {
+        "type": "info",
+        "values": [
+          "[Chroma Relay][I02][main] loaded"
+        ]
+      }
+    ],
+    "exceptions": [],
+    "logs": []
+  }
+}

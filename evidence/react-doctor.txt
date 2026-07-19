@@ -1,0 +1,110 @@
+^Dreact-doctor v0.0.17
+
+Scanning /Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay...
+
+- Detecting framework. Found Vite.
+✔ Detecting framework. Found Vite.
+- Detecting React version. Found React ^19.1.0.
+✔ Detecting React version. Found React ^19.1.0.
+- Detecting language. Found TypeScript.
+✔ Detecting language. Found TypeScript.
+- Detecting React Compiler. Not found.
+✔ Detecting React Compiler. Not found.
+- Found 59 source files.
+✔ Found 59 source files.
+
+- Running lint checks...
+- Running lint checks.
+✔ Running lint checks.
+- Detecting dead code...
+✔ Detecting dead code.
+ExtendScript Change
+  ⚠ Component "App" has 17 useState calls — consider useReducer for related state (2)
+    Group related state: `const [state, dispatch] = useReducer(reducer, { field1, field2, ... })`
+    src/js/settings/settings.tsx: 157
+    src/js/main/main.tsx: 187
+
+  ⚠ Component "App" is 1173 lines — consider breaking it into smaller focused components (2)
+    Extract logical sections into focused components: `<UserHeader />`, `<UserActions />`, etc.
+    src/js/settings/settings.tsx: 157
+    src/js/main/main.tsx: 187
+
+  ⚠ 3 setState calls in a single useEffect — consider using useReducer or deriving state (10)
+    Combine into useReducer: `const [state, dispatch] = useReducer(reducer, initialState)`
+    src/js/settings/settings.tsx: 197, 209, 221, 235, 685
+    src/js/main/main.tsx: 249, 287, 303, 314, 833
+
+  ⚠ Inline render function "renderEditorField()" — extract to a separate component for proper reconciliation (2)
+    Extract to a named component: `const ListItem = ({ item }) => <div>{item.name}</div>`
+    src/js/settings/settings.tsx: 855, 1308
+
+  ⚠ Unused file (34)
+    This file is not imported by any other file in the project.
+    scripts/ae-i07-i08-cleanup.jsx
+    scripts/ae-i07-i08-setup.jsx
+    src/js/index.scss
+    src/js/variables.scss
+    src/jsx/global.d.ts
+    src/jsx/index.ts
+    src/shared/shared.ts
+    src/js/main/index-react.tsx
+    src/js/main/main.scss
+    src/js/main/main.tsx
+    src/js/settings/index-react.tsx
+    src/js/settings/settings.scss
+    src/js/settings/settings.tsx
+    src/js/shared/image-palette-file.ts
+    src/js/shared/layout-settings.ts
+    src/js/shared/palette-events.ts
+    src/js/shared/palette-storage.ts
+    src/jsx/aeft/aeft-utils.ts
+    src/jsx/aeft/aeft.ts
+    src/jsx/aeft/color-apply.ts
+    src/jsx/aeft/native-gradient-apply.ts
+    src/jsx/aeft/native-gradient-target.ts
+    src/jsx/lib/json2.js
+    src/jsx/utils/samples.ts
+    src/jsx/utils/utils.ts
+    src/js/lib/cep/cep_engine_extensions.js
+    src/js/lib/cep/csinterface.js
+    src/js/lib/cep/vulcan.js
+    src/js/lib/utils/aeft.ts
+    src/js/lib/utils/bolt.ts
+    src/js/lib/utils/cep.ts
+    src/js/lib/utils/init-cep.ts
+    src/js/lib/utils/ppro.ts
+    src/js/lib/cep/es-types/index.ts
+
+  ⚠ Unused export: BUILD_MARKER (53)
+    src/js/shared/debug-api.ts
+    src/js/shared/palette-domain.ts
+    src/js/shared/layout-settings-domain.ts
+    src/js/shared/image-palette-domain.ts
+    src/js/main/native-gradient-files.ts
+    src/js/shared/native-gradient-collection.ts
+    src/js/lib/cep/node.ts
+    src/js/shared/native-gradient-contract.ts
+
+  ⚠ Unused type: PanelPage (26)
+    src/js/shared/debug-api.ts
+    src/js/shared/palette-domain.ts
+    src/js/shared/color-format.ts
+    src/js/shared/layout-settings-domain.ts
+    src/js/shared/image-palette-domain.ts
+    src/js/main/native-gradient-files.ts
+    src/js/shared/native-gradient-collection.ts
+    src/js/shared/palette-transfer.ts
+    src/js/shared/native-gradient-contract.ts
+
+  ┌─────────────────────────────────────────────────────────────────────┐
+  │ React Doctor (www.react.doctor)                                     │
+  │                                                                     │
+  │ You are offline, could not calculate score. Reconnect to calculate. │
+  │                                                                     │
+  │ ⚠ 129 warnings  across 44/59 files  in 1.2s                         │
+  └─────────────────────────────────────────────────────────────────────┘
+
+  Full diagnostics written to /var/folders/qj/dr1y9pvd6hb_v_kzs1rjccjh0000gn/T/react-doctor-007ad405-070a-4c87-8692-dd5e677d3adf
+
+  Share your results: https://www.react.doctor/share?p=com.zimoby.chroma-relay&w=129&f=44
+

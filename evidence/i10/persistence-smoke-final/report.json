@@ -1,0 +1,333 @@
+{
+  "capturedAt": "2026-07-17T05:18:48.216Z",
+  "passed": true,
+  "temporaryRoot": "/private/tmp/chroma-relay-i06-persistence",
+  "cases": {
+    "missing": {
+      "document": {
+        "schemaVersion": 1,
+        "revision": 0,
+        "colors": [
+          {
+            "id": "coral",
+            "rgba": [
+              0.8470588235294118,
+              0.4,
+              0.29411764705882354,
+              1
+            ]
+          },
+          {
+            "id": "leaf",
+            "rgba": [
+              0.4549019607843137,
+              0.6470588235294118,
+              0.41568627450980394,
+              1
+            ]
+          },
+          {
+            "id": "sky",
+            "rgba": [
+              0.37254901960784315,
+              0.5607843137254902,
+              0.792156862745098,
+              1
+            ]
+          }
+        ]
+      },
+      "error": null,
+      "recovery": "none"
+    },
+    "valid": {
+      "document": {
+        "schemaVersion": 1,
+        "revision": 7,
+        "colors": [
+          {
+            "id": "exact-hdr",
+            "rgba": [
+              1.25,
+              -0.1,
+              0.5000004,
+              0.875
+            ]
+          }
+        ]
+      },
+      "error": null,
+      "recovery": "none"
+    },
+    "malformed": {
+      "document": {
+        "schemaVersion": 1,
+        "revision": 0,
+        "colors": [
+          {
+            "id": "coral",
+            "rgba": [
+              0.8470588235294118,
+              0.4,
+              0.29411764705882354,
+              1
+            ]
+          },
+          {
+            "id": "leaf",
+            "rgba": [
+              0.4549019607843137,
+              0.6470588235294118,
+              0.41568627450980394,
+              1
+            ]
+          },
+          {
+            "id": "sky",
+            "rgba": [
+              0.37254901960784315,
+              0.5607843137254902,
+              0.792156862745098,
+              1
+            ]
+          }
+        ]
+      },
+      "error": "Saved palette is invalid; the original file was preserved",
+      "recovery": "none"
+    },
+    "temp": {
+      "document": {
+        "schemaVersion": 1,
+        "revision": 8,
+        "colors": [
+          {
+            "id": "temp-recovery",
+            "rgba": [
+              0.1,
+              0.2,
+              0.3,
+              1
+            ]
+          }
+        ]
+      },
+      "error": null,
+      "recovery": "temp"
+    },
+    "backup": {
+      "document": {
+        "schemaVersion": 1,
+        "revision": 9,
+        "colors": [
+          {
+            "id": "backup-recovery",
+            "rgba": [
+              0.4,
+              0.5,
+              0.6,
+              1
+            ]
+          }
+        ]
+      },
+      "error": null,
+      "recovery": "backup"
+    },
+    "interrupted": {
+      "document": {
+        "schemaVersion": 1,
+        "revision": 10,
+        "colors": [
+          {
+            "id": "backup-wins",
+            "rgba": [
+              0.6,
+              0.5,
+              0.4,
+              1
+            ]
+          }
+        ]
+      },
+      "error": null,
+      "recovery": "backup"
+    }
+  },
+  "queuedFile": {
+    "schemaVersion": 1,
+    "revision": 1,
+    "colors": [
+      {
+        "id": "queued-second",
+        "rgba": [
+          0.44,
+          0.55,
+          0.66,
+          0.77
+        ]
+      }
+    ]
+  },
+  "queuedSnapshot": {
+    "state": {
+      "palette": [
+        {
+          "id": "queued-second",
+          "rgba": [
+            0.44,
+            0.55,
+            0.66,
+            0.77
+          ],
+          "css": "rgba(112, 140, 168, 0.77)"
+        }
+      ],
+      "paletteRevision": 1,
+      "paletteError": null,
+      "settings": {
+        "available": true,
+        "schemaVersion": 1,
+        "revision": 0,
+        "layoutMode": "stretch",
+        "swatchSize": 32,
+        "error": null
+      },
+      "activeOrientation": "horizontal",
+      "pendingHostAction": null,
+      "pendingPaletteMutation": false,
+      "armedRemovalId": null,
+      "draggingId": null,
+      "lastHostResult": null,
+      "lastResult": "Palette saved",
+      "fixtureViewport": null,
+      "designState": "default"
+    },
+    "counters": {
+      "diskWrites": 2,
+      "emittedEvents": 0,
+      "receivedEvents": 0,
+      "hostCalls": 0
+    }
+  },
+  "reloaded": {
+    "state": {
+      "palette": [
+        {
+          "id": "queued-second",
+          "rgba": [
+            0.44,
+            0.55,
+            0.66,
+            0.77
+          ],
+          "css": "rgba(112, 140, 168, 0.77)"
+        }
+      ],
+      "paletteRevision": 1,
+      "paletteError": null,
+      "settings": {
+        "available": true,
+        "schemaVersion": 1,
+        "revision": 0,
+        "layoutMode": "stretch",
+        "swatchSize": 32,
+        "error": null
+      },
+      "activeOrientation": "horizontal",
+      "pendingHostAction": null,
+      "pendingPaletteMutation": false,
+      "armedRemovalId": null,
+      "draggingId": null,
+      "lastHostResult": null,
+      "lastResult": null,
+      "fixtureViewport": null,
+      "designState": "default"
+    },
+    "counters": {
+      "diskWrites": 0,
+      "emittedEvents": 0,
+      "receivedEvents": 0,
+      "hostCalls": 0
+    }
+  },
+  "settingsWriteBoundary": "persistPalette is only available on the Main panel",
+  "settingsSnapshot": {
+    "state": {
+      "palette": [],
+      "settings": {
+        "available": true,
+        "schemaVersion": 1,
+        "revision": 0,
+        "layoutMode": "stretch",
+        "swatchSize": 32
+      },
+      "activeOrientation": null,
+      "pendingHostAction": null,
+      "lastResult": "Stretch layout is active",
+      "fixtureViewport": null
+    },
+    "counters": {
+      "diskWrites": 0,
+      "emittedEvents": 0,
+      "receivedEvents": 0,
+      "hostCalls": 0
+    }
+  },
+  "consoleEvidence": {
+    "main": {
+      "console": [
+        {
+          "type": "log",
+          "text": "/Users/REDACTED/Library/Application Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/jsx/index.js"
+        },
+        {
+          "type": "log",
+          "text": "buildContextMenu"
+        },
+        {
+          "type": "info",
+          "text": "[Chroma Relay][I05][main] loaded"
+        },
+        {
+          "type": "log",
+          "text": "/Users/REDACTED/Library/Application Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/jsx/index.js"
+        },
+        {
+          "type": "log",
+          "text": "buildContextMenu"
+        },
+        {
+          "type": "info",
+          "text": "[Chroma Relay][I05][main] loaded"
+        }
+      ],
+      "logs": [],
+      "exceptions": []
+    },
+    "settings": {
+      "console": [
+        {
+          "type": "log",
+          "text": "/Users/REDACTED/Library/Application Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/jsx/index.js"
+        },
+        {
+          "type": "log",
+          "text": "buildContextMenu"
+        },
+        {
+          "type": "info",
+          "text": "[Chroma Relay][I05][settings] loaded"
+        }
+      ],
+      "logs": [],
+      "exceptions": []
+    }
+  },
+  "screenshots": [
+    "main-reloaded.png"
+  ],
+  "preservedEvidence": [
+    "malformed-palette.json"
+  ]
+}

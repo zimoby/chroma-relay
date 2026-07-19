@@ -1,0 +1,68 @@
+{
+  "capturedAt": "2026-07-17T11:50:50.063Z",
+  "passed": false,
+  "temporaryRoot": "/private/tmp/chroma-relay-i05-settings-smoke-43980",
+  "error": "Error: Target crashed\n    at WebSocket.<anonymous> (file:///Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/scripts/cep-cdp.mjs:78:41)\n    at callListener (/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/node_modules/ws/lib/event-target.js:290:14)\n    at WebSocket.onMessage (/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/node_modules/ws/lib/event-target.js:209:9)\n    at WebSocket.emit (node:events:519:28)\n    at Receiver.receiverOnMessage (/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/node_modules/ws/lib/websocket.js:1239:20)\n    at Receiver.emit (node:events:519:28)\n    at Receiver.dataMessage (/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/node_modules/ws/lib/receiver.js:633:14)\n    at /Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/node_modules/ws/lib/receiver.js:566:12\n    at /Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/node_modules/ws/lib/permessage-deflate.js:309:9\n    at /Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay/node_modules/ws/lib/permessage-deflate.js:392:7",
+  "consoleEvidence": {
+    "main": {
+      "console": [
+        {
+          "type": "log",
+          "values": [
+            "/Users/REDACTED/Library/Application Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/jsx/index.js"
+          ]
+        },
+        {
+          "type": "info",
+          "values": [
+            "[Chroma Relay][I11][main] loaded"
+          ]
+        },
+        {
+          "type": "log",
+          "values": [
+            "/Users/REDACTED/Library/Application Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/jsx/index.js"
+          ]
+        },
+        {
+          "type": "info",
+          "values": [
+            "[Chroma Relay][I11][main] loaded"
+          ]
+        }
+      ],
+      "exceptions": [],
+      "logs": []
+    },
+    "settings": {
+      "console": [
+        {
+          "type": "log",
+          "values": [
+            "/Users/REDACTED/Library/Application Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/jsx/index.js"
+          ]
+        },
+        {
+          "type": "info",
+          "values": [
+            "[Chroma Relay][I11][settings] loaded"
+          ]
+        },
+        {
+          "type": "log",
+          "values": [
+            "/Users/REDACTED/Library/Application Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/jsx/index.js"
+          ]
+        },
+        {
+          "type": "info",
+          "values": [
+            "[Chroma Relay][I11][settings] loaded"
+          ]
+        }
+      ],
+      "exceptions": [],
+      "logs": []
+    }
+  }
+}

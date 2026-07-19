@@ -1,0 +1,1266 @@
+{
+  "capturedAt": "2026-07-17T04:34:06.066Z",
+  "passed": true,
+  "temporaryRoot": "/private/tmp/chroma-relay-i05-settings-smoke-14070",
+  "flyoutLaunch": {
+    "extensionId": "com.zimoby.chroma-relay.settings",
+    "startupParams": ""
+  },
+  "before": {
+    "main": {
+      "identity": {
+        "extensionId": "com.zimoby.chroma-relay.main",
+        "page": "main",
+        "version": "0.0.1",
+        "buildMarker": "I05 · 0.0.1",
+        "url": "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/main/index.html",
+        "configRoot": "/private/tmp/chroma-relay-i05-settings-smoke-14070",
+        "scripts": [
+          "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/assets/main-B5gjRdIG.cjs"
+        ],
+        "styles": [
+          "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/assets/debug-api-EMV6xW9J.css",
+          "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/assets/main-BBwdEpIC.css"
+        ]
+      },
+      "state": {
+        "palette": [
+          {
+            "id": "coral",
+            "rgba": [
+              0.8470588235294118,
+              0.4,
+              0.29411764705882354,
+              1
+            ],
+            "css": "rgba(216, 102, 75, 1)"
+          },
+          {
+            "id": "leaf",
+            "rgba": [
+              0.4549019607843137,
+              0.6470588235294118,
+              0.41568627450980394,
+              1
+            ],
+            "css": "rgba(116, 165, 106, 1)"
+          },
+          {
+            "id": "sky",
+            "rgba": [
+              0.37254901960784315,
+              0.5607843137254902,
+              0.792156862745098,
+              1
+            ],
+            "css": "rgba(95, 143, 202, 1)"
+          }
+        ],
+        "paletteRevision": 0,
+        "paletteError": null,
+        "settings": {
+          "available": true,
+          "schemaVersion": 1,
+          "revision": 0,
+          "layoutMode": "stretch",
+          "swatchSize": 32,
+          "error": null
+        },
+        "activeOrientation": "horizontal",
+        "pendingHostAction": null,
+        "lastResult": null,
+        "fixtureViewport": null,
+        "designState": "default"
+      },
+      "counters": {
+        "diskWrites": 0,
+        "emittedEvents": 0,
+        "receivedEvents": 0,
+        "hostCalls": 0
+      },
+      "geometry": {
+        "panel": {
+          "x": 0,
+          "y": 0,
+          "width": 267,
+          "height": 124
+        },
+        "controls": {
+          "palette-strip": {
+            "x": 2,
+            "y": 2,
+            "width": 237,
+            "height": 120
+          },
+          "swatch-coral": {
+            "x": 2,
+            "y": 2,
+            "width": 78.3359375,
+            "height": 120
+          },
+          "remove-coral": {
+            "x": 65.3359375,
+            "y": 4,
+            "width": 13,
+            "height": 13
+          },
+          "swatch-leaf": {
+            "x": 81.3359375,
+            "y": 2,
+            "width": 78.3359375,
+            "height": 120
+          },
+          "remove-leaf": {
+            "x": 144.671875,
+            "y": 4,
+            "width": 13,
+            "height": 13
+          },
+          "swatch-sky": {
+            "x": 160.671875,
+            "y": 2,
+            "width": 78.3359375,
+            "height": 120
+          },
+          "remove-sky": {
+            "x": 224.0078125,
+            "y": 4,
+            "width": 13,
+            "height": 13
+          },
+          "palette-add": {
+            "x": 241,
+            "y": 2,
+            "width": 24,
+            "height": 120
+          },
+          "status-output": {
+            "x": 0,
+            "y": 0,
+            "width": 0,
+            "height": 0
+          }
+        }
+      }
+    },
+    "settings": {
+      "identity": {
+        "extensionId": "com.zimoby.chroma-relay.settings",
+        "page": "settings",
+        "version": "0.0.1",
+        "buildMarker": "I05 · 0.0.1",
+        "url": "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/settings/index.html",
+        "configRoot": "/private/tmp/chroma-relay-i05-settings-smoke-14070",
+        "scripts": [
+          "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/assets/settings-pRxSAP_B.cjs"
+        ],
+        "styles": [
+          "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/assets/debug-api-EMV6xW9J.css",
+          "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/assets/settings-DOl8nbfG.css"
+        ]
+      },
+      "state": {
+        "palette": [],
+        "settings": {
+          "available": true,
+          "schemaVersion": 1,
+          "revision": 0,
+          "layoutMode": "stretch",
+          "swatchSize": 32
+        },
+        "activeOrientation": null,
+        "pendingHostAction": null,
+        "lastResult": "Stretch layout is active",
+        "fixtureViewport": null
+      },
+      "counters": {
+        "diskWrites": 0,
+        "emittedEvents": 0,
+        "receivedEvents": 0,
+        "hostCalls": 0
+      },
+      "geometry": {
+        "panel": {
+          "x": 0,
+          "y": 0,
+          "width": 378,
+          "height": 341
+        },
+        "controls": {
+          "layout-settings": {
+            "x": 16,
+            "y": 57,
+            "width": 320,
+            "height": 124
+          },
+          "layout-stretch": {
+            "x": 22,
+            "y": 110,
+            "width": 1,
+            "height": 1
+          },
+          "layout-fixed": {
+            "x": 117.5,
+            "y": 110,
+            "width": 1,
+            "height": 1
+          },
+          "swatch-size-slider": {
+            "x": 82,
+            "y": 148,
+            "width": 180.65625,
+            "height": 16
+          },
+          "swatch-size-input": {
+            "x": 272.65625,
+            "y": 144,
+            "width": 48,
+            "height": 24
+          },
+          "status-output": {
+            "x": 16,
+            "y": 315,
+            "width": 346,
+            "height": 12
+          }
+        }
+      }
+    }
+  },
+  "fixed": {
+    "main": {
+      "identity": {
+        "extensionId": "com.zimoby.chroma-relay.main",
+        "page": "main",
+        "version": "0.0.1",
+        "buildMarker": "I05 · 0.0.1",
+        "url": "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/main/index.html",
+        "configRoot": "/private/tmp/chroma-relay-i05-settings-smoke-14070",
+        "scripts": [
+          "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/assets/main-B5gjRdIG.cjs"
+        ],
+        "styles": [
+          "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/assets/debug-api-EMV6xW9J.css",
+          "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/assets/main-BBwdEpIC.css"
+        ]
+      },
+      "state": {
+        "palette": [
+          {
+            "id": "coral",
+            "rgba": [
+              0.8470588235294118,
+              0.4,
+              0.29411764705882354,
+              1
+            ],
+            "css": "rgba(216, 102, 75, 1)"
+          },
+          {
+            "id": "leaf",
+            "rgba": [
+              0.4549019607843137,
+              0.6470588235294118,
+              0.41568627450980394,
+              1
+            ],
+            "css": "rgba(116, 165, 106, 1)"
+          },
+          {
+            "id": "sky",
+            "rgba": [
+              0.37254901960784315,
+              0.5607843137254902,
+              0.792156862745098,
+              1
+            ],
+            "css": "rgba(95, 143, 202, 1)"
+          }
+        ],
+        "paletteRevision": 0,
+        "paletteError": null,
+        "settings": {
+          "available": true,
+          "schemaVersion": 1,
+          "revision": 1,
+          "layoutMode": "fixed",
+          "swatchSize": 32,
+          "error": null
+        },
+        "activeOrientation": "horizontal",
+        "pendingHostAction": null,
+        "lastResult": null,
+        "fixtureViewport": null,
+        "designState": "default"
+      },
+      "counters": {
+        "diskWrites": 0,
+        "emittedEvents": 0,
+        "receivedEvents": 1,
+        "hostCalls": 0
+      },
+      "geometry": {
+        "panel": {
+          "x": 0,
+          "y": 0,
+          "width": 267,
+          "height": 124
+        },
+        "controls": {
+          "palette-strip": {
+            "x": 2,
+            "y": 2,
+            "width": 237,
+            "height": 120
+          },
+          "swatch-coral": {
+            "x": 2,
+            "y": 2,
+            "width": 32,
+            "height": 32
+          },
+          "remove-coral": {
+            "x": 19,
+            "y": 4,
+            "width": 13,
+            "height": 13
+          },
+          "swatch-leaf": {
+            "x": 35,
+            "y": 2,
+            "width": 32,
+            "height": 32
+          },
+          "remove-leaf": {
+            "x": 52,
+            "y": 4,
+            "width": 13,
+            "height": 13
+          },
+          "swatch-sky": {
+            "x": 68,
+            "y": 2,
+            "width": 32,
+            "height": 32
+          },
+          "remove-sky": {
+            "x": 85,
+            "y": 4,
+            "width": 13,
+            "height": 13
+          },
+          "palette-add": {
+            "x": 241,
+            "y": 2,
+            "width": 24,
+            "height": 120
+          },
+          "status-output": {
+            "x": 0,
+            "y": 0,
+            "width": 0,
+            "height": 0
+          }
+        }
+      }
+    },
+    "settings": {
+      "identity": {
+        "extensionId": "com.zimoby.chroma-relay.settings",
+        "page": "settings",
+        "version": "0.0.1",
+        "buildMarker": "I05 · 0.0.1",
+        "url": "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/settings/index.html",
+        "configRoot": "/private/tmp/chroma-relay-i05-settings-smoke-14070",
+        "scripts": [
+          "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/assets/settings-pRxSAP_B.cjs"
+        ],
+        "styles": [
+          "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/assets/debug-api-EMV6xW9J.css",
+          "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/assets/settings-DOl8nbfG.css"
+        ]
+      },
+      "state": {
+        "palette": [],
+        "settings": {
+          "available": true,
+          "schemaVersion": 1,
+          "revision": 1,
+          "layoutMode": "fixed",
+          "swatchSize": 32
+        },
+        "activeOrientation": null,
+        "pendingHostAction": null,
+        "lastResult": "Fixed layout saved · 32 px",
+        "fixtureViewport": null
+      },
+      "counters": {
+        "diskWrites": 1,
+        "emittedEvents": 1,
+        "receivedEvents": 0,
+        "hostCalls": 0
+      },
+      "geometry": {
+        "panel": {
+          "x": 0,
+          "y": 0,
+          "width": 378,
+          "height": 341
+        },
+        "controls": {
+          "layout-settings": {
+            "x": 16,
+            "y": 57,
+            "width": 320,
+            "height": 124
+          },
+          "layout-stretch": {
+            "x": 22,
+            "y": 110,
+            "width": 1,
+            "height": 1
+          },
+          "layout-fixed": {
+            "x": 117.5,
+            "y": 110,
+            "width": 1,
+            "height": 1
+          },
+          "swatch-size-slider": {
+            "x": 82,
+            "y": 148,
+            "width": 180.65625,
+            "height": 16
+          },
+          "swatch-size-input": {
+            "x": 272.65625,
+            "y": 144,
+            "width": 48,
+            "height": 24
+          },
+          "status-output": {
+            "x": 16,
+            "y": 315,
+            "width": 346,
+            "height": 12
+          }
+        }
+      }
+    },
+    "swatches": [
+      {
+        "width": 32,
+        "height": 32
+      },
+      {
+        "width": 32,
+        "height": 32
+      },
+      {
+        "width": 32,
+        "height": 32
+      }
+    ]
+  },
+  "resized": {
+    "main": {
+      "identity": {
+        "extensionId": "com.zimoby.chroma-relay.main",
+        "page": "main",
+        "version": "0.0.1",
+        "buildMarker": "I05 · 0.0.1",
+        "url": "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/main/index.html",
+        "configRoot": "/private/tmp/chroma-relay-i05-settings-smoke-14070",
+        "scripts": [
+          "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/assets/main-B5gjRdIG.cjs"
+        ],
+        "styles": [
+          "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/assets/debug-api-EMV6xW9J.css",
+          "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/assets/main-BBwdEpIC.css"
+        ]
+      },
+      "state": {
+        "palette": [
+          {
+            "id": "coral",
+            "rgba": [
+              0.8470588235294118,
+              0.4,
+              0.29411764705882354,
+              1
+            ],
+            "css": "rgba(216, 102, 75, 1)"
+          },
+          {
+            "id": "leaf",
+            "rgba": [
+              0.4549019607843137,
+              0.6470588235294118,
+              0.41568627450980394,
+              1
+            ],
+            "css": "rgba(116, 165, 106, 1)"
+          },
+          {
+            "id": "sky",
+            "rgba": [
+              0.37254901960784315,
+              0.5607843137254902,
+              0.792156862745098,
+              1
+            ],
+            "css": "rgba(95, 143, 202, 1)"
+          }
+        ],
+        "paletteRevision": 0,
+        "paletteError": null,
+        "settings": {
+          "available": true,
+          "schemaVersion": 1,
+          "revision": 2,
+          "layoutMode": "fixed",
+          "swatchSize": 40,
+          "error": null
+        },
+        "activeOrientation": "horizontal",
+        "pendingHostAction": null,
+        "lastResult": null,
+        "fixtureViewport": null,
+        "designState": "default"
+      },
+      "counters": {
+        "diskWrites": 0,
+        "emittedEvents": 0,
+        "receivedEvents": 2,
+        "hostCalls": 0
+      },
+      "geometry": {
+        "panel": {
+          "x": 0,
+          "y": 0,
+          "width": 267,
+          "height": 124
+        },
+        "controls": {
+          "palette-strip": {
+            "x": 2,
+            "y": 2,
+            "width": 237,
+            "height": 120
+          },
+          "swatch-coral": {
+            "x": 2,
+            "y": 2,
+            "width": 40,
+            "height": 40
+          },
+          "remove-coral": {
+            "x": 27,
+            "y": 4,
+            "width": 13,
+            "height": 13
+          },
+          "swatch-leaf": {
+            "x": 43,
+            "y": 2,
+            "width": 40,
+            "height": 40
+          },
+          "remove-leaf": {
+            "x": 68,
+            "y": 4,
+            "width": 13,
+            "height": 13
+          },
+          "swatch-sky": {
+            "x": 84,
+            "y": 2,
+            "width": 40,
+            "height": 40
+          },
+          "remove-sky": {
+            "x": 109,
+            "y": 4,
+            "width": 13,
+            "height": 13
+          },
+          "palette-add": {
+            "x": 241,
+            "y": 2,
+            "width": 24,
+            "height": 120
+          },
+          "status-output": {
+            "x": 0,
+            "y": 0,
+            "width": 0,
+            "height": 0
+          }
+        }
+      }
+    },
+    "settings": {
+      "identity": {
+        "extensionId": "com.zimoby.chroma-relay.settings",
+        "page": "settings",
+        "version": "0.0.1",
+        "buildMarker": "I05 · 0.0.1",
+        "url": "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/settings/index.html",
+        "configRoot": "/private/tmp/chroma-relay-i05-settings-smoke-14070",
+        "scripts": [
+          "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/assets/settings-pRxSAP_B.cjs"
+        ],
+        "styles": [
+          "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/assets/debug-api-EMV6xW9J.css",
+          "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/assets/settings-DOl8nbfG.css"
+        ]
+      },
+      "state": {
+        "palette": [],
+        "settings": {
+          "available": true,
+          "schemaVersion": 1,
+          "revision": 2,
+          "layoutMode": "fixed",
+          "swatchSize": 40
+        },
+        "activeOrientation": null,
+        "pendingHostAction": null,
+        "lastResult": "Fixed layout saved · 40 px",
+        "fixtureViewport": null
+      },
+      "counters": {
+        "diskWrites": 2,
+        "emittedEvents": 2,
+        "receivedEvents": 0,
+        "hostCalls": 0
+      },
+      "geometry": {
+        "panel": {
+          "x": 0,
+          "y": 0,
+          "width": 378,
+          "height": 341
+        },
+        "controls": {
+          "layout-settings": {
+            "x": 16,
+            "y": 57,
+            "width": 320,
+            "height": 124
+          },
+          "layout-stretch": {
+            "x": 22,
+            "y": 110,
+            "width": 1,
+            "height": 1
+          },
+          "layout-fixed": {
+            "x": 117.5,
+            "y": 110,
+            "width": 1,
+            "height": 1
+          },
+          "swatch-size-slider": {
+            "x": 82,
+            "y": 148,
+            "width": 180.65625,
+            "height": 16
+          },
+          "swatch-size-input": {
+            "x": 272.65625,
+            "y": 144,
+            "width": 48,
+            "height": 24
+          },
+          "status-output": {
+            "x": 16,
+            "y": 315,
+            "width": 346,
+            "height": 12
+          }
+        }
+      }
+    },
+    "swatches": [
+      {
+        "width": 40,
+        "height": 40
+      },
+      {
+        "width": 40,
+        "height": 40
+      },
+      {
+        "width": 40,
+        "height": 40
+      }
+    ]
+  },
+  "alignmentFixtures": {
+    "wide": {
+      "orientation": "horizontal",
+      "alignItems": "flex-start",
+      "leftOffset": 0,
+      "topOffset": 0
+    },
+    "tall": {
+      "orientation": "vertical",
+      "alignItems": "flex-start",
+      "leftOffset": 0,
+      "topOffset": 0
+    }
+  },
+  "stored": {
+    "schemaVersion": 1,
+    "revision": 2,
+    "layoutMode": "fixed",
+    "swatchSize": 40
+  },
+  "reloaded": {
+    "main": {
+      "identity": {
+        "extensionId": "com.zimoby.chroma-relay.main",
+        "page": "main",
+        "version": "0.0.1",
+        "buildMarker": "I05 · 0.0.1",
+        "url": "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/main/index.html",
+        "configRoot": "/private/tmp/chroma-relay-i05-settings-smoke-14070",
+        "scripts": [
+          "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/assets/main-B5gjRdIG.cjs"
+        ],
+        "styles": [
+          "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/assets/debug-api-EMV6xW9J.css",
+          "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/assets/main-BBwdEpIC.css"
+        ]
+      },
+      "state": {
+        "palette": [
+          {
+            "id": "coral",
+            "rgba": [
+              0.8470588235294118,
+              0.4,
+              0.29411764705882354,
+              1
+            ],
+            "css": "rgba(216, 102, 75, 1)"
+          },
+          {
+            "id": "leaf",
+            "rgba": [
+              0.4549019607843137,
+              0.6470588235294118,
+              0.41568627450980394,
+              1
+            ],
+            "css": "rgba(116, 165, 106, 1)"
+          },
+          {
+            "id": "sky",
+            "rgba": [
+              0.37254901960784315,
+              0.5607843137254902,
+              0.792156862745098,
+              1
+            ],
+            "css": "rgba(95, 143, 202, 1)"
+          }
+        ],
+        "paletteRevision": 0,
+        "paletteError": null,
+        "settings": {
+          "available": true,
+          "schemaVersion": 1,
+          "revision": 2,
+          "layoutMode": "fixed",
+          "swatchSize": 40,
+          "error": null
+        },
+        "activeOrientation": "horizontal",
+        "pendingHostAction": null,
+        "lastResult": null,
+        "fixtureViewport": null,
+        "designState": "default"
+      },
+      "counters": {
+        "diskWrites": 0,
+        "emittedEvents": 0,
+        "receivedEvents": 0,
+        "hostCalls": 0
+      },
+      "geometry": {
+        "panel": {
+          "x": 0,
+          "y": 0,
+          "width": 267,
+          "height": 124
+        },
+        "controls": {
+          "palette-strip": {
+            "x": 2,
+            "y": 2,
+            "width": 237,
+            "height": 120
+          },
+          "swatch-coral": {
+            "x": 2,
+            "y": 2,
+            "width": 40,
+            "height": 40
+          },
+          "remove-coral": {
+            "x": 27,
+            "y": 4,
+            "width": 13,
+            "height": 13
+          },
+          "swatch-leaf": {
+            "x": 43,
+            "y": 2,
+            "width": 40,
+            "height": 40
+          },
+          "remove-leaf": {
+            "x": 68,
+            "y": 4,
+            "width": 13,
+            "height": 13
+          },
+          "swatch-sky": {
+            "x": 84,
+            "y": 2,
+            "width": 40,
+            "height": 40
+          },
+          "remove-sky": {
+            "x": 109,
+            "y": 4,
+            "width": 13,
+            "height": 13
+          },
+          "palette-add": {
+            "x": 241,
+            "y": 2,
+            "width": 24,
+            "height": 120
+          },
+          "status-output": {
+            "x": 0,
+            "y": 0,
+            "width": 0,
+            "height": 0
+          }
+        }
+      }
+    },
+    "settings": {
+      "identity": {
+        "extensionId": "com.zimoby.chroma-relay.settings",
+        "page": "settings",
+        "version": "0.0.1",
+        "buildMarker": "I05 · 0.0.1",
+        "url": "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/settings/index.html",
+        "configRoot": "/private/tmp/chroma-relay-i05-settings-smoke-14070",
+        "scripts": [
+          "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/assets/settings-pRxSAP_B.cjs"
+        ],
+        "styles": [
+          "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/assets/debug-api-EMV6xW9J.css",
+          "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/assets/settings-DOl8nbfG.css"
+        ]
+      },
+      "state": {
+        "palette": [],
+        "settings": {
+          "available": true,
+          "schemaVersion": 1,
+          "revision": 2,
+          "layoutMode": "fixed",
+          "swatchSize": 40
+        },
+        "activeOrientation": null,
+        "pendingHostAction": null,
+        "lastResult": "Fixed layout · 40 px",
+        "fixtureViewport": null
+      },
+      "counters": {
+        "diskWrites": 0,
+        "emittedEvents": 0,
+        "receivedEvents": 0,
+        "hostCalls": 0
+      },
+      "geometry": {
+        "panel": {
+          "x": 0,
+          "y": 0,
+          "width": 378,
+          "height": 341
+        },
+        "controls": {
+          "layout-settings": {
+            "x": 16,
+            "y": 57,
+            "width": 320,
+            "height": 124
+          },
+          "layout-stretch": {
+            "x": 22,
+            "y": 110,
+            "width": 1,
+            "height": 1
+          },
+          "layout-fixed": {
+            "x": 117.5,
+            "y": 110,
+            "width": 1,
+            "height": 1
+          },
+          "swatch-size-slider": {
+            "x": 82,
+            "y": 148,
+            "width": 180.65625,
+            "height": 16
+          },
+          "swatch-size-input": {
+            "x": 272.65625,
+            "y": 144,
+            "width": 48,
+            "height": 24
+          },
+          "status-output": {
+            "x": 16,
+            "y": 315,
+            "width": 346,
+            "height": 12
+          }
+        }
+      }
+    }
+  },
+  "stretch": {
+    "main": {
+      "identity": {
+        "extensionId": "com.zimoby.chroma-relay.main",
+        "page": "main",
+        "version": "0.0.1",
+        "buildMarker": "I05 · 0.0.1",
+        "url": "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/main/index.html",
+        "configRoot": "/private/tmp/chroma-relay-i05-settings-smoke-14070",
+        "scripts": [
+          "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/assets/main-B5gjRdIG.cjs"
+        ],
+        "styles": [
+          "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/assets/debug-api-EMV6xW9J.css",
+          "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/assets/main-BBwdEpIC.css"
+        ]
+      },
+      "state": {
+        "palette": [
+          {
+            "id": "coral",
+            "rgba": [
+              0.8470588235294118,
+              0.4,
+              0.29411764705882354,
+              1
+            ],
+            "css": "rgba(216, 102, 75, 1)"
+          },
+          {
+            "id": "leaf",
+            "rgba": [
+              0.4549019607843137,
+              0.6470588235294118,
+              0.41568627450980394,
+              1
+            ],
+            "css": "rgba(116, 165, 106, 1)"
+          },
+          {
+            "id": "sky",
+            "rgba": [
+              0.37254901960784315,
+              0.5607843137254902,
+              0.792156862745098,
+              1
+            ],
+            "css": "rgba(95, 143, 202, 1)"
+          }
+        ],
+        "paletteRevision": 0,
+        "paletteError": null,
+        "settings": {
+          "available": true,
+          "schemaVersion": 1,
+          "revision": 3,
+          "layoutMode": "stretch",
+          "swatchSize": 40,
+          "error": null
+        },
+        "activeOrientation": "horizontal",
+        "pendingHostAction": null,
+        "lastResult": null,
+        "fixtureViewport": null,
+        "designState": "default"
+      },
+      "counters": {
+        "diskWrites": 0,
+        "emittedEvents": 0,
+        "receivedEvents": 1,
+        "hostCalls": 0
+      },
+      "geometry": {
+        "panel": {
+          "x": 0,
+          "y": 0,
+          "width": 267,
+          "height": 124
+        },
+        "controls": {
+          "palette-strip": {
+            "x": 2,
+            "y": 2,
+            "width": 237,
+            "height": 120
+          },
+          "swatch-coral": {
+            "x": 2,
+            "y": 2,
+            "width": 78.3359375,
+            "height": 120
+          },
+          "remove-coral": {
+            "x": 65.3359375,
+            "y": 4,
+            "width": 13,
+            "height": 13
+          },
+          "swatch-leaf": {
+            "x": 81.3359375,
+            "y": 2,
+            "width": 78.3359375,
+            "height": 120
+          },
+          "remove-leaf": {
+            "x": 144.671875,
+            "y": 4,
+            "width": 13,
+            "height": 13
+          },
+          "swatch-sky": {
+            "x": 160.671875,
+            "y": 2,
+            "width": 78.3359375,
+            "height": 120
+          },
+          "remove-sky": {
+            "x": 224.0078125,
+            "y": 4,
+            "width": 13,
+            "height": 13
+          },
+          "palette-add": {
+            "x": 241,
+            "y": 2,
+            "width": 24,
+            "height": 120
+          },
+          "status-output": {
+            "x": 0,
+            "y": 0,
+            "width": 0,
+            "height": 0
+          }
+        }
+      }
+    },
+    "settings": {
+      "identity": {
+        "extensionId": "com.zimoby.chroma-relay.settings",
+        "page": "settings",
+        "version": "0.0.1",
+        "buildMarker": "I05 · 0.0.1",
+        "url": "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/settings/index.html",
+        "configRoot": "/private/tmp/chroma-relay-i05-settings-smoke-14070",
+        "scripts": [
+          "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/assets/settings-pRxSAP_B.cjs"
+        ],
+        "styles": [
+          "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/assets/debug-api-EMV6xW9J.css",
+          "file:///Users/REDACTED/Library/Application%20Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/assets/settings-DOl8nbfG.css"
+        ]
+      },
+      "state": {
+        "palette": [],
+        "settings": {
+          "available": true,
+          "schemaVersion": 1,
+          "revision": 3,
+          "layoutMode": "stretch",
+          "swatchSize": 40
+        },
+        "activeOrientation": null,
+        "pendingHostAction": null,
+        "lastResult": "Stretch layout saved",
+        "fixtureViewport": null
+      },
+      "counters": {
+        "diskWrites": 1,
+        "emittedEvents": 1,
+        "receivedEvents": 0,
+        "hostCalls": 0
+      },
+      "geometry": {
+        "panel": {
+          "x": 0,
+          "y": 0,
+          "width": 378,
+          "height": 341
+        },
+        "controls": {
+          "layout-settings": {
+            "x": 16,
+            "y": 57,
+            "width": 320,
+            "height": 124
+          },
+          "layout-stretch": {
+            "x": 22,
+            "y": 110,
+            "width": 1,
+            "height": 1
+          },
+          "layout-fixed": {
+            "x": 117.5,
+            "y": 110,
+            "width": 1,
+            "height": 1
+          },
+          "swatch-size-slider": {
+            "x": 82,
+            "y": 148,
+            "width": 180.65625,
+            "height": 16
+          },
+          "swatch-size-input": {
+            "x": 272.65625,
+            "y": 144,
+            "width": 48,
+            "height": 24
+          },
+          "status-output": {
+            "x": 16,
+            "y": 315,
+            "width": 346,
+            "height": 12
+          }
+        }
+      }
+    },
+    "swatches": [
+      {
+        "width": 78.3359375,
+        "height": 120
+      },
+      {
+        "width": 78.3359375,
+        "height": 120
+      },
+      {
+        "width": 78.3359375,
+        "height": 120
+      }
+    ]
+  },
+  "consoleEvidence": {
+    "main": {
+      "console": [
+        {
+          "type": "log",
+          "values": [
+            "/Users/REDACTED/Library/Application Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/jsx/index.js"
+          ]
+        },
+        {
+          "type": "log",
+          "values": [
+            "buildContextMenu"
+          ]
+        },
+        {
+          "type": "info",
+          "values": [
+            "[Chroma Relay][I05][main] loaded"
+          ]
+        },
+        {
+          "type": "log",
+          "values": [
+            "/Users/REDACTED/Library/Application Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/jsx/index.js"
+          ]
+        },
+        {
+          "type": "log",
+          "values": [
+            "buildContextMenu"
+          ]
+        },
+        {
+          "type": "info",
+          "values": [
+            "[Chroma Relay][I05][main] loaded"
+          ]
+        }
+      ],
+      "exceptions": [],
+      "logs": []
+    },
+    "settings": {
+      "console": [
+        {
+          "type": "log",
+          "values": [
+            "/Users/REDACTED/Library/Application Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/jsx/index.js"
+          ]
+        },
+        {
+          "type": "log",
+          "values": [
+            "buildContextMenu"
+          ]
+        },
+        {
+          "type": "info",
+          "values": [
+            "[Chroma Relay][I05][settings] loaded"
+          ]
+        },
+        {
+          "type": "log",
+          "values": [
+            "/Users/REDACTED/Library/Application Support/Adobe/CEP/extensions/com.zimoby.chroma-relay/jsx/index.js"
+          ]
+        },
+        {
+          "type": "log",
+          "values": [
+            "buildContextMenu"
+          ]
+        },
+        {
+          "type": "info",
+          "values": [
+            "[Chroma Relay][I05][settings] loaded"
+          ]
+        }
+      ],
+      "exceptions": [],
+      "logs": []
+    }
+  },
+  "screenshots": [
+    "main-fixed-40.png",
+    "settings-fixed-40.png"
+  ]
+}
