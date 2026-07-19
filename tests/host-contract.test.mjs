@@ -1568,6 +1568,73 @@ test("normal apply imports centralized exact identity without local gradient heu
   assert.doesNotMatch(source, /matchName[^\n]*toLowerCase\s*\(/);
 });
 
+test("solid apply re-resolves replaced wrappers, continues after a failed fresh target, and closes one Undo", async () => {
+  const { host, values, leaf, makeLayer, makeComp, setProject, app } = await loadAeftHost();
+  const first = leaf("ADBE Effect Color", values.COLOR, [0.1, 0.1, 0.1, 1]);
+  const second = leaf("ADBE Effect Color", values.COLOR, [0.2, 0.2, 0.2, 1]);
+  const third = leaf("ADBE Effect Color", values.COLOR, [0.3, 0.3, 0.3, 1]);
+  const firstLayer = makeLayer([first], 5101, 1);
+  const secondLayer = makeLayer([second], 5102, 2);
+  const thirdLayer = makeLayer([third], 5103, 3);
+  firstLayer.selectedProperties = [first];
+  secondLayer.selectedProperties = [second];
+  thirdLayer.selectedProperties = [third];
+  const comp = makeComp([firstLayer, secondLayer, thirdLayer], 5100);
+  let undoBegins = 0;
+  let undoEnds = 0;
+  let throwingFreshSetterAttempts = 0;
+  const originalBeginUndoGroup = app.beginUndoGroup;
+  app.beginUndoGroup = (label) => {
+    undoBegins += 1;
+    return originalBeginUndoGroup.call(app, label);
+  };
+  app.endUndoGroup = () => {
+    undoEnds += 1;
+  };
+  let reindexed = false;
+  const freshSecondColor = leaf("ADBE Effect Color", values.COLOR, [0.2, 0.2, 0.2, 1]);
+  const freshThirdColor = leaf("ADBE Effect Color", values.COLOR, [0.3, 0.3, 0.3, 1]);
+  freshSecondColor.setValue = () => {
+    throwingFreshSetterAttempts += 1;
+    throw new Error("deterministic fresh-wrapper write failure");
+  };
+  const freshSecondLayer = makeLayer([freshSecondColor], 5102, 3);
+  const freshThirdLayer = makeLayer([freshThirdColor], 5103, 1);
+  freshSecondLayer.selectedProperties = [freshSecondColor];
+  freshThirdLayer.selectedProperties = [freshThirdColor];
+  const originalFirstSetValue = first.setValue;
+  first.setValue = (nextValue) => {
+    originalFirstSetValue.call(first, nextValue);
+    firstLayer.index = 2;
+    secondLayer.index = 3;
+    thirdLayer.index = 1;
+    comp.selectedLayers = [freshThirdLayer, firstLayer, freshSecondLayer];
+    reindexed = true;
+  };
+  comp.layer = (index) => {
+    if (!reindexed) {
+      return index === 1 ? firstLayer : index === 2 ? secondLayer : index === 3 ? thirdLayer : null;
+    }
+    return index === 1 ? freshThirdLayer : index === 2 ? firstLayer : index === 3 ? freshSecondLayer : null;
+  };
+  comp.selectedLayers = [firstLayer, secondLayer, thirdLayer];
+  setProject(comp);
+
+  const result = JSON.parse(
+    JSON.stringify(host.applyColorToSelectedProperties([0.9, 0.8, 0.7, 1], false))
+  );
+  assert.equal(result.status, "ok");
+  assert.equal(result.appliedCount, 2);
+  assert.equal(result.failedCount, 1);
+  assert.equal(throwingFreshSetterAttempts, 1);
+  assert.equal(undoBegins, 1);
+  assert.equal(undoEnds, 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(first.value)), [0.9, 0.8, 0.7, 1]);
+  assert.deepEqual(JSON.parse(JSON.stringify(second.value)), [0.2, 0.2, 0.2, 1]);
+  assert.deepEqual(JSON.parse(JSON.stringify(freshThirdColor.value)), [0.9, 0.8, 0.7, 1]);
+  assert.equal(undoEnds, 1);
+});
+
 test("image resolver is read-only, file-identity based, and gates still JPEG or PNG", async () => {
   const source = await read("src/jsx/aeft/aeft.ts");
   assert.match(source, /resolveSelectedImage/);
@@ -1604,9 +1671,14 @@ test("Settings reads palette state but has no palette writer or AE host bridge",
     read("src/js/main/main.tsx"),
     read("src/js/shared/palette-events.ts"),
   ]);
-  assert.match(source, /import \{ loadPalette \} from "\.\.\/shared\/palette-storage"/);
+  assert.match(source, /inspectPalette/);
   assert.doesNotMatch(source, /\bsavePalette\b/);
+  assert.doesNotMatch(source, /\bloadPalette\b/);
+  assert.doesNotMatch(source, /promotePaletteRecovery/);
   assert.doesNotMatch(source, /\bevalTS\b/);
+  assert.match(source, /scheduleSettingsPaletteCommandTimeout/);
+  assert.match(source, /scheduleSettingsPaletteCommandTimeout\([\s\S]*?setStatus,/);
+  assert.match(source, /beginPaletteCommandRequest/);
   assert.match(source, /persistPalette is only available on the Main panel/);
   assert.match(source, /data-testid="settings-tab-palettes"/);
   assert.match(source, /dispatchPaletteCommand/);
