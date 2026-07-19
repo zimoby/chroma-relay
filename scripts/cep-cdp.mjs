@@ -3,9 +3,18 @@
 import { mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import WebSocket from "ws";
+import { pathToFileURL } from "node:url";
+import { CdpClient } from "./lib/cdp-client.mjs";
+import {
+  createOwnedRunDirectory,
+  createOwnedScratchDirectory,
+  parseRunnerArgs,
+  removeOwnedRunDirectory,
+} from "./lib/live-runner-policy.mjs";
+import contract from "../src/shared/product-contract.json" with { type: "json" };
+import packageJson from "../package.json" with { type: "json" };
 
-const EXPECTED_BUILD_MARKER = "I11 · 0.0.1";
+const EXPECTED_BUILD_MARKER = `${contract.marker.current} · ${packageJson.version}`;
 
 const REPO_ROOT = fileURLToPath(new URL("../", import.meta.url));
 const BUILD_ROOT = resolve(REPO_ROOT, "dist/cep");
@@ -19,121 +28,16 @@ const PANELS = [
   {
     page: "main",
     port: 8198,
-    extensionId: "com.zimoby.chroma-relay.main",
+    extensionId: contract.product.panelIds.main,
     pageSuffix: "/main/index.html",
   },
   {
     page: "settings",
     port: 8199,
-    extensionId: "com.zimoby.chroma-relay.settings",
+    extensionId: contract.product.panelIds.settings,
     pageSuffix: "/settings/index.html",
   },
 ];
-
-const [, , command = "inspect", ...rawArgs] = process.argv;
-const options = Object.fromEntries(
-  rawArgs
-    .filter((argument) => argument.startsWith("--") && argument.includes("="))
-    .map((argument) => {
-      const [key, ...value] = argument.slice(2).split("=");
-      return [key, value.join("=")];
-    })
-);
-const allowedOptions = new Set(["output", "main-id", "settings-id"]);
-const malformedArguments = rawArgs.filter(
-  (argument) => !argument.startsWith("--") || !argument.includes("=")
-);
-const unknownOptions = Object.keys(options).filter((key) => !allowedOptions.has(key));
-if (malformedArguments.length || unknownOptions.length) {
-  const details = [
-    malformedArguments.length ? `malformed: ${malformedArguments.join(", ")}` : null,
-    unknownOptions.length ? `unknown: ${unknownOptions.join(", ")}` : null,
-  ]
-    .filter(Boolean)
-    .join("; ");
-  console.error(`Invalid CDP runner arguments (${details})`);
-  process.exit(2);
-}
-
-class CDPClient {
-  constructor(url) {
-    this.url = url;
-    this.nextId = 1;
-    this.pending = new Map();
-    this.events = [];
-    this.socket = null;
-  }
-
-  async connect() {
-    this.socket = new WebSocket(this.url);
-    this.socket.addEventListener("message", ({ data }) => {
-      const message = JSON.parse(data);
-      if (!message.id) {
-        this.events.push(message);
-        return;
-      }
-      const pending = this.pending.get(message.id);
-      if (!pending) return;
-      this.pending.delete(message.id);
-      if (message.error) pending.reject(new Error(message.error.message || "CDP error"));
-      else pending.resolve(message.result);
-    });
-    await new Promise((resolveOpen, rejectOpen) => {
-      this.socket.addEventListener("open", resolveOpen, { once: true });
-      this.socket.addEventListener(
-        "error",
-        () => rejectOpen(new Error(`Unable to connect to ${this.url}`)),
-        { once: true }
-      );
-    });
-  }
-
-  send(method, params = {}) {
-    return new Promise((resolveResult, rejectResult) => {
-      const id = this.nextId++;
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        rejectResult(new Error(`${method} timed out`));
-      }, 8000);
-      this.pending.set(id, {
-        resolve: (result) => {
-          clearTimeout(timer);
-          resolveResult(result);
-        },
-        reject: (error) => {
-          clearTimeout(timer);
-          rejectResult(error);
-        },
-      });
-      this.socket.send(JSON.stringify({ id, method, params }));
-    });
-  }
-
-  async evaluate(expression) {
-    const result = await this.send("Runtime.evaluate", {
-      expression,
-      awaitPromise: true,
-      returnByValue: true,
-    });
-    if (result.exceptionDetails) {
-      throw new Error(
-        result.exceptionDetails.exception?.description ||
-          result.exceptionDetails.text ||
-          "Runtime.evaluate failed"
-      );
-    }
-    return result.result?.value;
-  }
-
-  async close() {
-    if (!this.socket) return;
-    this.socket.close();
-    await new Promise((resolveClose) => {
-      this.socket.addEventListener("close", resolveClose, { once: true });
-      setTimeout(resolveClose, 250);
-    });
-  }
-}
 
 const delay = (milliseconds) => new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
 
@@ -244,15 +148,19 @@ const captureScreenshot = async (client, path) => {
   await writeFile(path, Buffer.from(screenshot.data, "base64"));
 };
 
-const inspectPanel = async (panel, outputDirectory) => {
+const inspectPanel = async (panel, outputDirectory, parentRun) => {
+  const scratch = await createOwnedScratchDirectory(parentRun);
   let client;
   let target;
+  let report = null;
+  let primaryError = null;
+  const cleanupErrors = [];
   const failurePath = resolve(outputDirectory, `${panel.page}-failure.json`);
 
   try {
     const targets = await getTargets(panel.port);
     target = selectTarget(targets, panel);
-    client = new CDPClient(target.webSocketDebuggerUrl);
+    client = new CdpClient(target.webSocketDebuggerUrl);
     await client.connect();
     await Promise.all([
       client.send("Runtime.enable"),
@@ -265,7 +173,7 @@ const inspectPanel = async (panel, outputDirectory) => {
     await waitForComplete(client);
     await afterRender(client);
 
-    const temporaryRoot = `/private/tmp/chroma-relay-i05-${panel.page}`;
+    const temporaryRoot = scratch.path;
     await client.evaluate(
       debugCall(`(api) => api.setTemporaryConfigRoot(${JSON.stringify(temporaryRoot)})`)
     );
@@ -354,7 +262,7 @@ const inspectPanel = async (panel, outputDirectory) => {
 
     const screenshotPath = resolve(outputDirectory, `${panel.page}.png`);
     await captureScreenshot(client, screenshotPath);
-    const report = {
+    report = {
       capturedAt: new Date().toISOString(),
       panel,
       target,
@@ -379,8 +287,8 @@ const inspectPanel = async (panel, outputDirectory) => {
       resolve(outputDirectory, `${panel.page}.json`),
       `${JSON.stringify(report, null, 2)}\n`
     );
-    return report;
   } catch (error) {
+    primaryError = error;
     const failure = {
       capturedAt: new Date().toISOString(),
       panel,
@@ -396,10 +304,38 @@ const inspectPanel = async (panel, outputDirectory) => {
         // The JSON failure artifact remains authoritative if screenshot capture also fails.
       }
     }
-    throw error;
   } finally {
-    await client?.close();
+    try {
+      await client?.close();
+    } catch (error) {
+      cleanupErrors.push({ phase: "close", error: String(error?.stack || error) });
+    }
+    try {
+      await removeOwnedRunDirectory(scratch);
+    } catch (error) {
+      cleanupErrors.push({ phase: "scratch", error: String(error?.stack || error) });
+    }
   }
+  if (primaryError || cleanupErrors.length > 0) {
+    await writeFile(
+      failurePath,
+      `${JSON.stringify(
+        {
+          capturedAt: new Date().toISOString(),
+          panel,
+          target,
+          error: primaryError ? primaryError.stack || primaryError.message : null,
+          cleanupErrors,
+          consoleEvidence: client ? getConsoleEvidence(client.events) : null,
+        },
+        null,
+        2
+      )}\n`
+    );
+    if (primaryError) throw primaryError;
+    throw new AggregateError(cleanupErrors.map(({ error }) => new Error(error)), "CDP inspect cleanup failed");
+  }
+  return report;
 };
 
 const expectFailure = (label, action) => {
@@ -437,11 +373,7 @@ const runSelfTest = () => {
   console.log(JSON.stringify({ passed }, null, 2));
 };
 
-const runInspect = async () => {
-  const requestedOutput = options.output || "evidence/i05/inspect";
-  const outputDirectory = isAbsolute(requestedOutput)
-    ? requestedOutput
-    : resolve(REPO_ROOT, requestedOutput);
+const runInspect = async (outputDirectory, parentRun, options = {}) => {
   await mkdir(outputDirectory, { recursive: true });
 
   const configuredPanels = PANELS.map((panel) => ({
@@ -449,7 +381,7 @@ const runInspect = async () => {
     extensionId: options[`${panel.page}-id`] || panel.extensionId,
   }));
   const reports = [];
-  for (const panel of configuredPanels) reports.push(await inspectPanel(panel, outputDirectory));
+  for (const panel of configuredPanels) reports.push(await inspectPanel(panel, outputDirectory, parentRun));
   const summary = {
     capturedAt: new Date().toISOString(),
     passed: true,
@@ -465,16 +397,13 @@ const runInspect = async () => {
   console.log(JSON.stringify(summary, null, 2));
 };
 
-const runSettingsSmoke = async () => {
-  const requestedOutput = options.output || "evidence/i05/settings-smoke";
-  const outputDirectory = isAbsolute(requestedOutput)
-    ? requestedOutput
-    : resolve(REPO_ROOT, requestedOutput);
-  const temporaryRoot = `/private/tmp/chroma-relay-i05-settings-smoke-${process.pid}`;
+const runSettingsSmoke = async (outputDirectory, parentRun) => {
+  const scratch = await createOwnedScratchDirectory(parentRun);
+  const temporaryRoot = scratch.path;
   const clients = new Map();
+  let primaryError = null;
+  const cleanupErrors = [];
   await mkdir(outputDirectory, { recursive: true });
-  await rm(temporaryRoot, { recursive: true, force: true });
-  await mkdir(temporaryRoot, { recursive: true });
   await writeFile(
     resolve(temporaryRoot, "settings.json"),
     `${JSON.stringify(
@@ -499,7 +428,7 @@ const runSettingsSmoke = async () => {
   try {
     for (const panel of PANELS) {
       const target = selectTarget(await getTargets(panel.port), panel);
-      const client = new CDPClient(target.webSocketDebuggerUrl);
+      const client = new CdpClient(target.webSocketDebuggerUrl);
       clients.set(panel.page, client);
       await client.connect();
       await Promise.all([
@@ -530,7 +459,7 @@ const runSettingsSmoke = async () => {
           type: "com.adobe.csxs.events.flyoutMenuClicked",
           scope: "APPLICATION",
           appId: "AEFT",
-          extensionId: "com.zimoby.chroma-relay.main",
+          extensionId: contract.product.panelIds.main,
           data: JSON.stringify({ menuId: "settings" }),
         });
         setTimeout(() => {
@@ -540,7 +469,7 @@ const runSettingsSmoke = async () => {
       })
     `);
     if (
-      flyoutLaunch?.extensionId !== "com.zimoby.chroma-relay.settings" ||
+      flyoutLaunch?.extensionId !== contract.product.panelIds.settings ||
       flyoutLaunch?.startupParams !== ""
     ) {
       throw new Error(`flyout launch targeted the wrong extension: ${JSON.stringify(flyoutLaunch)}`);
@@ -556,8 +485,8 @@ const runSettingsSmoke = async () => {
     if (
       before.main.state.settings.layoutMode !== "stretch" ||
       before.settings.state.settings.layoutMode !== "stretch" ||
-      before.main.state.settings.schemaVersion !== 3 ||
-      before.settings.state.settings.schemaVersion !== 3 ||
+      before.main.state.settings.schemaVersion !== contract.schemas.settings ||
+      before.settings.state.settings.schemaVersion !== contract.schemas.settings ||
       before.main.state.settings.includeDisabledColors !== false ||
       before.settings.state.settings.includeDisabledColors !== false ||
       before.main.state.settings.extractionPreset !== "balanced" ||
@@ -769,7 +698,7 @@ const runSettingsSmoke = async () => {
       stored.swatchSize !== 40 ||
       stored.includeDisabledColors !== true ||
       stored.extractionPreset !== "tonal" ||
-      stored.schemaVersion !== 3 ||
+      stored.schemaVersion !== contract.schemas.settings ||
       stored.revision !== 4
     ) {
       throw new Error("settings.json did not contain the expected revision-4 Fixed/Tonal snapshot");
@@ -868,17 +797,7 @@ const runSettingsSmoke = async () => {
     await writeFile(resolve(outputDirectory, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
     console.log(JSON.stringify({ passed: true, outputDirectory, stored }, null, 2));
   } catch (error) {
-    const failure = {
-      capturedAt: new Date().toISOString(),
-      passed: false,
-      temporaryRoot,
-      error: error instanceof Error ? error.stack || error.message : String(error),
-      consoleEvidence: Object.fromEntries(
-        [...clients.entries()].map(([page, client]) => [page, getConsoleEvidence(client.events)])
-      ),
-    };
-    await writeFile(resolve(outputDirectory, "failure.json"), `${JSON.stringify(failure, null, 2)}\n`);
-    throw error;
+    primaryError = error;
   } finally {
     for (const client of clients.values()) {
       try {
@@ -886,27 +805,51 @@ const runSettingsSmoke = async () => {
       } catch {
         // Cleanup continues even if a panel closed during the run.
       }
-      await client.close();
+      try {
+        await client.close();
+      } catch (error) {
+        cleanupErrors.push({ phase: `close:${client.page || "panel"}`, error: String(error?.stack || error) });
+      }
     }
-    await rm(temporaryRoot, { recursive: true, force: true });
+    try {
+      await removeOwnedRunDirectory(scratch);
+    } catch (error) {
+      cleanupErrors.push({ phase: "scratch", error: String(error?.stack || error) });
+    }
+  }
+  if (primaryError || cleanupErrors.length > 0) {
+    const failure = {
+      capturedAt: new Date().toISOString(),
+      passed: false,
+      temporaryRoot,
+      error: primaryError ? primaryError.stack || primaryError.message : null,
+      cleanupErrors,
+      consoleEvidence: Object.fromEntries(
+        [...clients.entries()].map(([page, client]) => [page, getConsoleEvidence(client.events)])
+      ),
+    };
+    await writeFile(resolve(outputDirectory, "failure.json"), `${JSON.stringify(failure, null, 2)}\n`);
+    if (primaryError) throw primaryError;
+    throw new AggregateError(cleanupErrors.map(({ error }) => new Error(error)), "CDP settings cleanup failed");
   }
 };
 
-if (command === "self-test") {
-  runSelfTest();
-} else if (command === "inspect") {
-  runInspect().catch((error) => {
-    console.error(error instanceof Error ? error.message : error);
+const main = async () => {
+  const [, , command = "inspect", ...argv] = process.argv;
+  if (!["inspect", "settings-smoke", "self-test"].includes(command)) {
+    throw new Error("Usage: node scripts/cep-cdp.mjs <inspect|settings-smoke|self-test> [--output=path]");
+  }
+  const options = parseRunnerArgs(argv, { allowed: ["output", "main-id", "settings-id"] });
+  if (command === "self-test") return runSelfTest();
+  const root = options.output || (command === "inspect" ? "evidence/i05/inspect" : "evidence/i05/settings-smoke");
+  const run = await createOwnedRunDirectory(resolve(REPO_ROOT, root));
+  if (command === "inspect") return runInspect(run.path, run, options);
+  return runSettingsSmoke(run.path, run);
+};
+
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.stack || error.message : error);
     process.exitCode = 1;
   });
-} else if (command === "settings-smoke") {
-  runSettingsSmoke().catch((error) => {
-    console.error(error instanceof Error ? error.message : error);
-    process.exitCode = 1;
-  });
-} else {
-  console.error(
-    "Usage: node scripts/cep-cdp.mjs <inspect|settings-smoke|self-test> [--output=path]"
-  );
-  process.exitCode = 1;
 }

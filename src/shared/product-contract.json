@@ -1,0 +1,34 @@
+{
+  "contractVersion": 1,
+  "product": {
+    "extensionId": "com.zimoby.chroma-relay",
+    "displayName": "Chroma Relay",
+    "panelIds": {
+      "main": "com.zimoby.chroma-relay.main",
+      "settings": "com.zimoby.chroma-relay.settings"
+    }
+  },
+  "cep": {
+    "manifestVersion": 6,
+    "requiredRuntimeVersion": 9
+  },
+  "marker": {
+    "lineage": "I11",
+    "current": "Palette v2"
+  },
+  "schemas": {
+    "palette": 3,
+    "settings": 4,
+    "portable": 2
+  },
+  "events": {
+    "paletteCommand": "com.zimoby.chroma-relay.command",
+    "paletteResult": "com.zimoby.chroma-relay.result",
+    "layoutSettingsChanged": "com.zimoby.chroma-relay.settings.changed"
+  },
+  "runner": {
+    "ownershipKind": "chroma-relay-run",
+    "ownershipSchema": 1,
+    "markerFile": ".chroma-relay-run.json"
+  }
+}

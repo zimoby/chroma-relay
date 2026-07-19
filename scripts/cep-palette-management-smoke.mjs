@@ -3,70 +3,40 @@ import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import WebSocket from "ws";
+import { CdpClient } from "./lib/cdp-client.mjs";
+import {
+  createOwnedRunDirectory,
+  createOwnedScratchDirectory,
+  parseRunnerArgs,
+  removeOwnedRunDirectory,
+} from "./lib/live-runner-policy.mjs";
+import contract from "../src/shared/product-contract.json" with { type: "json" };
+import packageJson from "../package.json" with { type: "json" };
 
-const OUTPUT_DIRECTORY = resolve("evidence/local/palette-management/management-smoke");
+const EXPECTED_BUILD_MARKER = `${contract.marker.current} · ${packageJson.version}`;
 const REDESIGN_EVIDENCE_DIRECTORY = resolve("evidence/local/settings-ui-deep-redesign");
-const TEMPORARY_ROOT = `/tmp/chroma-relay-management-${process.pid}-${Date.now()}`;
-const PALETTE_PATH = resolve(TEMPORARY_ROOT, "palette.json");
 const PORTS = { main: 8198, settings: 8199 };
 const EDITED_RGBA = [51 / 255, 102 / 255, 153 / 255, 128 / 255];
 const ADDED_COLOR_RGBA = [195 / 255, 40 / 255, 40 / 255, 1];
 const HDR_RGBA = [1.25, -0.1, 0.5000004, 0.875];
 const IMPORT_SECOND_RGBA = [0, 0.5, 1, 0.25];
-const EXPORT_PATH = resolve(TEMPORARY_ROOT, "exported.chroma-relay.json");
-const EXPORT_COLLISION_BASE_PATH = resolve(TEMPORARY_ROOT, "existing-export");
-const EXPORT_COLLISION_PATH = `${EXPORT_COLLISION_BASE_PATH}.json`;
 const EXPORT_COLLISION_SENTINEL = "existing export must remain untouched\n";
-const IMPORT_FIXTURE_PATH = resolve(TEMPORARY_ROOT, "import-fixture.chroma-relay.json");
+const LEGACY_PALETTE_SCHEMA_VERSION = 2;
 
-class CdpClient {
-  constructor(page, socket) {
-    this.page = page;
-    this.socket = socket;
-    this.nextId = 0;
-    this.pending = new Map();
-    this.events = [];
-    socket.on("message", (raw) => {
-      const message = JSON.parse(raw);
-      if (message.id && this.pending.has(message.id)) {
-        const { resolve: pass, reject } = this.pending.get(message.id);
-        this.pending.delete(message.id);
-        if (message.error) reject(new Error(`${message.error.code}: ${message.error.message}`));
-        else pass(message.result);
-        return;
-      }
-      if (message.method) this.events.push(message);
-    });
-  }
+const pathsFor = (temporaryRoot) => {
+  const exportPath = resolve(temporaryRoot, "exported.chroma-relay.json");
+  const collisionBasePath = resolve(temporaryRoot, "existing-export");
+  return {
+    temporaryRoot,
+    palettePath: resolve(temporaryRoot, "palette.json"),
+    exportPath,
+    collisionBasePath,
+    collisionPath: `${collisionBasePath}.json`,
+    importFixturePath: resolve(temporaryRoot, "import-fixture.chroma-relay.json"),
+  };
+};
 
-  send(method, params = {}) {
-    this.nextId += 1;
-    const id = this.nextId;
-    return new Promise((pass, reject) => {
-      this.pending.set(id, { resolve: pass, reject });
-      this.socket.send(JSON.stringify({ id, method, params }));
-    });
-  }
-
-  async evaluate(expression) {
-    const result = await this.send("Runtime.evaluate", {
-      expression,
-      awaitPromise: true,
-      returnByValue: true,
-    });
-    if (result.exceptionDetails) {
-      throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text);
-    }
-    return result.result.value;
-  }
-
-  close() {
-    this.socket.close();
-  }
-}
-
-const connectPanel = async (page) => {
+const connectPanel = async (page, register = () => {}) => {
   const response = await fetch(`http://127.0.0.1:${PORTS[page]}/json/list`);
   if (!response.ok) throw new Error(`${page}: target list returned ${response.status}`);
   const targets = await response.json();
@@ -75,12 +45,41 @@ const connectPanel = async (page) => {
     (target) => target.type === "page" && new URL(target.url).pathname.endsWith(suffix)
   );
   assert.equal(matches.length, 1, `${page}: expected one exact target`);
-  const socket = new WebSocket(matches[0].webSocketDebuggerUrl);
-  await new Promise((pass, reject) => {
-    socket.once("open", pass);
-    socket.once("error", reject);
-  });
-  return new CdpClient(page, socket);
+  const client = new CdpClient(matches[0].webSocketDebuggerUrl);
+  client.page = page;
+  register(client);
+  await client.connect();
+  return client;
+};
+
+const serializeError = (error, ancestors = new Set()) => {
+  if (error === null || (typeof error !== "object" && typeof error !== "function")) {
+    return { name: typeof error, message: String(error), value: error };
+  }
+  if (ancestors.has(error)) {
+    return {
+      name: error.name || error.constructor?.name || "Error",
+      message: error.message || String(error),
+      circular: true,
+    };
+  }
+
+  const nextAncestors = new Set(ancestors);
+  nextAncestors.add(error);
+  const diagnostic = {
+    name: error.name || error.constructor?.name || "Error",
+    message: typeof error.message === "string" ? error.message : String(error),
+  };
+  if (typeof error.stack === "string") diagnostic.stack = error.stack;
+  if ("cause" in error) diagnostic.cause = serializeError(error.cause, nextAncestors);
+  if (Array.isArray(error.errors)) {
+    diagnostic.errors = error.errors.map((cause) => serializeError(cause, nextAncestors));
+  }
+  for (const key of Object.keys(error)) {
+    if (key === "cause" || key === "errors") continue;
+    diagnostic[key] = error[key];
+  }
+  return diagnostic;
 };
 
 const wait = (milliseconds) => new Promise((pass) => setTimeout(pass, milliseconds));
@@ -231,20 +230,20 @@ const endColorDrag = (client, sourceId) =>
     return "ok";`
   );
 
-const assertTemporaryRoots = async (clients) => {
+const assertTemporaryRoots = async (clients, temporaryRoot) => {
   const identities = await Promise.all(
     clients.map((client) => callDebug(client, "return api.getIdentity();"))
   );
   for (const identity of identities) {
     assert.equal(
       identity.configRoot,
-      TEMPORARY_ROOT,
+      temporaryRoot,
       `${identity.page}: refusing palette command outside temporary root`
     );
   }
 };
 
-const readPaletteFile = async () => JSON.parse(await readFile(PALETTE_PATH, "utf8"));
+const readPaletteFile = async (palettePath) => JSON.parse(await readFile(palettePath, "utf8"));
 
 const waitFor = async (predicate, label) => {
   for (let attempt = 0; attempt < 50; attempt += 1) {
@@ -298,16 +297,17 @@ const setNextDialogPaths = (client, { open = null, save = null }) =>
     return true;
   })()`);
 
-const screenshot = async (client, name) => {
+const screenshot = async (client, name, outputDirectory) => {
   const result = await client.send("Page.captureScreenshot", {
     format: "png",
     fromSurface: true,
   });
-  await writeFile(resolve(OUTPUT_DIRECTORY, name), Buffer.from(result.data, "base64"));
+  await writeFile(resolve(outputDirectory, name), Buffer.from(result.data, "base64"));
 };
 
 const initialDocument = {
-  schemaVersion: 2,
+  // Explicit legacy input fixture; runtime persistence must use contract.schemas.palette.
+  schemaVersion: LEGACY_PALETTE_SCHEMA_VERSION,
   revision: 0,
   activePaletteId: "palette-default",
   palettes: [
@@ -323,17 +323,95 @@ const initialDocument = {
   ],
 };
 
-const run = async () => {
-  await mkdir(OUTPUT_DIRECTORY, { recursive: true });
-  await mkdir(REDESIGN_EVIDENCE_DIRECTORY, { recursive: true });
-  await mkdir(TEMPORARY_ROOT, { recursive: true });
-  await writeFile(PALETTE_PATH, `${JSON.stringify(initialDocument, null, 2)}\n`);
+export const runPaletteManagementLifecycle = async ({
+  acquireClient,
+  execute,
+  cleanupClient,
+  cleanupScratch,
+  writeFailure,
+}) => {
+  const clients = [];
+  const registerClient = (client, page) => {
+    if (client) {
+      client.page = page;
+      if (!clients.includes(client)) clients.push(client);
+    }
+    return client;
+  };
+  let result;
+  let primaryError = null;
+  const cleanupErrors = [];
 
-  const main = await connectPanel("main");
-  const settings = await connectPanel("settings");
-  const clients = [main, settings];
-  let passed = false;
   try {
+    const acquire = (page) =>
+      acquireClient(page, (client) => registerClient(client, page));
+    const main = await acquire("main");
+    const settings = await acquire("settings");
+    result = await execute({ main, settings, clients });
+  } catch (error) {
+    primaryError = error;
+  } finally {
+    for (const client of [...clients].reverse()) {
+      try {
+        await cleanupClient(client);
+      } catch (error) {
+        cleanupErrors.push({
+          phase: `close:${client.page || "panel"}`,
+          page: client.page || "panel",
+          error: serializeError(error),
+          cause: error,
+        });
+      }
+    }
+    try {
+      await cleanupScratch({ primaryError, cleanupErrors });
+    } catch (error) {
+      cleanupErrors.push({
+        phase: "scratch",
+        error: serializeError(error),
+        cause: error,
+      });
+    }
+  }
+
+  if (primaryError || cleanupErrors.length > 0) {
+    const failure = { primaryError, cleanupErrors, clients };
+    try {
+      await writeFailure(failure);
+    } catch (error) {
+      cleanupErrors.push({
+        phase: "failure-evidence",
+        error: serializeError(error),
+        cause: error,
+      });
+      if (primaryError && (typeof primaryError === "object" || typeof primaryError === "function")) {
+        try {
+          primaryError.cleanupErrors = cleanupErrors;
+        } catch {
+          // Preserve the exact primary even when it cannot accept diagnostics.
+        }
+      }
+    }
+    if (primaryError) throw primaryError;
+    throw new AggregateError(
+      cleanupErrors.map(({ cause, error }) => cause || new Error(error.message)),
+      "Palette management cleanup failed"
+    );
+  }
+  return result;
+};
+
+const run = async (outputDirectory, parentRun) => {
+  const scratch = await createOwnedScratchDirectory(parentRun);
+  const paths = pathsFor(scratch.path);
+  await mkdir(outputDirectory, { recursive: true });
+  await mkdir(REDESIGN_EVIDENCE_DIRECTORY, { recursive: true });
+  await writeFile(paths.palettePath, `${JSON.stringify(initialDocument, null, 2)}\n`);
+
+  let passed = false;
+  return runPaletteManagementLifecycle({
+    acquireClient: (page, register) => connectPanel(page, register),
+    execute: async ({ main, settings, clients }) => {
     await Promise.all(clients.map((client) => client.send("Runtime.enable")));
     await Promise.all(
       clients.map((client) => client.send("Page.reload", { ignoreCache: true }))
@@ -344,14 +422,14 @@ const run = async () => {
     for (const client of clients) {
       const identity = await callDebug(client, "return api.getIdentity();");
       assert.equal(identity.page, client.page);
-      assert.match(identity.buildMarker, /Palette v2/);
+      assert.equal(identity.buildMarker, EXPECTED_BUILD_MARKER);
       await callDebug(client, "api.resetTestState(); return true;");
     }
     await Promise.all(clients.map(settle));
     for (const client of clients) {
       await callDebug(
         client,
-        `return api.setTemporaryConfigRoot(${JSON.stringify(TEMPORARY_ROOT)});`
+        `return api.setTemporaryConfigRoot(${JSON.stringify(paths.temporaryRoot)});`
       );
     }
     await Promise.all(clients.map(settle));
@@ -360,7 +438,7 @@ const run = async () => {
       ["a", "b", "c"],
       ["a", "b", "c"],
     ]);
-    await assertTemporaryRoots(clients);
+    await assertTemporaryRoots(clients, paths.temporaryRoot);
 
     await settings.send("Emulation.setDeviceMetricsOverride", {
       width: 320,
@@ -385,9 +463,9 @@ const run = async () => {
       `document.querySelector(".palette-empty")?.textContent.trim()`
     );
     assert.equal(emptyMessage, "Add a color here or collect from the Main panel.");
-    await screenshot(settings, "empty-palette.png");
+    await screenshot(settings, "empty-palette.png", outputDirectory);
     await copyFile(
-      resolve(OUTPUT_DIRECTORY, "empty-palette.png"),
+      resolve(outputDirectory, "empty-palette.png"),
       resolve(REDESIGN_EVIDENCE_DIRECTORY, "empty-palette-add-color-320x360.png")
     );
 
@@ -409,9 +487,9 @@ const run = async () => {
       true,
       "the strip preview should return after adding a color"
     );
-    await screenshot(settings, "added-black-color.png");
+    await screenshot(settings, "added-black-color.png", outputDirectory);
     await copyFile(
-      resolve(OUTPUT_DIRECTORY, "added-black-color.png"),
+      resolve(outputDirectory, "added-black-color.png"),
       resolve(REDESIGN_EVIDENCE_DIRECTORY, "added-black-color-editor-320x360.png")
     );
 
@@ -468,7 +546,7 @@ const run = async () => {
     await settle(settings);
     const preEditCounters = await counters(main);
     const preEditSettingsCounters = await counters(settings);
-    assert.equal((await readPaletteFile()).revision, 6, "format switching must not write");
+    assert.equal((await readPaletteFile(paths.palettePath)).revision, 6, "format switching must not write");
 
     await setInputValue(settings, "color-field-hex", "not-a-color");
     await settle(settings);
@@ -490,7 +568,7 @@ const run = async () => {
     const editedMain = snapshots[0].palette.find((color) => color.id === "a");
     assert.deepEqual(editedMain.rgba, EDITED_RGBA, "Main should hold the exact fractions");
     assert.equal((await counters(main)).diskWrites, preEditCounters.diskWrites + 1);
-    let paletteFile = await readPaletteFile();
+    let paletteFile = await readPaletteFile(paths.palettePath);
     assert.deepEqual(
       paletteFile.palettes[0].colors.map((color) => color.id),
       ["b", "a", "c"]
@@ -501,9 +579,9 @@ const run = async () => {
       "palette.json must contain byte/255 exact fractions"
     );
     await wait(2600); // let the transient status clear for a truthful capture
-    await screenshot(settings, "expanded-editor.png");
+    await screenshot(settings, "expanded-editor.png", outputDirectory);
     await copyFile(
-      resolve(OUTPUT_DIRECTORY, "expanded-editor.png"),
+      resolve(outputDirectory, "expanded-editor.png"),
       resolve(REDESIGN_EVIDENCE_DIRECTORY, "live-edit-expanded-320x360.png")
     );
 
@@ -525,9 +603,9 @@ const run = async () => {
       "document.querySelector('[data-testid=\"palette-delete-confirm\"]')?.textContent.trim()"
     );
     assert.equal(confirmLabel, "Delete");
-    await screenshot(settings, "armed-delete.png");
+    await screenshot(settings, "armed-delete.png", outputDirectory);
     await copyFile(
-      resolve(OUTPUT_DIRECTORY, "armed-delete.png"),
+      resolve(outputDirectory, "armed-delete.png"),
       resolve(REDESIGN_EVIDENCE_DIRECTORY, "armed-delete-320x360.png")
     );
     await click(settings, "palette-delete-confirm");
@@ -535,8 +613,8 @@ const run = async () => {
     assert.equal(snapshots[0].palettes.length, 1);
     assert.equal(snapshots[0].activePalette.id, "palette-default");
 
-    paletteFile = await readPaletteFile();
-    assert.equal(paletteFile.schemaVersion, 2);
+    paletteFile = await readPaletteFile(paths.palettePath);
+    assert.equal(paletteFile.schemaVersion, contract.schemas.palette);
     assert.equal(paletteFile.revision, 10);
     assert.equal(paletteFile.palettes.length, 1);
     assert.deepEqual(paletteFile.palettes[0].colors.map((color) => color.id), ["a", "c"]);
@@ -546,7 +624,7 @@ const run = async () => {
     // --- Import/Export through the real toolbar buttons with stubbed dialogs ---
     await installDialogStubs(settings);
     await writeFile(
-      IMPORT_FIXTURE_PATH,
+      paths.importFixturePath,
       `${JSON.stringify(
         {
           format: "chroma-relay",
@@ -569,33 +647,33 @@ const run = async () => {
     await wait(300);
     settingsState = await state(settings);
     assert.equal(settingsState.paletteRevision, 10, "cancelled dialogs must not change revision");
-    assert.equal(existsSync(EXPORT_PATH), false, "cancelled export must not write a file");
+    assert.equal(existsSync(paths.exportPath), false, "cancelled export must not write a file");
     assert.deepEqual(await counters(main), preTransferCounters.main);
     assert.deepEqual(await counters(settings), preTransferCounters.settings);
 
     // Real export of the active palette: exact portable JSON, no palette.json
     // revision, write, or event change.
-    await setNextDialogPaths(settings, { save: EXPORT_PATH });
+    await setNextDialogPaths(settings, { save: paths.exportPath });
     await click(settings, "palette-export");
-    await waitFor(async () => existsSync(EXPORT_PATH), "export file");
-    const exportedText = await readFile(EXPORT_PATH, "utf8");
+    await waitFor(async () => existsSync(paths.exportPath), "export file");
+    const exportedText = await readFile(paths.exportPath, "utf8");
     const expectedExport = `${JSON.stringify(
       {
         format: "chroma-relay",
-        version: 1,
+        version: contract.schemas.portable,
         name: "Palette 1",
-        colors: [{ rgba: EDITED_RGBA }, { rgba: [0.2, 0.35, 0.95, 0.5] }],
+        items: [{ rgba: EDITED_RGBA }, { rgba: [0.2, 0.35, 0.95, 0.5] }],
       },
       null,
       2
     )}\n`;
     assert.equal(exportedText, expectedExport, "export must be the exact portable payload");
     const exportedPayload = JSON.parse(exportedText);
-    assert.deepEqual(Object.keys(exportedPayload), ["format", "version", "name", "colors"]);
-    for (const color of exportedPayload.colors) {
+    assert.deepEqual(Object.keys(exportedPayload), ["format", "version", "name", "items"]);
+    for (const color of exportedPayload.items) {
       assert.deepEqual(Object.keys(color), ["rgba"], "no internal color IDs in exports");
     }
-    assert.equal((await readPaletteFile()).revision, 10, "export must not touch palette.json");
+    assert.equal((await readPaletteFile(paths.palettePath)).revision, 10, "export must not touch palette.json");
     assert.equal((await counters(main)).diskWrites, 10, "export must not write via Main");
     assert.deepEqual(
       await counters(settings),
@@ -605,27 +683,27 @@ const run = async () => {
 
     // If the user removes .json in the native dialog, appending it must not
     // overwrite a different existing file that the dialog never confirmed.
-    await writeFile(EXPORT_COLLISION_PATH, EXPORT_COLLISION_SENTINEL);
+    await writeFile(paths.collisionPath, EXPORT_COLLISION_SENTINEL);
     const preCollisionCounters = {
       main: await counters(main),
       settings: await counters(settings),
     };
-    await setNextDialogPaths(settings, { save: EXPORT_COLLISION_BASE_PATH });
+    await setNextDialogPaths(settings, { save: paths.collisionBasePath });
     await click(settings, "palette-export");
     await wait(300);
     assert.equal(
-      await readFile(EXPORT_COLLISION_PATH, "utf8"),
+      await readFile(paths.collisionPath, "utf8"),
       EXPORT_COLLISION_SENTINEL,
       "extension append must not overwrite an unconfirmed existing .json file"
     );
-    assert.equal(existsSync(EXPORT_COLLISION_BASE_PATH), false);
-    assert.equal((await readPaletteFile()).revision, 10);
+    assert.equal(existsSync(paths.collisionBasePath), false);
+    assert.equal((await readPaletteFile(paths.palettePath)).revision, 10);
     assert.deepEqual(await counters(main), preCollisionCounters.main);
     assert.deepEqual(await counters(settings), preCollisionCounters.settings);
 
     // Real import through a file:// URL: one command, one Main write, fresh
     // IDs, deterministic name collision, exact HDR/negative values.
-    await setNextDialogPaths(settings, { open: pathToFileURL(IMPORT_FIXTURE_PATH).href });
+    await setNextDialogPaths(settings, { open: pathToFileURL(paths.importFixturePath).href });
     await click(settings, "palette-import");
     snapshots = await waitForRevision(clients, 11, "import palette");
     assert.equal(snapshots[0].activePalette.id, "palette-11", "imported palette gets a fresh ID");
@@ -645,7 +723,7 @@ const run = async () => {
       [HDR_RGBA, IMPORT_SECOND_RGBA],
       "imported RGBA stays exact, including HDR/negative components"
     );
-    paletteFile = await readPaletteFile();
+    paletteFile = await readPaletteFile(paths.palettePath);
     assert.equal(paletteFile.revision, 11);
     assert.equal(paletteFile.palettes.length, 2);
     assert.deepEqual(paletteFile.palettes[1].colors.map((color) => color.rgba), [
@@ -654,7 +732,7 @@ const run = async () => {
     ]);
     assert.equal((await counters(main)).diskWrites, 11, "import performs exactly one Main write");
     assert.equal((await counters(settings)).diskWrites, 0, "Settings writes 0");
-    await screenshot(settings, "imported-palette.png");
+    await screenshot(settings, "imported-palette.png", outputDirectory);
 
     // Delete the imported palette through the UI so cleanup stays deterministic.
     await click(settings, "palette-delete");
@@ -664,7 +742,7 @@ const run = async () => {
     assert.equal(snapshots[0].palettes.length, 1);
     assert.equal(snapshots[0].activePalette.id, "palette-default");
 
-    paletteFile = await readPaletteFile();
+    paletteFile = await readPaletteFile(paths.palettePath);
     assert.equal(paletteFile.revision, 12);
     assert.equal(paletteFile.palettes.length, 1);
     assert.deepEqual(paletteFile.palettes[0].colors.map((color) => color.id), ["a", "c"]);
@@ -682,7 +760,7 @@ const run = async () => {
     assert.equal(settingsCounters.receivedEvents, 12);
 
     await settle(settings);
-    await screenshot(settings, "final-settings.png");
+    await screenshot(settings, "final-settings.png", outputDirectory);
 
     const runtimeErrors = clients.flatMap((client) =>
       client.events.filter(
@@ -722,7 +800,7 @@ const run = async () => {
       mainState: snapshots[0],
       settingsState: snapshots[1],
       counters: { main: mainCounters, settings: settingsCounters },
-      temporaryRoot: TEMPORARY_ROOT,
+      temporaryRoot: paths.temporaryRoot,
       screenshots: [
         "empty-palette.png",
         "added-black-color.png",
@@ -732,7 +810,7 @@ const run = async () => {
         "final-settings.png",
       ],
     };
-    await writeFile(resolve(OUTPUT_DIRECTORY, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
+    await writeFile(resolve(outputDirectory, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
     passed = true;
     console.log(
       JSON.stringify(
@@ -741,54 +819,84 @@ const run = async () => {
           operations: report.operations,
           revisions: paletteFile.revision,
           writes: { main: mainCounters.diskWrites, settings: settingsCounters.diskWrites },
-          outputDirectory: OUTPUT_DIRECTORY,
+          outputDirectory,
         },
         null,
         2
       )
     );
-  } catch (error) {
-    if (existsSync(PALETTE_PATH)) {
-      await copyFile(PALETTE_PATH, resolve(OUTPUT_DIRECTORY, "failure-palette.json"));
-    }
-    await writeFile(
-      resolve(OUTPUT_DIRECTORY, "failure.json"),
-      `${JSON.stringify(
-        {
-          capturedAt: new Date().toISOString(),
-          passed: false,
-          error: error instanceof Error ? error.stack || error.message : String(error),
-          temporaryRoot: TEMPORARY_ROOT,
-        },
-        null,
-        2
-      )}\n`
-    );
-    throw error;
-  } finally {
-    await settings.send("Emulation.clearDeviceMetricsOverride").catch(() => undefined);
-    try {
-      await restoreDialogStubs(settings);
-    } catch {
-      // Continue cleanup if the settings panel closed.
-    }
-    for (const client of clients) {
-      try {
-        await callDebug(client, "return api.setTemporaryConfigRoot(null);");
-      } catch {
-        // Continue cleanup if a panel closed.
+    },
+    cleanupClient: async (client) => {
+      const errors = [];
+      if (client.connected && !client.closed) {
+        try {
+          if (client.page === "settings") {
+            await client.send("Emulation.clearDeviceMetricsOverride");
+            await restoreDialogStubs(client);
+          }
+        } catch (error) {
+          errors.push({ phase: "panel-state", error: String(error?.stack || error) });
+        }
+        try {
+          await callDebug(client, "return api.setTemporaryConfigRoot(null);");
+        } catch (error) {
+          errors.push({ phase: "temporary-root", error: String(error?.stack || error) });
+        }
       }
-      client.close();
-    }
-    if (passed) {
-      await rm(resolve(OUTPUT_DIRECTORY, "failure.json"), { force: true });
-      await rm(resolve(OUTPUT_DIRECTORY, "failure-palette.json"), { force: true });
-    }
-    await rm(TEMPORARY_ROOT, { recursive: true, force: true });
-  }
+      try {
+        await client.close();
+      } catch (error) {
+        errors.push({ phase: "close", error: String(error?.stack || error) });
+      }
+      if (errors.length > 0) {
+        throw new AggregateError(
+          errors.map(({ error }) => new Error(error)),
+          `Panel cleanup failed for ${client.page || "panel"}`
+        );
+      }
+    },
+    cleanupScratch: async ({ primaryError, cleanupErrors }) => {
+      const preserveEvidence = Boolean(primaryError) || cleanupErrors.length > 0;
+      if (preserveEvidence && existsSync(paths.palettePath)) {
+        await copyFile(paths.palettePath, resolve(outputDirectory, "failure-palette.json"));
+      }
+      if (!preserveEvidence && passed) {
+        await rm(resolve(outputDirectory, "failure.json"), { force: true });
+        await rm(resolve(outputDirectory, "failure-palette.json"), { force: true });
+      }
+      await removeOwnedRunDirectory(scratch);
+    },
+    writeFailure: async ({ primaryError, cleanupErrors, clients }) => {
+      await rm(resolve(outputDirectory, "report.json"), { force: true });
+      await writeFile(
+        resolve(outputDirectory, "failure.json"),
+        `${JSON.stringify(
+          {
+            capturedAt: new Date().toISOString(),
+            passed: false,
+            error: primaryError ? primaryError.stack || primaryError.message : null,
+            cleanupErrors,
+            clients: clients.map((client) => ({ page: client.page })),
+            temporaryRoot: paths.temporaryRoot,
+          },
+          null,
+          2
+        )}\n`
+      );
+    },
+  });
 };
 
-run().catch((error) => {
-  console.error(error.stack || error.message);
-  process.exitCode = 1;
-});
+const cli = async () => {
+  const options = parseRunnerArgs(process.argv.slice(2), { allowed: ["output"] });
+  const root = options.output || "evidence/local/palette-management/management-smoke";
+  const runDirectory = await createOwnedRunDirectory(resolve(process.cwd(), root));
+  return run(runDirectory.path, runDirectory);
+};
+
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  cli().catch((error) => {
+    console.error(error.stack || error.message);
+    process.exitCode = 1;
+  });
+}

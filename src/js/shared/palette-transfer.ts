@@ -7,9 +7,10 @@ import {
   type Rgba,
   isRgba,
 } from "./palette-domain.ts";
+import contract from "../../shared/product-contract.json" with { type: "json" };
 
 export const PALETTE_TRANSFER_FORMAT = "chroma-relay";
-export const PALETTE_TRANSFER_VERSION = 2;
+export const PALETTE_TRANSFER_VERSION = contract.schemas.portable as 2;
 export const PALETTE_TRANSFER_EXTENSION = ".chroma-relay.json";
 export const MAX_PALETTE_TRANSFER_BYTES = 1024 * 1024;
 
