@@ -11,9 +11,10 @@ import {
   isPaletteImportItem,
   isRgba,
 } from "./palette-domain";
+import contract from "../../shared/product-contract.json" with { type: "json" };
 
-export const PALETTE_COMMAND_EVENT = "com.zimoby.chroma-relay.command";
-export const PALETTE_RESULT_EVENT = "com.zimoby.chroma-relay.result";
+export const PALETTE_COMMAND_EVENT = contract.events.paletteCommand;
+export const PALETTE_RESULT_EVENT = contract.events.paletteResult;
 
 export type PaletteCommand =
   | { type: "create" }

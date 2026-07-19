@@ -1,4 +1,7 @@
-export const BUILD_MARKER = "Palette v2 · 0.0.1";
+import { version } from "../../../package.json";
+import contract from "../../shared/product-contract.json" with { type: "json" };
+
+export const BUILD_MARKER = `${contract.marker.current} · ${version}`;
 
 export type PanelPage = "main" | "settings";
 
@@ -109,7 +112,7 @@ export const getPanelIdentity = (
 ): DebugIdentity => ({
   extensionId: window.__adobe_cep__.getExtensionId(),
   page,
-  version: "0.0.1",
+  version,
   buildMarker: BUILD_MARKER,
   url: window.location.href,
   configRoot,

@@ -1,93 +1,23 @@
 #!/usr/bin/env node
 
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import WebSocket from "ws";
+import { pathToFileURL } from "node:url";
+import { CdpClient } from "./lib/cdp-client.mjs";
+import {
+  createOwnedRunDirectory,
+  createOwnedScratchDirectory,
+  parseRunnerArgs,
+  removeOwnedRunDirectory,
+} from "./lib/live-runner-policy.mjs";
+import contract from "../src/shared/product-contract.json" with { type: "json" };
 
 const REPO_ROOT = fileURLToPath(new URL("../", import.meta.url));
 const PANELS = [
   { page: "main", port: 8198, suffix: "/main/index.html" },
   { page: "settings", port: 8199, suffix: "/settings/index.html" },
 ];
-const outputArg = process.argv.slice(2).find((value) => value.startsWith("--output="));
-const requestedOutput = outputArg ? outputArg.slice("--output=".length) : "evidence/i06/persistence-smoke";
-const outputDirectory = isAbsolute(requestedOutput)
-  ? requestedOutput
-  : resolve(REPO_ROOT, requestedOutput);
-const temporaryRoot = "/private/tmp/chroma-relay-i06-persistence";
-
-class CDPClient {
-  constructor(url) {
-    this.url = url;
-    this.nextId = 1;
-    this.pending = new Map();
-    this.events = [];
-    this.socket = null;
-  }
-
-  async connect() {
-    this.socket = new WebSocket(this.url);
-    this.socket.addEventListener("message", ({ data }) => {
-      const message = JSON.parse(data);
-      if (!message.id) {
-        this.events.push(message);
-        return;
-      }
-      const pending = this.pending.get(message.id);
-      if (!pending) return;
-      this.pending.delete(message.id);
-      if (message.error) pending.reject(new Error(message.error.message || "CDP error"));
-      else pending.resolve(message.result);
-    });
-    await new Promise((resolveOpen, rejectOpen) => {
-      this.socket.addEventListener("open", resolveOpen, { once: true });
-      this.socket.addEventListener("error", rejectOpen, { once: true });
-    });
-  }
-
-  send(method, params = {}) {
-    return new Promise((resolveResult, rejectResult) => {
-      const id = this.nextId++;
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        rejectResult(new Error(`${method} timed out`));
-      }, 8000);
-      this.pending.set(id, {
-        resolve: (result) => {
-          clearTimeout(timer);
-          resolveResult(result);
-        },
-        reject: (error) => {
-          clearTimeout(timer);
-          rejectResult(error);
-        },
-      });
-      this.socket.send(JSON.stringify({ id, method, params }));
-    });
-  }
-
-  async evaluate(expression) {
-    const result = await this.send("Runtime.evaluate", {
-      expression,
-      awaitPromise: true,
-      returnByValue: true,
-    });
-    if (result.exceptionDetails) {
-      throw new Error(
-        result.exceptionDetails.exception?.description ||
-          result.exceptionDetails.text ||
-          "Runtime.evaluate failed"
-      );
-    }
-    return result.result?.value;
-  }
-
-  close() {
-    if (this.socket) this.socket.close();
-  }
-}
-
 const delay = (milliseconds) => new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
 const debugCall = (callback) => `(() => {
   const api = window.__CHROMA_RELAY_DEBUG__;
@@ -107,7 +37,7 @@ const connectPanel = async (panel) => {
   if (matches.length !== 1) {
     throw new Error(`${panel.page} expected one exact CDP target, found ${matches.length}`);
   }
-  const client = new CDPClient(matches[0].webSocketDebuggerUrl);
+  const client = new CdpClient(matches[0].webSocketDebuggerUrl);
   try {
     await client.connect();
     await Promise.all([
@@ -132,7 +62,11 @@ const connectPanel = async (panel) => {
     );
     return client;
   } catch (error) {
-    client.close();
+    try {
+      await client.close();
+    } catch (closeError) {
+      error.cleanupError = String(closeError?.stack || closeError);
+    }
     throw error;
   }
 };
@@ -177,14 +111,25 @@ const activePalette = (document) =>
 
 const activeColors = (document) => activePalette(document)?.colors ?? [];
 
-const run = async () => {
+const run = async (outputDirectory, parentRun) => {
   const clients = new Map();
+  let scratch = await createOwnedScratchDirectory(parentRun);
+  let temporaryRoot = scratch.path;
+  let primaryError = null;
+  const cleanupErrors = [];
   await mkdir(outputDirectory, { recursive: true });
-  await rm(temporaryRoot, { recursive: true, force: true });
-  await mkdir(temporaryRoot, { recursive: true });
   const resetRoot = async () => {
-    await rm(temporaryRoot, { recursive: true, force: true });
-    await mkdir(temporaryRoot, { recursive: true });
+    await removeOwnedRunDirectory(scratch);
+    scratch = await createOwnedScratchDirectory(parentRun);
+    temporaryRoot = scratch.path;
+    await Promise.all(
+      [...clients.values()].map(async (client) => {
+        await client.evaluate(
+          debugCall(`(api) => api.setTemporaryConfigRoot(${JSON.stringify(temporaryRoot)})`)
+        );
+        await afterRender(client);
+      })
+    );
   };
   const snapshot = (client) =>
     client.evaluate(debugCall("(api) => ({ state: api.getState(), counters: api.getCounters() })"));
@@ -215,7 +160,7 @@ const run = async () => {
     cases.valid = await main.evaluate(debugCall("(api) => api.reloadPalette()"));
     const unchangedLegacyRaw = await readFile(resolve(temporaryRoot, "palette.json"), "utf8");
     if (
-      cases.valid.document.schemaVersion !== 2 ||
+      cases.valid.document.schemaVersion !== contract.schemas.palette ||
       cases.valid.document.revision !== exact.revision ||
       cases.valid.document.activePaletteId !== "palette-default" ||
       activePalette(cases.valid.document)?.name !== "Palette 1" ||
@@ -232,11 +177,11 @@ const run = async () => {
     const migratedFile = JSON.parse(await readFile(resolve(temporaryRoot, "palette.json"), "utf8"));
     cases.validMutation = migratedFile;
     if (
-      migratedFile.schemaVersion !== 2 ||
+      migratedFile.schemaVersion !== contract.schemas.palette ||
       migratedFile.revision !== exact.revision + 1 ||
       JSON.stringify(activeColors(migratedFile)) !== JSON.stringify(exact.colors)
     ) {
-      throw new Error("First mutation after v1 load did not persist exact schema-v2 data");
+      throw new Error("First mutation after v1 load did not persist the current contract schema");
     }
 
     await resetRoot();
@@ -387,13 +332,35 @@ const run = async () => {
     await writeFile(resolve(outputDirectory, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
     console.log(JSON.stringify({ passed: true, outputDirectory }, null, 2));
   } catch (error) {
+    primaryError = error;
+  } finally {
+    for (const client of clients.values()) {
+      try {
+        await client.evaluate(debugCall("(api) => api.setTemporaryConfigRoot(null)"));
+      } catch {
+        // Cleanup continues even if a panel closed during the run.
+      }
+      try {
+        await client.close();
+      } catch (error) {
+        cleanupErrors.push({ phase: `close:${client.page || "panel"}`, error: String(error?.stack || error) });
+      }
+    }
+    try {
+      await removeOwnedRunDirectory(scratch);
+    } catch (error) {
+      cleanupErrors.push({ phase: "scratch", error: String(error?.stack || error) });
+    }
+  }
+  if (primaryError || cleanupErrors.length > 0) {
     await writeFile(
       resolve(outputDirectory, "failure.json"),
       `${JSON.stringify(
         {
           capturedAt: new Date().toISOString(),
           passed: false,
-          error: error instanceof Error ? error.stack || error.message : String(error),
+          error: primaryError ? primaryError.stack || primaryError.message : null,
+          cleanupErrors,
           consoleEvidence: Object.fromEntries(
             [...clients.entries()].map(([page, client]) => [page, consoleEvidence(client.events)])
           ),
@@ -402,21 +369,21 @@ const run = async () => {
         2
       )}\n`
     );
-    throw error;
-  } finally {
-    for (const client of clients.values()) {
-      try {
-        await client.evaluate(debugCall("(api) => api.setTemporaryConfigRoot(null)"));
-      } catch {
-        // Cleanup continues even if a panel closed during the run.
-      }
-      client.close();
-    }
-    await rm(temporaryRoot, { recursive: true, force: true });
+    if (primaryError) throw primaryError;
+    throw new AggregateError(cleanupErrors.map(({ error }) => new Error(error)), "Persistence cleanup failed");
   }
 };
 
-run().catch((error) => {
-  console.error(error instanceof Error ? error.stack || error.message : error);
-  process.exitCode = 1;
-});
+const cli = async () => {
+  const options = parseRunnerArgs(process.argv.slice(2), { allowed: ["output"] });
+  const root = options.output || "evidence/i06/persistence-smoke";
+  const owned = await createOwnedRunDirectory(resolve(REPO_ROOT, root));
+  return run(owned.path, owned);
+};
+
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  cli().catch((error) => {
+    console.error(error instanceof Error ? error.stack || error.message : error);
+    process.exitCode = 1;
+  });
+}

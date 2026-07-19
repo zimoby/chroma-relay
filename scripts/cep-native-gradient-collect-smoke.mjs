@@ -1,10 +1,19 @@
 #!/usr/bin/env node
 
 import { createHash } from "node:crypto";
-import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { copyFile, readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import WebSocket from "ws";
+import { pathToFileURL } from "node:url";
+import { CdpClient } from "./lib/cdp-client.mjs";
+import {
+  createOwnedRunDirectory,
+  createOwnedScratchDirectory,
+  parseRunnerArgs,
+  removeOwnedRunDirectory,
+} from "./lib/live-runner-policy.mjs";
+import contract from "../src/shared/product-contract.json" with { type: "json" };
+import packageJson from "../package.json" with { type: "json" };
 
 const REPO_ROOT = fileURLToPath(new URL("../", import.meta.url));
 const FIXTURE_SOURCE = resolve(
@@ -15,81 +24,7 @@ const EXPECTED_SOURCE = resolve(
   REPO_ROOT,
   "tests/fixtures/native-gradient/exact-identity-ae25.expected.json"
 );
-const TEMPORARY_ROOT = "/private/tmp/chroma-relay-native-gradient-collect";
-const FIXTURE_COPY = resolve(TEMPORARY_ROOT, "exact-identity-ae25.aep");
-const outputArg = process.argv.slice(2).find((value) => value.startsWith("--output="));
-const OUTPUT_DIRECTORY = resolve(
-  REPO_ROOT,
-  outputArg
-    ? outputArg.slice("--output=".length)
-    : "evidence/local/native-gradient/track-a-collect-ae25"
-);
-
-class CDPClient {
-  constructor(url) {
-    this.url = url;
-    this.nextId = 1;
-    this.pending = new Map();
-    this.events = [];
-  }
-
-  async connect() {
-    this.socket = new WebSocket(this.url);
-    this.socket.addEventListener("message", ({ data }) => {
-      const message = JSON.parse(data);
-      if (!message.id) {
-        this.events.push(message);
-        return;
-      }
-      const pending = this.pending.get(message.id);
-      if (!pending) return;
-      this.pending.delete(message.id);
-      if (message.error) pending.reject(new Error(message.error.message || "CDP error"));
-      else pending.resolve(message.result);
-    });
-    await new Promise((resolveOpen, rejectOpen) => {
-      this.socket.addEventListener("open", resolveOpen, { once: true });
-      this.socket.addEventListener("error", rejectOpen, { once: true });
-    });
-  }
-
-  send(method, params = {}) {
-    return new Promise((resolveResult, rejectResult) => {
-      const id = this.nextId++;
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        rejectResult(new Error(`${method} timed out`));
-      }, 10_000);
-      this.pending.set(id, {
-        resolve: (result) => {
-          clearTimeout(timer);
-          resolveResult(result);
-        },
-        reject: (error) => {
-          clearTimeout(timer);
-          rejectResult(error);
-        },
-      });
-      this.socket.send(JSON.stringify({ id, method, params }));
-    });
-  }
-
-  async evaluate(expression) {
-    const result = await this.send("Runtime.evaluate", {
-      expression,
-      awaitPromise: true,
-      returnByValue: true,
-    });
-    if (result.exceptionDetails) {
-      throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text);
-    }
-    return result.result?.value;
-  }
-
-  close() {
-    if (this.socket) this.socket.close();
-  }
-}
+const EXPECTED_BUILD_MARKER = `${contract.marker.current} · ${packageJson.version}`;
 
 const delay = (milliseconds) => new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
 const sha256 = async (path) => createHash("sha256").update(await readFile(path)).digest("hex");
@@ -165,11 +100,11 @@ const projectStateSource = `(function () {
   });
 })()`;
 
-const openFixtureSource = `(function () {
+const openFixtureSource = (fixtureCopy) => `(function () {
   if (!app.project || app.project.dirty !== false) {
     return JSON.stringify({ ok: false, reason: "current-project-not-clean" });
   }
-  var fixture = new File(${JSON.stringify(FIXTURE_COPY)});
+  var fixture = new File(${JSON.stringify(fixtureCopy)});
   if (!fixture.exists) return JSON.stringify({ ok: false, reason: "fixture-missing" });
   app.open(fixture);
   var comp = null;
@@ -251,21 +186,43 @@ const descriptorProjection = (descriptor) => ({
   matchNamePath: descriptor.matchNamePath,
 });
 
-const main = async () => {
+export const assessNativeGradientCleanup = ({
+  report,
+  failure,
+  setup,
+  setupAttempted = Boolean(setup),
+  cleanup,
+}) => {
+  const panelRestored = cleanup.panel?.restored === true;
+  const projectRestored = cleanup.project?.restored === true;
+  const retainScratch = setupAttempted && (!panelRestored || !projectRestored);
+  const restorationFailed = setupAttempted && (!panelRestored || !projectRestored);
+  const cleanupFailed =
+    restorationFailed || (Boolean(report) && cleanup.temp?.removed !== true);
+  let nextFailure = failure;
+  let nextReport = report;
+  if (cleanupFailed) {
+    nextFailure ||= new Error(`Cleanup failed: ${JSON.stringify(cleanup)}`);
+    nextReport = null;
+  }
+  return { report: nextReport, failure: nextFailure, retainScratch };
+};
+
+const main = async (outputDirectory, parentRun) => {
+  const scratch = await createOwnedScratchDirectory(parentRun);
+  const temporaryRoot = scratch.path;
+  const fixtureCopy = resolve(temporaryRoot, "exact-identity-ae25.aep");
   let client = null;
   let originalProject = null;
+  let originalConfigRoot = null;
   let setup = null;
+  let setupAttempted = false;
   let cleanup = { panel: null, project: null, temp: null };
   let failure = null;
   let report = null;
 
-  await rm(OUTPUT_DIRECTORY, { recursive: true, force: true });
-  await mkdir(OUTPUT_DIRECTORY, { recursive: true });
-  await rm(TEMPORARY_ROOT, { recursive: true, force: true });
-  await mkdir(TEMPORARY_ROOT, { recursive: true });
-  await copyFile(FIXTURE_SOURCE, FIXTURE_COPY);
-
   try {
+    await copyFile(FIXTURE_SOURCE, fixtureCopy);
     const response = await fetch("http://127.0.0.1:8198/json/list");
     if (!response.ok) throw new Error(`CDP target list failed: HTTP ${response.status}`);
     const targets = await response.json();
@@ -275,7 +232,7 @@ const main = async () => {
     );
     if (matches.length !== 1) throw new Error(`Expected one Main target, found ${matches.length}`);
 
-    client = new CDPClient(matches[0].webSocketDebuggerUrl);
+    client = new CdpClient(matches[0].webSocketDebuggerUrl);
     await client.connect();
     await Promise.all([
       client.send("Runtime.enable"),
@@ -289,13 +246,14 @@ const main = async () => {
 
     const identity = await client.evaluate(debugCall("(api) => api.getIdentity()"));
     if (
-      identity.extensionId !== "com.zimoby.chroma-relay.main" ||
+      identity.extensionId !== contract.product.panelIds.main ||
       identity.page !== "main" ||
       !String(identity.url || "").endsWith("/main/index.html") ||
-      identity.buildMarker !== "Palette v2 · 0.0.1"
+      identity.buildMarker !== EXPECTED_BUILD_MARKER
     ) {
       throw new Error(`Unexpected panel identity: ${JSON.stringify(identity)}`);
     }
+    originalConfigRoot = identity.configRoot ?? null;
 
     originalProject = await evalHost(client, projectStateSource);
     const restoreEmptyProject =
@@ -311,16 +269,17 @@ const main = async () => {
 
     const sourceExpected = JSON.parse(await readFile(EXPECTED_SOURCE, "utf8"));
     const sourceHash = await sha256(FIXTURE_SOURCE);
-    const copyHashBefore = await sha256(FIXTURE_COPY);
+    const copyHashBefore = await sha256(fixtureCopy);
     if (sourceHash !== sourceExpected.file.sha256 || copyHashBefore !== sourceHash) {
       throw new Error("Fixture hash does not match its reviewed expectation");
     }
 
-    setup = await evalHost(client, openFixtureSource);
+    setupAttempted = true;
+    setup = await evalHost(client, openFixtureSource(fixtureCopy));
     if (
       setup.ok !== true ||
       setup.version !== sourceExpected.afterEffectsVersion ||
-      setup.projectPath !== FIXTURE_COPY ||
+      setup.projectPath !== fixtureCopy ||
       setup.dirty !== false ||
       setup.compId !== 1 ||
       setup.selectedLayers !== 2 ||
@@ -332,7 +291,7 @@ const main = async () => {
     await client.evaluate(debugCall("(api) => api.resetTestState()"));
     await afterRender(client);
     await client.evaluate(
-      debugCall(`(api) => api.setTemporaryConfigRoot(${JSON.stringify(TEMPORARY_ROOT)})`)
+      debugCall(`(api) => api.setTemporaryConfigRoot(${JSON.stringify(temporaryRoot)})`)
     );
     await afterRender(client);
     await client.evaluate(debugCall("(api) => api.seedPalette([])"));
@@ -342,8 +301,8 @@ const main = async () => {
     const accepted = await client.evaluate(debugCall('(api) => api.dispatchClick("palette-add")'));
     const snapshot = await waitForIdle(client);
     const after = await evalHost(client, projectStateSource);
-    const copyHashAfter = await sha256(FIXTURE_COPY);
-    const stored = JSON.parse(await readFile(resolve(TEMPORARY_ROOT, "palette.json"), "utf8"));
+    const copyHashAfter = await sha256(fixtureCopy);
+    const stored = JSON.parse(await readFile(resolve(temporaryRoot, "palette.json"), "utf8"));
     const lastHostResult = snapshot.state.lastHostResult;
     const descriptors = lastHostResult?.selection?.nativeGradients?.descriptors ?? [];
     const entries = lastHostResult?.selection?.colors?.entries ?? [];
@@ -430,7 +389,7 @@ const main = async () => {
       captureBeyondViewport: false,
     });
     await writeFile(
-      resolve(OUTPUT_DIRECTORY, "main-native-gradient-collected.png"),
+      resolve(outputDirectory, "main-native-gradient-collected.png"),
       Buffer.from(screenshot.data, "base64")
     );
     const console = consoleEvidence(client.events);
@@ -446,7 +405,7 @@ const main = async () => {
       identity,
       fixture: {
         source: FIXTURE_SOURCE,
-        copy: FIXTURE_COPY,
+        copy: fixtureCopy,
         sha256: sourceHash,
         expected: EXPECTED_SOURCE,
       },
@@ -474,8 +433,21 @@ const main = async () => {
       try {
         await client.evaluate(debugCall("(api) => api.resetTestState()"));
         await afterRender(client);
-        cleanup.panel = await client.evaluate(debugCall("(api) => api.reloadPalette()"));
+        await client.evaluate(
+          debugCall(
+            `(api) => api.setTemporaryConfigRoot(${JSON.stringify(originalConfigRoot)})`
+          )
+        );
         await afterRender(client);
+        const loaded = await client.evaluate(debugCall("(api) => api.reloadPalette()"));
+        await afterRender(client);
+        const restoredIdentity = await client.evaluate(debugCall("(api) => api.getIdentity()"));
+        cleanup.panel = {
+          restored: restoredIdentity.configRoot === originalConfigRoot,
+          originalConfigRoot,
+          configRoot: restoredIdentity.configRoot,
+          loaded,
+        };
       } catch (error) {
         cleanup.panel = { restored: false, error: String(error) };
       }
@@ -493,27 +465,41 @@ const main = async () => {
           cleanup.project = { restored: false, error: String(error) };
         }
       }
-      client.close();
+      try {
+        await client.close();
+      } catch (error) {
+        cleanup.close = { closed: false, error: String(error?.stack || error) };
+        failure ||= error;
+      }
     }
     try {
-      if (cleanup.project?.restored === true || !setup) {
-        await rm(TEMPORARY_ROOT, { recursive: true, force: true });
-        cleanup.temp = { removed: true };
+      const cleanupState = assessNativeGradientCleanup({
+        report: null,
+        failure,
+        setup,
+        setupAttempted,
+        cleanup,
+      });
+      if (!cleanupState.retainScratch) {
+        await removeOwnedRunDirectory(scratch);
+        cleanup.temp = { removed: true, path: temporaryRoot };
       } else {
-        cleanup.temp = { removed: false, reason: "fixture-still-open-or-restore-failed" };
+        cleanup.temp = { removed: false, reason: "panel-state-unrestored-or-restore-failed" };
       }
     } catch (error) {
       cleanup.temp = { removed: false, error: String(error) };
     }
   }
 
-  if (report) {
-    report.cleanup = cleanup;
-    if (cleanup.project?.restored !== true || cleanup.temp?.removed !== true) {
-      failure = new Error(`Cleanup failed: ${JSON.stringify(cleanup)}`);
-      report = null;
-    }
-  }
+  const cleanupState = assessNativeGradientCleanup({
+    report: report ? { ...report, cleanup } : report,
+    failure,
+    setup,
+    setupAttempted,
+    cleanup,
+  });
+  report = cleanupState.report;
+  failure = cleanupState.failure;
 
   if (failure) {
     const failureReport = {
@@ -525,17 +511,26 @@ const main = async () => {
       cleanup,
     };
     await writeFile(
-      resolve(OUTPUT_DIRECTORY, "failure.json"),
+      resolve(outputDirectory, "failure.json"),
       `${JSON.stringify(failureReport, null, 2)}\n`
     );
     throw failure;
   }
 
-  await writeFile(resolve(OUTPUT_DIRECTORY, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
-  console.log(JSON.stringify({ passed: true, outputDirectory: OUTPUT_DIRECTORY }, null, 2));
+  await writeFile(resolve(outputDirectory, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
+  console.log(JSON.stringify({ passed: true, outputDirectory }, null, 2));
 };
 
-main().catch((error) => {
-  console.error(error?.stack || String(error));
-  process.exitCode = 1;
-});
+const cli = async () => {
+  const options = parseRunnerArgs(process.argv.slice(2), { allowed: ["output"] });
+  const root = options.output || "evidence/local/native-gradient/track-a-collect-ae25";
+  const run = await createOwnedRunDirectory(resolve(REPO_ROOT, root));
+  return main(run.path, run);
+};
+
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  cli().catch((error) => {
+    console.error(error?.stack || String(error));
+    process.exitCode = 1;
+  });
+}

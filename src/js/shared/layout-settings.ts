@@ -6,6 +6,7 @@ import {
   isLayoutSettings,
   migrateLayoutSettings,
 } from "./layout-settings-domain.ts";
+import contract from "../../shared/product-contract.json" with { type: "json" };
 
 export {
   DEFAULT_LAYOUT_SETTINGS,
@@ -19,9 +20,9 @@ export {
   clampSwatchSize,
 } from "./layout-settings-domain.ts";
 
-export const MAIN_EXTENSION_ID = "com.zimoby.chroma-relay.main";
-export const SETTINGS_EXTENSION_ID = "com.zimoby.chroma-relay.settings";
-export const LAYOUT_SETTINGS_EVENT = "com.zimoby.chroma-relay.settings.changed";
+export const MAIN_EXTENSION_ID = contract.product.panelIds.main;
+export const SETTINGS_EXTENSION_ID = contract.product.panelIds.settings;
+export const LAYOUT_SETTINGS_EVENT = contract.events.layoutSettingsChanged;
 
 export type LayoutSettingsLoadResult = {
   settings: LayoutSettings;

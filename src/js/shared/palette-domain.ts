@@ -2,8 +2,9 @@ import {
   validateGeneratedGradient,
   type NativeGradient,
 } from "@zimoby/ae-native-gradient";
+import contract from "../../shared/product-contract.json" with { type: "json" };
 
-export const PALETTE_SCHEMA_VERSION = 3;
+export const PALETTE_SCHEMA_VERSION = contract.schemas.palette as 3;
 export const MAX_PALETTE_COLORS = 64;
 export const MAX_PALETTES = 32;
 export const MAX_PALETTE_NAME_LENGTH = 48;

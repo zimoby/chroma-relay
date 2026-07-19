@@ -1,4 +1,7 @@
-export const LAYOUT_SETTINGS_SCHEMA_VERSION = 4 as const;
+import contract from "../../shared/product-contract.json" with { type: "json" };
+
+// LAYOUT_SETTINGS_SCHEMA_VERSION = 4 is supplied by product-contract.json.
+export const LAYOUT_SETTINGS_SCHEMA_VERSION = contract.schemas.settings as 4;
 export const MIN_SWATCH_SIZE = 24;
 export const MAX_SWATCH_SIZE = 64;
 

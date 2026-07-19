@@ -1,11 +1,20 @@
 #!/usr/bin/env node
 
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import WebSocket from "ws";
+import { pathToFileURL } from "node:url";
+import { CdpClient } from "./lib/cdp-client.mjs";
+import {
+  createOwnedRunDirectory,
+  createOwnedScratchDirectory,
+  parseRunnerArgs,
+  removeOwnedRunDirectory,
+} from "./lib/live-runner-policy.mjs";
+import contract from "../src/shared/product-contract.json" with { type: "json" };
+import packageJson from "../package.json" with { type: "json" };
 
-const EXPECTED_BUILD_MARKER = "I11 · 0.0.1";
+const EXPECTED_BUILD_MARKER = `${contract.marker.current} · ${packageJson.version}`;
 
 const REPO_ROOT = fileURLToPath(new URL("../", import.meta.url));
 const FIXTURES = [
@@ -19,110 +28,16 @@ const PANELS = [
   {
     page: "main",
     port: 8198,
-    extensionId: "com.zimoby.chroma-relay.main",
+    extensionId: contract.product.panelIds.main,
     pageSuffix: "/main/index.html",
   },
   {
     page: "settings",
     port: 8199,
-    extensionId: "com.zimoby.chroma-relay.settings",
+    extensionId: contract.product.panelIds.settings,
     pageSuffix: "/settings/index.html",
   },
 ];
-
-const options = Object.fromEntries(
-  process.argv.slice(2).map((argument) => {
-    if (!argument.startsWith("--") || !argument.includes("=")) {
-      throw new Error(`Invalid argument: ${argument}`);
-    }
-    const [key, ...value] = argument.slice(2).split("=");
-    return [key, value.join("=")];
-  })
-);
-const unknownOptions = Object.keys(options).filter(
-  (key) => key !== "output"
-);
-if (unknownOptions.length) throw new Error(`Unknown options: ${unknownOptions.join(", ")}`);
-
-class CDPClient {
-  constructor(url) {
-    this.url = url;
-    this.nextId = 1;
-    this.pending = new Map();
-    this.events = [];
-    this.socket = null;
-  }
-
-  async connect() {
-    this.socket = new WebSocket(this.url);
-    this.socket.addEventListener("message", ({ data }) => {
-      const message = JSON.parse(data);
-      if (!message.id) {
-        this.events.push(message);
-        return;
-      }
-      const pending = this.pending.get(message.id);
-      if (!pending) return;
-      this.pending.delete(message.id);
-      if (message.error) pending.reject(new Error(message.error.message || "CDP error"));
-      else pending.resolve(message.result);
-    });
-    await new Promise((resolveOpen, rejectOpen) => {
-      this.socket.addEventListener("open", resolveOpen, { once: true });
-      this.socket.addEventListener(
-        "error",
-        () => rejectOpen(new Error(`Unable to connect to ${this.url}`)),
-        { once: true }
-      );
-    });
-  }
-
-  send(method, params = {}) {
-    return new Promise((resolveResult, rejectResult) => {
-      const id = this.nextId++;
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        rejectResult(new Error(`${method} timed out`));
-      }, 8000);
-      this.pending.set(id, {
-        resolve: (result) => {
-          clearTimeout(timer);
-          resolveResult(result);
-        },
-        reject: (error) => {
-          clearTimeout(timer);
-          rejectResult(error);
-        },
-      });
-      this.socket.send(JSON.stringify({ id, method, params }));
-    });
-  }
-
-  async evaluate(expression) {
-    const result = await this.send("Runtime.evaluate", {
-      expression,
-      awaitPromise: true,
-      returnByValue: true,
-    });
-    if (result.exceptionDetails) {
-      throw new Error(
-        result.exceptionDetails.exception?.description ||
-          result.exceptionDetails.text ||
-          "Runtime.evaluate failed"
-      );
-    }
-    return result.result?.value;
-  }
-
-  async close() {
-    if (!this.socket) return;
-    this.socket.close();
-    await new Promise((resolveClose) => {
-      this.socket.addEventListener("close", resolveClose, { once: true });
-      setTimeout(resolveClose, 250);
-    });
-  }
-}
 
 const delay = (milliseconds) => new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
 const debugCall = (source) => `
@@ -211,13 +126,52 @@ const assertNoErrors = (evidence, page) => {
   }
 };
 
-const capturePanel = async (panel, outputDirectory) => {
-  const panelDirectory = resolve(outputDirectory, panel.page);
-  await mkdir(panelDirectory, { recursive: true });
-  const target = await getTarget(panel);
-  const client = new CDPClient(target.webSocketDebuggerUrl);
+export const runDesignCaptureLifecycle = async ({
+  capture,
+  cleanupSteps,
+  writeFailure,
+}) => {
+  let report;
+  let primaryError = null;
+  const cleanupErrors = [];
 
   try {
+    report = await capture();
+  } catch (error) {
+    primaryError = error;
+  } finally {
+    for (const { phase, run } of cleanupSteps) {
+      try {
+        await run();
+      } catch (error) {
+        cleanupErrors.push({ phase, error: String(error?.stack || error) });
+      }
+    }
+  }
+
+  if (primaryError || cleanupErrors.length > 0) {
+    await writeFailure({ primaryError, cleanupErrors, report });
+    if (primaryError) throw primaryError;
+    throw new AggregateError(
+      cleanupErrors.map(({ error }) => new Error(error)),
+      "Design cleanup failed"
+    );
+  }
+  return report;
+};
+
+const capturePanel = async (panel, outputDirectory, parentRun) => {
+  const panelDirectory = resolve(outputDirectory, panel.page);
+  await mkdir(panelDirectory, { recursive: true });
+  const scratch = await createOwnedScratchDirectory(parentRun);
+  let target;
+  let client;
+  let report = null;
+
+  const captured = await runDesignCaptureLifecycle({
+    capture: async () => {
+    target = await getTarget(panel);
+    client = new CdpClient(target.webSocketDebuggerUrl);
     await client.connect();
     await Promise.all([
       client.send("Runtime.enable"),
@@ -231,8 +185,7 @@ const capturePanel = async (panel, outputDirectory) => {
     await waitForComplete(client);
     await afterRender(client);
 
-    const temporaryRoot = `/private/tmp/chroma-relay-i05-design-${panel.page}`;
-    await rm(temporaryRoot, { recursive: true, force: true });
+    const temporaryRoot = scratch.path;
     await client.evaluate(
       debugCall(`(api) => api.setTemporaryConfigRoot(${JSON.stringify(temporaryRoot)})`)
     );
@@ -394,7 +347,7 @@ const capturePanel = async (panel, outputDirectory) => {
     const errors = consoleEvidence(client.events);
     assertNoErrors(errors, panel.page);
 
-    const report = {
+    report = {
       capturedAt: new Date().toISOString(),
       design: "seam",
       panel,
@@ -405,56 +358,73 @@ const capturePanel = async (panel, outputDirectory) => {
       consoleEvidence: errors,
       note: "Orientation is derived by the live ResizeObserver from panel dimensions.",
     };
-    await writeFile(
-      resolve(panelDirectory, "report.json"),
-      `${JSON.stringify(report, null, 2)}\n`
-    );
     return report;
-  } catch (error) {
-    await writeFile(
-      resolve(panelDirectory, "failure.json"),
-      `${JSON.stringify(
-        {
-          capturedAt: new Date().toISOString(),
-          design: "seam",
-          panel,
-          target,
-          error: error instanceof Error ? error.stack || error.message : String(error),
-          consoleEvidence: consoleEvidence(client.events),
+    },
+    cleanupSteps: [
+      {
+        phase: "emulation",
+        run: async () => {
+          if (client) await client.send("Emulation.clearDeviceMetricsOverride");
         },
-        null,
-        2
-      )}\n`
-    );
-    throw error;
-  } finally {
-    try {
-      await client.send("Emulation.clearDeviceMetricsOverride");
-    } catch {
-      // Preserve the original capture failure; emulation cleanup is best effort.
-    }
-    await client.close();
-  }
+      },
+      {
+        phase: "close",
+        run: async () => {
+          if (client) await client.close();
+        },
+      },
+      { phase: "scratch", run: () => removeOwnedRunDirectory(scratch) },
+    ],
+    writeFailure: async ({ primaryError, cleanupErrors }) => {
+      await writeFile(
+        resolve(panelDirectory, "failure.json"),
+        `${JSON.stringify(
+          {
+            capturedAt: new Date().toISOString(),
+            design: "seam",
+            panel,
+            target,
+            error: primaryError ? primaryError.stack || primaryError.message : null,
+            cleanupErrors,
+            consoleEvidence: client ? consoleEvidence(client.events) : null,
+          },
+          null,
+          2
+        )}\n`
+      );
+    },
+  });
+  await writeFile(
+    resolve(panelDirectory, "report.json"),
+    `${JSON.stringify(captured, null, 2)}\n`
+  );
+  return captured;
 };
 
-const outputDirectory = isAbsolute(options.output || "")
-  ? options.output
-  : resolve(REPO_ROOT, options.output || "evidence/i05/responsive");
-await mkdir(outputDirectory, { recursive: true });
-const reports = [];
-for (const panel of PANELS) {
-  reports.push(await capturePanel(panel, outputDirectory));
-}
-const summary = {
-  capturedAt: new Date().toISOString(),
-  passed: true,
-  design: "seam",
-  panels: reports.map((report) => ({
-    page: report.panel.page,
-    port: report.panel.port,
-    captures: Object.keys(report.captures),
-    report: `${report.panel.page}/report.json`,
-  })),
+const main = async () => {
+  const options = parseRunnerArgs(process.argv.slice(2), { allowed: ["output"] });
+  const root = options.output || "evidence/i05/responsive";
+  const run = await createOwnedRunDirectory(resolve(REPO_ROOT, root));
+  const reports = [];
+  for (const panel of PANELS) reports.push(await capturePanel(panel, run.path, run));
+  const summary = {
+    capturedAt: new Date().toISOString(),
+    passed: true,
+    design: "seam",
+    panels: reports.map((report) => ({
+      page: report.panel.page,
+      port: report.panel.port,
+      captures: Object.keys(report.captures),
+      report: `${report.panel.page}/report.json`,
+    })),
+  };
+  await writeFile(resolve(run.path, "summary.json"), `${JSON.stringify(summary, null, 2)}\n`);
+  console.log(JSON.stringify(summary, null, 2));
 };
-await writeFile(resolve(outputDirectory, "summary.json"), `${JSON.stringify(summary, null, 2)}\n`);
-console.log(JSON.stringify(summary, null, 2));
+
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  main().catch((error) => {
+    console.error(error?.stack || String(error));
+    process.exitCode = 1;
+  });
+}

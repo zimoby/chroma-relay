@@ -1,18 +1,19 @@
 import type { CEP_Config } from "vite-cep-plugin";
 import { version } from "./package.json";
+import contract from "./src/shared/product-contract.json" with { type: "json" };
 
 const config: CEP_Config = {
   version,
-  id: "com.zimoby.chroma-relay", 
-  displayName: "Chroma Relay", 
+  id: contract.product.extensionId,
+  displayName: contract.product.displayName,
   symlink: "local",
   port: 3000,
   servePort: 5000,
   startingDebugPort: 8198,
-  extensionManifestVersion: 6.0,
-  requiredRuntimeVersion: 9.0,
+  extensionManifestVersion: contract.cep.manifestVersion,
+  requiredRuntimeVersion: contract.cep.requiredRuntimeVersion,
   hosts: [
-    { name: "AEFT", version: "[22.0,99.9]" }, 
+    { name: "AEFT", version: "[22.0,99.9]" },
   ],
 
   type: "Panel",
@@ -28,7 +29,7 @@ const config: CEP_Config = {
     {
       mainPath: "./main/index.html",
       name: "main",
-      id: "com.zimoby.chroma-relay.main",
+      id: contract.product.panelIds.main,
       panelDisplayName: "Chroma Relay", 
       autoVisible: true,
       width: 320,
@@ -39,7 +40,7 @@ const config: CEP_Config = {
     {
       mainPath: "./settings/index.html",
       name: "settings",
-      id: "com.zimoby.chroma-relay.settings",
+      id: contract.product.panelIds.settings,
       panelDisplayName: "",
       autoVisible: false,
       width: 320,
