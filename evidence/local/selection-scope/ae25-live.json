@@ -1,0 +1,287 @@
+{
+  "startedAt": "2026-07-19T17:33:32.885Z",
+  "setup": {
+    "ok": true,
+    "version": "25.6.6x4",
+    "original": {
+      "numLayers": 4,
+      "dirty": true,
+      "compId": 16
+    },
+    "fixtureLayerIds": [
+      51,
+      52
+    ],
+    "numLayers": 6
+  },
+  "cases": [
+    {
+      "kind": "collect",
+      "scope": "exact-color-disabled",
+      "includeDisabled": false,
+      "prepared": {
+        "ok": true,
+        "scope": "exact-color-disabled",
+        "selectedLayers": 1,
+        "selectedPropertiesOne": 1,
+        "selectedPropertiesTwo": 0
+      },
+      "actual": {
+        "colorCount": 1,
+        "gradientCount": 0,
+        "entryCount": 1,
+        "readErrorCount": 0
+      }
+    },
+    {
+      "kind": "collect",
+      "scope": "group-main",
+      "includeDisabled": false,
+      "prepared": {
+        "ok": true,
+        "scope": "group-main",
+        "selectedLayers": 1,
+        "selectedPropertiesOne": 1,
+        "selectedPropertiesTwo": 0
+      },
+      "actual": {
+        "colorCount": 1,
+        "gradientCount": 1,
+        "entryCount": 2,
+        "readErrorCount": 0
+      }
+    },
+    {
+      "kind": "collect",
+      "scope": "group-main",
+      "includeDisabled": true,
+      "prepared": {
+        "ok": true,
+        "scope": "group-main",
+        "selectedLayers": 1,
+        "selectedPropertiesOne": 1,
+        "selectedPropertiesTwo": 0
+      },
+      "actual": {
+        "colorCount": 2,
+        "gradientCount": 2,
+        "entryCount": 4,
+        "readErrorCount": 0
+      }
+    },
+    {
+      "kind": "collect",
+      "scope": "layer-one",
+      "includeDisabled": false,
+      "prepared": {
+        "ok": true,
+        "scope": "layer-one",
+        "selectedLayers": 1,
+        "selectedPropertiesOne": 0,
+        "selectedPropertiesTwo": 0
+      },
+      "actual": {
+        "colorCount": 1,
+        "gradientCount": 1,
+        "entryCount": 2,
+        "readErrorCount": 0
+      }
+    },
+    {
+      "kind": "collect",
+      "scope": "multiple-layers",
+      "includeDisabled": false,
+      "prepared": {
+        "ok": true,
+        "scope": "multiple-layers",
+        "selectedLayers": 2,
+        "selectedPropertiesOne": 0,
+        "selectedPropertiesTwo": 0
+      },
+      "actual": {
+        "colorCount": 2,
+        "gradientCount": 2,
+        "entryCount": 4,
+        "readErrorCount": 0
+      }
+    },
+    {
+      "kind": "color-apply",
+      "scope": "exact-color-disabled",
+      "includeDisabled": false,
+      "prepared": {
+        "ok": true,
+        "scope": "exact-color-disabled",
+        "selectedLayers": 1,
+        "selectedPropertiesOne": 1,
+        "selectedPropertiesTwo": 0
+      },
+      "result": {
+        "status": "ok",
+        "appliedCount": 1,
+        "selectedPropertyCount": 1,
+        "unsupportedGradientCount": 0,
+        "unsupportedTextCount": 0,
+        "preservedStateCount": 0,
+        "skippedDisabledCount": 0,
+        "failedCount": 0,
+        "undoGroupOpened": true
+      }
+    },
+    {
+      "kind": "color-apply",
+      "scope": "group-main",
+      "includeDisabled": false,
+      "prepared": {
+        "ok": true,
+        "scope": "group-main",
+        "selectedLayers": 1,
+        "selectedPropertiesOne": 1,
+        "selectedPropertiesTwo": 0
+      },
+      "result": {
+        "status": "ok",
+        "appliedCount": 1,
+        "selectedPropertyCount": 14,
+        "unsupportedGradientCount": 1,
+        "unsupportedTextCount": 0,
+        "preservedStateCount": 0,
+        "skippedDisabledCount": 1,
+        "failedCount": 0,
+        "undoGroupOpened": true
+      }
+    },
+    {
+      "kind": "color-apply",
+      "scope": "group-main",
+      "includeDisabled": true,
+      "prepared": {
+        "ok": true,
+        "scope": "group-main",
+        "selectedLayers": 1,
+        "selectedPropertiesOne": 1,
+        "selectedPropertiesTwo": 0
+      },
+      "result": {
+        "status": "ok",
+        "appliedCount": 2,
+        "selectedPropertyCount": 28,
+        "unsupportedGradientCount": 2,
+        "unsupportedTextCount": 0,
+        "preservedStateCount": 0,
+        "skippedDisabledCount": 0,
+        "failedCount": 0,
+        "undoGroupOpened": true
+      }
+    },
+    {
+      "kind": "color-apply",
+      "scope": "layer-one",
+      "includeDisabled": false,
+      "prepared": {
+        "ok": true,
+        "scope": "layer-one",
+        "selectedLayers": 1,
+        "selectedPropertiesOne": 0,
+        "selectedPropertiesTwo": 0
+      },
+      "result": {
+        "status": "ok",
+        "appliedCount": 1,
+        "selectedPropertyCount": 33,
+        "unsupportedGradientCount": 1,
+        "unsupportedTextCount": 0,
+        "preservedStateCount": 0,
+        "skippedDisabledCount": 2,
+        "failedCount": 0,
+        "undoGroupOpened": true
+      }
+    },
+    {
+      "kind": "color-apply",
+      "scope": "multiple-layers",
+      "includeDisabled": false,
+      "prepared": {
+        "ok": true,
+        "scope": "multiple-layers",
+        "selectedLayers": 2,
+        "selectedPropertiesOne": 0,
+        "selectedPropertiesTwo": 0
+      },
+      "result": {
+        "status": "ok",
+        "appliedCount": 2,
+        "selectedPropertyCount": 66,
+        "unsupportedGradientCount": 2,
+        "unsupportedTextCount": 0,
+        "preservedStateCount": 0,
+        "skippedDisabledCount": 3,
+        "failedCount": 0,
+        "undoGroupOpened": true
+      }
+    }
+  ],
+  "reviewFollowup": {
+    "recordedAt": "2026-07-19T18:13:14Z",
+    "sourceAndTestsDiffSha256": "b6eb2dd3318644c46c7218e7b0c92e99b1267d058fb0d02988c6d8aa3c31115e",
+    "hostVersion": "25.6.6x4",
+    "loadedArtifact": "dist/cep/jsx/index.js",
+    "cases": [
+      {
+        "scope": "selected-ancestor-plus-exact-disabled-color-leaf",
+        "includeDisabled": false,
+        "selectedRootCount": 2,
+        "collectedColorCount": 2,
+        "entryCount": 2,
+        "readErrorCount": 0,
+        "appliedCount": 2,
+        "failedCount": 0,
+        "exactLeafApplied": true,
+        "enabledSiblingApplied": true
+      },
+      {
+        "scope": "disabled-native-gradient-parent",
+        "includeDisabled": false,
+        "selectedPropertyCount": 1,
+        "status": "no-supported-colors",
+        "gradientCount": 0,
+        "entryCount": 0,
+        "readErrorCount": 0
+      },
+      {
+        "scope": "exact-disabled-native-gradient-payload",
+        "includeDisabled": false,
+        "selectedPropertyCount": 1,
+        "status": "ok",
+        "gradientCount": 1,
+        "entryCount": 1,
+        "entryType": "native-gradient",
+        "targetKeyPresent": true,
+        "readErrorCount": 0
+      }
+    ],
+    "setupFailure": {
+      "error": "ReferenceError: Object is invalid",
+      "cause": "AE invalidated a property wrapper after addProperty",
+      "partialFixtureRemoved": true,
+      "fixtureCountAfterRemoval": 0
+    },
+    "cleanup": {
+      "removed": 1,
+      "fixtureCount": 0,
+      "numLayers": 4,
+      "selectedLayers": 0,
+      "selectedProperties": 0,
+      "dirty": true
+    },
+    "passed": true
+  },
+  "cleanup": {
+    "removeError": null,
+    "fixtureCount": 0,
+    "numLayers": 4,
+    "dirty": true
+  },
+  "finishedAt": "2026-07-19T17:33:35.327Z",
+  "passed": true
+}

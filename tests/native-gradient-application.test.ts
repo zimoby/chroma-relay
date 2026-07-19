@@ -55,6 +55,7 @@ const rendererOptions = (palette: readonly [number, number, number, number][], b
   tempBasePath: base,
   templateRootPath: OWNED_TEMPLATE_ROOT,
   hostVersion: RENDERER_HOST_VERSION,
+  includeDisabledTargets: false,
 });
 const rgba = (index: number): [number, number, number, number] => [
   index / 10,
@@ -553,6 +554,7 @@ test("B3 renderer generates both kind leases, makes one host call, and cleans al
     assert.equal(request.schemaVersion, 1);
     assert.equal(request.expectedHostVersion, RENDERER_HOST_VERSION);
     assert.equal(request.stopCount, 3);
+    assert.equal(request.includeDisabledTargets, false);
     assert.deepEqual(Object.keys(request.presets).sort(), ["fill", "stroke"]);
     for (const kind of ["fill", "stroke"] as const) {
       assert.deepEqual(Object.keys(request.presets[kind]).sort(), [
@@ -657,6 +659,9 @@ test("B3 renderer classifies a host-returned unknown completion and preserves bo
       status: "apply-unknown-completion",
       mutationAttempted: true,
       applyCompleted: null,
+      selectedTargetCount: 3,
+      appliedTargetCount: 1,
+      unknownCompletionTargetIndex: 1,
     };
     const report = await applyActivePaletteNativeGradient(
       rendererOptions([rgba(0), rgba(1)], base),
@@ -672,6 +677,10 @@ test("B3 renderer classifies a host-returned unknown completion and preserves bo
     assert.equal(report.cleanup.length, 2);
     assert.equal(report.cleanup.every((entry: any) => entry.preserved === true), true);
     assert.equal(readdirSync(base).length, 2);
+    assert.equal(
+      nativeGradientResultMessage(report, 2),
+      "Gradient apply may have completed on target 2 of 3; 1 earlier confirmed; temporary presets preserved for diagnosis",
+    );
   });
 });
 
@@ -745,7 +754,28 @@ test("B3 result messages use exact B2 status literals and preserve cleanup evide
 
   assert.equal(
     nativeGradientResultMessage(report("ambiguous-selected-gradient") as any, 3),
-    "Select only one native Fill or Stroke gradient",
+    "Could not resolve the selected native gradients",
+  );
+  assert.equal(
+    nativeGradientResultMessage(
+      {
+        status: "ok",
+        primaryStatus: "ok",
+        hostCallAttempted: true,
+        hostResult: {
+          status: "ok",
+          primaryStatus: "ok",
+          appliedTargetCount: 3,
+          skippedDisabledCount: 1,
+          preservedStateCount: 1,
+        },
+        generated: [],
+        cleanup: [],
+        errors: [],
+      } as any,
+      3,
+    ),
+    "Applied 3-color native gradient to 3 properties; skipped 2",
   );
   assert.equal(
     nativeGradientResultMessage(report("unsupported-selected-gradient") as any, 3),
@@ -788,7 +818,10 @@ test("B3 Main exposes only the explicit flyout gradient action and preserves nor
   assert.match(mainSource, /hostActionRef\.current \|\| paletteMutationRef\.current/);
   assert.match(mainSource, /hostActionRef\.current = true;[\s\S]*paletteMutationRef\.current = true;[\s\S]*setPendingHostAction\("gradient"\)/);
   assert.doesNotMatch(mainSource, /multiple-selected-gradients|target-state-unsupported|selection-drift/);
-  assert.match(mainSource, /evalTS\("applyColorToSelectedProperties", rgba\)/);
+  assert.match(
+    mainSource,
+    /evalTS\(\s*"applyColorToSelectedProperties",\s*rgba,\s*layoutSettings\.includeDisabledColors\s*\)/
+  );
   assert.doesNotMatch(mainSource, /onClick=\{[^}]*applyActivePaletteNativeGradient/);
 });
 

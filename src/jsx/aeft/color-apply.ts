@@ -1,4 +1,25 @@
-import { exactNativeGradientParent } from "./native-gradient-target";
+import {
+  exactNativeGradientParent,
+  findExactNativeGradientPayload,
+  isExactNativeGradientPayload,
+} from "./native-gradient-target";
+import {
+  buildSelectionPropertyPath,
+  compareSelectionPropertyPaths,
+  isMaterialOptionsBranch,
+  isSelectionBranchDisabled,
+  resolveSelectionPropertyPath,
+  resolveSelectedScopeRoots,
+  selectionScopeKey,
+  selectionTargetKey,
+} from "./selection-scope";
+
+type ColorApplyTarget = {
+  layerId: number;
+  layerIndex: number;
+  propertyIndexPath: number[];
+  matchNamePath: string[];
+};
 
 export type ApplyRgba = [number, number, number, number];
 
@@ -15,33 +36,54 @@ export type ColorApplyResult = {
   unsupportedGradientCount: number;
   unsupportedTextCount: number;
   preservedStateCount: number;
+  skippedDisabledCount: number;
   failedCount: number;
   undoGroupOpened: boolean;
 };
 
-const isVisited = (visited: any[], property: any) => {
-  for (let index = 0; index < visited.length; index += 1) {
-    if (visited[index] === property) return true;
+const includesKey = (keys: string[], candidate: string) => {
+  for (let index = 0; index < keys.length; index += 1) {
+    if (keys[index] === candidate) return true;
   }
   return false;
 };
 
 const collectWritableColorProperties = (
   property: any,
-  targets: any[],
+  layer: any,
+  targets: ColorApplyTarget[],
+  targetKeys: string[],
+  gradientKeys: string[],
   result: ColorApplyResult,
-  visited: any[]
+  visitedKeys: string[],
+  includeDisabledColors: boolean,
+  bypassDisabledFilter = false
 ) => {
-  if (!property || isVisited(visited, property)) return;
-  visited.push(property);
+  if (!property) return;
+  if (!bypassDisabledFilter && !includeDisabledColors && isSelectionBranchDisabled(property)) {
+    result.skippedDisabledCount += 1;
+    return;
+  }
+  if (isMaterialOptionsBranch(property)) return;
+  const visitedKey = selectionScopeKey(layer, property);
+  if (!visitedKey) {
+    result.failedCount += 1;
+    return;
+  }
+  if (includesKey(visitedKeys, visitedKey)) return;
+  visitedKeys.push(visitedKey);
 
   try {
     const nativeGradientParent = exactNativeGradientParent(property);
     if (nativeGradientParent) {
-      if (nativeGradientParent !== property) {
-        if (isVisited(visited, nativeGradientParent)) return;
-        visited.push(nativeGradientParent);
+      const payload = findExactNativeGradientPayload(nativeGradientParent);
+      const gradientKey = payload ? selectionTargetKey(layer, payload) : null;
+      if (!gradientKey) {
+        result.failedCount += 1;
+        return;
       }
+      if (includesKey(gradientKeys, gradientKey)) return;
+      gradientKeys.push(gradientKey);
       result.selectedPropertyCount += 1;
       result.unsupportedGradientCount += 1;
       return;
@@ -49,7 +91,17 @@ const collectWritableColorProperties = (
 
     if (property.propertyType !== PropertyType.PROPERTY) {
       for (let index = 1; index <= property.numProperties; index += 1) {
-        collectWritableColorProperties(property.property(index), targets, result, visited);
+        collectWritableColorProperties(
+          property.property(index),
+          layer,
+          targets,
+          targetKeys,
+          gradientKeys,
+          result,
+          visitedKeys,
+          includeDisabledColors,
+          false
+        );
       }
       return;
     }
@@ -60,17 +112,45 @@ const collectWritableColorProperties = (
       return;
     }
     if (property.propertyValueType !== PropertyValueType.COLOR) return;
+    const path = buildSelectionPropertyPath(layer, property);
+    const targetKey = selectionTargetKey(layer, property);
+    if (!path || !targetKey) {
+      result.failedCount += 1;
+      return;
+    }
+    if (includesKey(targetKeys, targetKey)) return;
+    targetKeys.push(targetKey);
     if (property.expressionEnabled || property.numKeys > 0) {
       result.preservedStateCount += 1;
       return;
     }
-    targets.push(property);
+    targets.push({
+      layerId: layer.id,
+      layerIndex: layer.index,
+      propertyIndexPath: path.propertyIndexPath,
+      matchNamePath: path.matchNamePath,
+    });
   } catch (_error) {
     result.failedCount += 1;
   }
 };
 
-export const applyColorToSelectedProperties = (rgba: ApplyRgba): ColorApplyResult => {
+const isExactColorSelection = (property: any) => {
+  if (isExactNativeGradientPayload(property)) return true;
+  try {
+    return (
+      property.propertyType === PropertyType.PROPERTY &&
+      property.propertyValueType === PropertyValueType.COLOR
+    );
+  } catch (_error) {
+    return false;
+  }
+};
+
+export const applyColorToSelectedProperties = (
+  rgba: ApplyRgba,
+  includeDisabledColors = false
+): ColorApplyResult => {
   const result: ColorApplyResult = {
     status: "no-project",
     appliedCount: 0,
@@ -78,6 +158,7 @@ export const applyColorToSelectedProperties = (rgba: ApplyRgba): ColorApplyResul
     unsupportedGradientCount: 0,
     unsupportedTextCount: 0,
     preservedStateCount: 0,
+    skippedDisabledCount: 0,
     failedCount: 0,
     undoGroupOpened: false,
   };
@@ -110,19 +191,35 @@ export const applyColorToSelectedProperties = (rgba: ApplyRgba): ColorApplyResul
     return result;
   }
 
-  const targets: any[] = [];
-  const visited: any[] = [];
-  for (let layerIndex = 0; layerIndex < selectedLayers.length; layerIndex += 1) {
-    const selectedProperties = selectedLayers[layerIndex].selectedProperties;
-    for (let propertyIndex = 0; propertyIndex < selectedProperties.length; propertyIndex += 1) {
-      collectWritableColorProperties(
-        selectedProperties[propertyIndex],
-        targets,
-        result,
-        visited
-      );
-    }
+  const targets: ColorApplyTarget[] = [];
+  const targetKeys: string[] = [];
+  const gradientKeys: string[] = [];
+  const visitedKeys: string[] = [];
+  const scopes = resolveSelectedScopeRoots(activeItem, isExactColorSelection);
+  if (scopes.invalid) {
+    result.failedCount += 1;
+    result.status = "no-supported-colors";
+    return result;
   }
+  for (let rootIndex = 0; rootIndex < scopes.roots.length; rootIndex += 1) {
+    const root = scopes.roots[rootIndex];
+    collectWritableColorProperties(
+      root.property,
+      root.layer,
+      targets,
+      targetKeys,
+      gradientKeys,
+      result,
+      visitedKeys,
+      includeDisabledColors,
+      root.exact
+    );
+  }
+
+  targets.sort((left, right) => {
+    if (left.layerIndex !== right.layerIndex) return left.layerIndex - right.layerIndex;
+    return compareSelectionPropertyPaths(left, right);
+  });
 
   if (targets.length === 0) {
     result.status = "no-supported-colors";
@@ -134,7 +231,29 @@ export const applyColorToSelectedProperties = (rgba: ApplyRgba): ColorApplyResul
   try {
     for (let targetIndex = 0; targetIndex < targets.length; targetIndex += 1) {
       try {
-        const target = targets[targetIndex];
+        const descriptor = targets[targetIndex];
+        const layer = activeItem.layer(descriptor.layerIndex);
+        if (!layer || layer.id !== descriptor.layerId) {
+          result.failedCount += 1;
+          continue;
+        }
+        if (layer.locked === true) {
+          result.preservedStateCount += 1;
+          continue;
+        }
+        const target = resolveSelectionPropertyPath(layer, descriptor);
+        if (
+          !target ||
+          target.propertyType !== PropertyType.PROPERTY ||
+          target.propertyValueType !== PropertyValueType.COLOR
+        ) {
+          result.failedCount += 1;
+          continue;
+        }
+        if (target.expressionEnabled || target.numKeys > 0) {
+          result.preservedStateCount += 1;
+          continue;
+        }
         const currentValue = target.value;
         target.setValue(
           currentValue && currentValue.length === 3

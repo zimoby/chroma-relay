@@ -1,10 +1,20 @@
 import {
   buildExactNativeGradientPropertyPath,
+  buildNativeGradientTargetKey,
   collectSelectedNativeGradientTargets,
   exactNativeGradientParent,
   findExactNativeGradientPayload,
+  isExactNativeGradientPayload,
 } from "./native-gradient-target";
 import type { NativeGradientTargetDescriptor } from "./native-gradient-target";
+import {
+  buildSelectionPropertyPath,
+  compareSelectionPropertyPaths,
+  isMaterialOptionsBranch,
+  isSelectionBranchDisabled,
+  resolveSelectedScopeRoots,
+  selectionScopeKey,
+} from "./selection-scope";
 
 export { applyColorToSelectedProperties } from "./color-apply";
 export { applyNativeGradientPresetToSelectedTarget } from "./native-gradient-apply";
@@ -36,7 +46,14 @@ export type ColorCollectionResult = {
 
 export type ColorCollectionEntry =
   | { type: "solid"; colorIndex: number }
-  | { type: "native-gradient"; gradientIndex: number };
+  | { type: "native-gradient"; gradientIndex: number; targetKey: string };
+
+type OrderedColorCollectionEntry = {
+  entry: ColorCollectionEntry;
+  layerIndex: number;
+  propertyIndexPath: number[];
+  matchNamePath: string[];
+};
 
 export type NativeGradientSelectionResult =
   | { status: "none"; descriptors: [] }
@@ -69,9 +86,9 @@ const emptyCollection = (status: ColorCollectionStatus): ColorCollectionResult =
   readErrorCount: 0,
 });
 
-const isVisited = (visited: any[], candidate: any) => {
-  for (let index = 0; index < visited.length; index += 1) {
-    if (visited[index] === candidate) return true;
+const includesKey = (keys: string[], candidate: string) => {
+  for (let index = 0; index < keys.length; index += 1) {
+    if (keys[index] === candidate) return true;
   }
   return false;
 };
@@ -91,105 +108,68 @@ const appendUniqueColor = (colors: HostRgba[], rgba: HostRgba) => {
   return colors.length - 1;
 };
 
-const isDisabledBranch = (property: any) => {
-  let current = property;
-  while (current) {
-    try {
-      if (current.enabled === false) return true;
-    } catch (_error) {}
-    try {
-      current = current.parentProperty;
-    } catch (_error) {
-      return false;
-    }
-  }
-  return false;
-};
-
-const isMaterialOptionsBranch = (property: any) => {
-  let current = property;
-  while (current) {
-    try {
-      if (
-        current.matchName === "ADBE Vector Materials Group" ||
-        current.matchName === "ADBE Material Options Group"
-      ) {
-        return true;
-      }
-    } catch (_error) {}
-    try {
-      current = current.parentProperty;
-    } catch (_error) {
-      return false;
-    }
-  }
-  return false;
-};
-
-const nativeGradientSelectionKey = (layer: any, parent: any) => {
-  try {
-    const payload = findExactNativeGradientPayload(parent);
-    const path = payload ? buildExactNativeGradientPropertyPath(layer, payload) : null;
-    if (
-      !path ||
-      typeof layer.id !== "number" ||
-      !isFinite(layer.id) ||
-      typeof layer.index !== "number" ||
-      !isFinite(layer.index)
-    ) {
-      return null;
-    }
-    return layer.id + ":" + layer.index + ":" + path.propertyIndexPath.join(".");
-  } catch (_error) {
-    return null;
-  }
-};
-
 const readColorProperty = (
   property: any,
   result: ColorCollectionResult,
-  visited: any[],
+  visitedKeys: string[],
   gradientKeys: string[],
+  orderedEntries: OrderedColorCollectionEntry[],
+  compId: number,
   layer: any,
-  includeDisabledColors: boolean
+  includeDisabledColors: boolean,
+  bypassDisabledFilter = false
 ) => {
-  if (!property || isVisited(visited, property)) return;
-  if (!includeDisabledColors && isDisabledBranch(property)) return;
+  if (!property) return;
+  if (!bypassDisabledFilter && !includeDisabledColors && isSelectionBranchDisabled(property)) return;
   if (isMaterialOptionsBranch(property)) return;
 
   try {
+    const visitedKey = selectionScopeKey(layer, property);
+    if (!visitedKey) {
+      result.readErrorCount += 1;
+      return;
+    }
+    if (includesKey(visitedKeys, visitedKey)) return;
+    visitedKeys.push(visitedKey);
+
     const nativeGradientParent = exactNativeGradientParent(property);
     if (nativeGradientParent) {
-      if (isVisited(visited, nativeGradientParent)) return;
-      const gradientKey = nativeGradientSelectionKey(layer, nativeGradientParent);
-      if (!gradientKey) {
+      const payload = findExactNativeGradientPayload(nativeGradientParent);
+      const path = payload ? buildExactNativeGradientPropertyPath(layer, payload) : null;
+      const gradientKey = payload ? buildNativeGradientTargetKey(compId, layer, payload) : null;
+      if (!path || !gradientKey) {
         result.readErrorCount += 1;
         return;
       }
-      for (let keyIndex = 0; keyIndex < gradientKeys.length; keyIndex += 1) {
-        if (gradientKeys[keyIndex] === gradientKey) return;
-      }
+      if (includesKey(gradientKeys, gradientKey)) return;
       gradientKeys.push(gradientKey);
-      visited.push(nativeGradientParent);
       result.selectedPropertyCount += 1;
-      result.entries.push({
-        type: "native-gradient",
-        gradientIndex: result.unsupportedGradientCount,
+      orderedEntries.push({
+        entry: {
+          type: "native-gradient",
+          gradientIndex: result.unsupportedGradientCount,
+          targetKey: gradientKey,
+        },
+        layerIndex: layer.index,
+        propertyIndexPath: path.propertyIndexPath,
+        matchNamePath: path.matchNamePath,
       });
       result.unsupportedGradientCount += 1;
       return;
     }
 
-    visited.push(property);
     if (property.propertyType !== PropertyType.PROPERTY) {
       for (let index = 1; index <= property.numProperties; index += 1) {
         readColorProperty(
           property.property(index),
           result,
-          visited,
+          visitedKeys,
           gradientKeys,
+          orderedEntries,
+          compId,
           layer,
-          includeDisabledColors
+          includeDisabledColors,
+          false
         );
       }
       return;
@@ -214,19 +194,36 @@ const readColorProperty = (
         return;
       }
     }
+    const path = buildSelectionPropertyPath(layer, property);
+    if (!path) {
+      result.readErrorCount += 1;
+      return;
+    }
     const colorIndex = appendUniqueColor(result.colors, rgba);
-    if (colorIndex >= 0) result.entries.push({ type: "solid", colorIndex });
+    if (colorIndex >= 0) {
+      orderedEntries.push({
+        entry: { type: "solid", colorIndex },
+        layerIndex: layer.index,
+        propertyIndexPath: path.propertyIndexPath,
+        matchNamePath: path.matchNamePath,
+      });
+    }
   } catch (_error) {
     result.readErrorCount += 1;
   }
 };
 
-
-
-
-
-
-
+const isExactColorSelection = (property: any) => {
+  if (isExactNativeGradientPayload(property)) return true;
+  try {
+    return (
+      property.propertyType === PropertyType.PROPERTY &&
+      property.propertyValueType === PropertyValueType.COLOR
+    );
+  } catch (_error) {
+    return false;
+  }
+};
 
 const selectedLayerHasStillImageSource = (layer: any) => {
   try {
@@ -258,34 +255,58 @@ export const collectSelectedColors = (
   }
 
   const result = emptyCollection("no-supported-colors");
-  const visited: any[] = [];
+  const visitedKeys: string[] = [];
   const gradientKeys: string[] = [];
-  for (let layerIndex = 0; layerIndex < selectedLayers.length; layerIndex += 1) {
-    const selectedLayer = selectedLayers[layerIndex];
-    const selectedProperties = selectedLayer.selectedProperties;
-    if (selectedProperties.length > 0) {
-      for (let propertyIndex = 0; propertyIndex < selectedProperties.length; propertyIndex += 1) {
-        readColorProperty(
-          selectedProperties[propertyIndex],
-          result,
-          visited,
-          gradientKeys,
-          selectedLayer,
-          includeDisabledColors
-        );
-      }
-    } else if (!skipWholeStillImageLayers || !selectedLayerHasStillImageSource(selectedLayer)) {
-      readColorProperty(
-        selectedLayer,
-        result,
-        visited,
-        gradientKeys,
-        selectedLayer,
-        includeDisabledColors
-      );
+  const orderedEntries: OrderedColorCollectionEntry[] = [];
+  const scopes = resolveSelectedScopeRoots(activeItem, isExactColorSelection);
+  if (scopes.invalid) {
+    result.readErrorCount += 1;
+    return result;
+  }
+  for (let rootIndex = 0; rootIndex < scopes.roots.length; rootIndex += 1) {
+    const root = scopes.roots[rootIndex];
+    if (
+      root.wholeLayer &&
+      skipWholeStillImageLayers &&
+      selectedLayerHasStillImageSource(root.layer)
+    ) {
+      continue;
+    }
+    readColorProperty(
+      root.property,
+      result,
+      visitedKeys,
+      gradientKeys,
+      orderedEntries,
+      activeItem.id,
+      root.layer,
+      includeDisabledColors,
+      root.exact
+    );
+  }
+  orderedEntries.sort((left, right) => {
+    if (left.layerIndex !== right.layerIndex) return left.layerIndex - right.layerIndex;
+    return compareSelectionPropertyPaths(left, right);
+  });
+  const canonicalColors: HostRgba[] = [];
+  let canonicalGradientIndex = 0;
+  for (let index = 0; index < orderedEntries.length; index += 1) {
+    const entry = orderedEntries[index].entry;
+    if (entry.type === "native-gradient") {
+      result.entries.push({
+        type: "native-gradient",
+        gradientIndex: canonicalGradientIndex,
+        targetKey: entry.targetKey,
+      });
+      canonicalGradientIndex += 1;
+    } else {
+      const rgba = result.colors[entry.colorIndex];
+      const colorIndex = rgba ? appendUniqueColor(canonicalColors, rgba) : -1;
+      if (colorIndex >= 0) result.entries.push({ type: "solid", colorIndex });
     }
   }
-  if (result.colors.length > 0) result.status = "ok";
+  result.colors = canonicalColors;
+  if (result.colors.length > 0 || result.unsupportedGradientCount > 0) result.status = "ok";
   return result;
 };
 
@@ -388,10 +409,25 @@ export const resolvePaletteAddSelection = (
     colors.unsupportedGradientCount > 0
       ? collectSelectedNativeGradientTargets(includeDisabledColors)
       : [];
+  let descriptorsMatchEntries = descriptors.length === colors.unsupportedGradientCount;
+  let descriptorIndex = 0;
+  for (let entryIndex = 0; entryIndex < colors.entries.length; entryIndex += 1) {
+    const entry = colors.entries[entryIndex];
+    if (entry.type !== "native-gradient") continue;
+    if (
+      descriptorIndex >= descriptors.length ||
+      descriptors[descriptorIndex].targetKey !== entry.targetKey
+    ) {
+      descriptorsMatchEntries = false;
+      break;
+    }
+    descriptorIndex += 1;
+  }
+  if (descriptorIndex !== descriptors.length) descriptorsMatchEntries = false;
   const nativeGradients: NativeGradientSelectionResult =
     colors.unsupportedGradientCount === 0
       ? { status: "none", descriptors: [] }
-      : descriptors.length === colors.unsupportedGradientCount
+      : descriptorsMatchEntries
         ? { status: "ok", descriptors }
         : { status: "invalid", descriptors: [] };
   return {

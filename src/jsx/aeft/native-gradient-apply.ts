@@ -1,10 +1,18 @@
 import {
   buildExactNativeGradientPropertyPath,
+  buildNativeGradientTargetKey,
   exactNativeGradientParent,
   findExactNativeGradientPayload,
+  isExactNativeGradientPayload,
   nativeGradientKind,
 } from "./native-gradient-target";
 import type { NativeGradientKind } from "./native-gradient-target";
+import {
+  compareSelectionPropertyPaths,
+  isSelectionBranchDisabled,
+  resolveSelectedScopeRoots,
+  selectionScopeKey,
+} from "./selection-scope";
 import {
   normalizeNativeGradientHostVersion,
   resolveNativeGradientTemplateFamily,
@@ -25,6 +33,7 @@ export type NativeGradientApplyRequest = {
   schemaVersion: 1;
   expectedHostVersion: string;
   stopCount: number;
+  includeDisabledTargets: boolean;
   presets: {
     fill: NativeGradientPresetRecord;
     stroke: NativeGradientPresetRecord;
@@ -45,7 +54,14 @@ export type NativeGradientApplyResult = {
   primaryStatus: NativeGradientApplyStatus;
   hostVersion: string;
   target: NativeGradientApplyTarget | null;
+  targets: NativeGradientApplyTarget[];
   selectedTargetCount: number;
+  attemptedTargetCount: number;
+  appliedTargetCount: number;
+  failedTargetIndex: number | null;
+  unknownCompletionTargetIndex: number | null;
+  skippedDisabledCount: number;
+  preservedStateCount: number;
   mutationAttempted: boolean;
   applyCompleted: boolean;
   undoGroupOpened: boolean;
@@ -124,7 +140,14 @@ const resultFor = (hostVersion: string): NativeGradientApplyResult => ({
   primaryStatus: "invalid-request",
   hostVersion,
   target: null,
+  targets: [],
   selectedTargetCount: 0,
+  attemptedTargetCount: 0,
+  appliedTargetCount: 0,
+  failedTargetIndex: null,
+  unknownCompletionTargetIndex: null,
+  skippedDisabledCount: 0,
+  preservedStateCount: 0,
   mutationAttempted: false,
   applyCompleted: false,
   undoGroupOpened: false,
@@ -174,6 +197,39 @@ const failBeforeMutation = (
 const canonicalFolderPath = (pathValue: string) => {
   const folder = new Folder(pathValue);
   return typeof folder.fsName === "string" ? folder.fsName : "";
+};
+
+const validatedFileLength = (file: any): number | null => {
+  const readLength = () => {
+    const value = file.length;
+    return typeof value === "number" && isFinite(value) && value > 0 ? value : null;
+  };
+  try {
+    const immediate = readLength();
+    if (immediate !== null) return immediate;
+    file.encoding = "BINARY";
+    if (
+      typeof file.open !== "function" ||
+      typeof file.close !== "function" ||
+      typeof file.read !== "function" ||
+      file.open("r") !== true
+    ) {
+      return null;
+    }
+    let refreshed: number | null = null;
+    try {
+      const contents = file.read(MAX_PRESET_BYTES + 1);
+      refreshed = typeof contents === "string" ? contents.length : null;
+    } finally {
+      file.close();
+    }
+    return refreshed;
+  } catch (_error) {
+    try {
+      if (typeof file.close === "function") file.close();
+    } catch (_closeError) {}
+    return null;
+  }
 };
 
 const validatePresetRecord = (
@@ -229,6 +285,7 @@ const validatePresetRecord = (
       ".ffx";
     const expectedPresetPath = new File(expectedRootPath + "/" + expectedFilename).fsName;
     const presetFile = new File(candidate.presetPath);
+    const presetByteLength = validatedFileLength(presetFile);
     if (
       candidate.filename !== expectedFilename ||
       presetFile.fsName !== candidate.presetPath ||
@@ -237,11 +294,9 @@ const validatePresetRecord = (
       !presetFile.parent ||
       presetFile.parent.fsName !== rootFolder.fsName ||
       presetFile.exists !== true ||
-      typeof (presetFile as any).length !== "number" ||
-      !isFinite((presetFile as any).length) ||
-      (presetFile as any).length !== candidate.byteLength ||
-      (presetFile as any).length < 1 ||
-      (presetFile as any).length > MAX_PRESET_BYTES
+      presetByteLength === null ||
+      presetByteLength !== candidate.byteLength ||
+      presetByteLength > MAX_PRESET_BYTES
     ) {
       return null;
     }
@@ -258,6 +313,7 @@ const isValidRequestEnvelope = (request: any) =>
     request.schemaVersion === 1 &&
     typeof request.expectedHostVersion === "string" &&
     request.expectedHostVersion.length > 0 &&
+    typeof request.includeDisabledTargets === "boolean" &&
     isPositiveInteger(request.stopCount) &&
     request.stopCount >= 2 &&
     request.stopCount <= 8 &&
@@ -284,82 +340,178 @@ const isNativeGradientEvidence = (property: any) => {
   }
 };
 
-const resolveSelectedTargets = (activeItem: any) => {
-  const targets: ResolvedTarget[] = [];
-  const keys: string[] = [];
-  let invalid = false;
+type ResolvedTargetState = {
+  invalid: boolean;
+  targets: ResolvedTarget[];
+  keys: string[];
+  visitedKeys: string[];
+  skippedDisabledCount: number;
+  preservedStateCount: number;
+};
+
+const appendResolvedTarget = (
+  parent: any,
+  payload: any,
+  layer: any,
+  activeItem: any,
+  state: ResolvedTargetState
+) => {
+  try {
+    const kind = nativeGradientKind(parent);
+    const path = payload ? buildExactNativeGradientPropertyPath(layer, payload) : null;
+    if (
+      !kind ||
+      !payload ||
+      !path ||
+      !isSamePropertySlot(payload.parentProperty, parent) ||
+      !isSamePropertySlot(findExactNativeGradientPayload(parent), payload)
+    ) {
+      state.invalid = true;
+      return;
+    }
+
+    const key = buildNativeGradientTargetKey(activeItem.id, layer, payload);
+    if (!key) {
+      state.invalid = true;
+      return;
+    }
+    for (let keyIndex = 0; keyIndex < state.keys.length; keyIndex += 1) {
+      if (state.keys[keyIndex] === key) return;
+    }
+    state.keys.push(key);
+
+    if (
+      layer.locked !== false ||
+      payload.numKeys !== 0 ||
+      payload.expressionEnabled !== false
+    ) {
+      state.preservedStateCount += 1;
+      return;
+    }
+
+    state.targets.push({
+      layer,
+      parent,
+      payload,
+      descriptor: {
+        compId: activeItem.id,
+        layerId: layer.id,
+        layerIndex: layer.index,
+        kind,
+        propertyIndexPath: path.propertyIndexPath,
+        matchNamePath: path.matchNamePath,
+      },
+    });
+  } catch (_error) {
+    state.invalid = true;
+  }
+};
+
+const collectResolvedTargets = (
+  property: any,
+  layer: any,
+  activeItem: any,
+  state: ResolvedTargetState,
+  includeDisabledTargets: boolean,
+  bypassDisabledFilter = false
+) => {
+  if (state.invalid) return;
+  if (!property) {
+    state.invalid = true;
+    return;
+  }
+  if (
+    !bypassDisabledFilter &&
+    !includeDisabledTargets &&
+    isSelectionBranchDisabled(property)
+  ) {
+    state.skippedDisabledCount += 1;
+    return;
+  }
+
+  const visitedKey = selectionScopeKey(layer, property);
+  if (!visitedKey) {
+    state.invalid = true;
+    return;
+  }
+  for (let index = 0; index < state.visitedKeys.length; index += 1) {
+    if (state.visitedKeys[index] === visitedKey) return;
+  }
+  state.visitedKeys.push(visitedKey);
 
   try {
-    const selectedLayers = activeItem.selectedLayers;
-    if (!selectedLayers || typeof selectedLayers.length !== "number") {
-      return { invalid: true, targets };
+    const parent = exactNativeGradientParent(property);
+    if (parent) {
+      const payload = findExactNativeGradientPayload(parent);
+      appendResolvedTarget(parent, payload, layer, activeItem, state);
+      return;
     }
-    for (let layerOffset = 0; layerOffset < selectedLayers.length; layerOffset += 1) {
-      const layer = selectedLayers[layerOffset];
-      if (
-        !layer ||
-        !isPositiveInteger(layer.id) ||
-        !isPositiveInteger(layer.index) ||
-        !isSameLayerSlot(activeItem.layer(layer.index), layer)
-      ) {
-        invalid = true;
-        break;
-      }
-      const selectedProperties = layer.selectedProperties;
-      if (!selectedProperties || typeof selectedProperties.length !== "number") {
-        invalid = true;
-        break;
-      }
-      for (let offset = 0; offset < selectedProperties.length; offset += 1) {
-        const selectedProperty = selectedProperties[offset];
-        const parent = exactNativeGradientParent(selectedProperty);
-        if (!parent) {
-          if (isNativeGradientEvidence(selectedProperty)) invalid = true;
-          continue;
-        }
-
-        const kind = nativeGradientKind(parent);
-        const payload = findExactNativeGradientPayload(parent);
-        const path = payload ? buildExactNativeGradientPropertyPath(layer, payload) : null;
-        if (!kind || !payload || !path) {
-          invalid = true;
-          continue;
-        }
-        if (
-          layer.locked !== false ||
-          payload.numKeys !== 0 ||
-          payload.expressionEnabled !== false
-        ) {
-          invalid = true;
-          continue;
-        }
-
-        const key = activeItem.id + ":" + layer.id + ":" + path.propertyIndexPath.join(".");
-        let duplicate = false;
-        for (let keyIndex = 0; keyIndex < keys.length; keyIndex += 1) {
-          if (keys[keyIndex] === key) duplicate = true;
-        }
-        if (duplicate) continue;
-        keys.push(key);
-        targets.push({
-          layer,
-          parent,
-          payload,
-          descriptor: {
-            compId: activeItem.id,
-            layerId: layer.id,
-            layerIndex: layer.index,
-            kind,
-            propertyIndexPath: path.propertyIndexPath,
-            matchNamePath: path.matchNamePath,
-          },
-        });
-      }
+    if (isNativeGradientEvidence(property)) {
+      state.invalid = true;
+      return;
+    }
+    if (property.propertyType === PropertyType.PROPERTY) return;
+    if (
+      typeof property.numProperties !== "number" ||
+      !isFinite(property.numProperties) ||
+      property.numProperties < 0 ||
+      Math.floor(property.numProperties) !== property.numProperties
+    ) {
+      state.invalid = true;
+      return;
+    }
+    for (let index = 1; index <= property.numProperties; index += 1) {
+      collectResolvedTargets(
+        property.property(index),
+        layer,
+        activeItem,
+        state,
+        includeDisabledTargets,
+        false
+      );
+      if (state.invalid) return;
     }
   } catch (_error) {
-    invalid = true;
+    state.invalid = true;
   }
-  return { invalid, targets };
+};
+
+const isExactNativeGradientSelection = (property: any) =>
+  isExactNativeGradientPayload(property);
+
+const resolveSelectedTargets = (activeItem: any, includeDisabledTargets: boolean) => {
+  const state: ResolvedTargetState = {
+    invalid: false,
+    targets: [],
+    keys: [],
+    visitedKeys: [],
+    skippedDisabledCount: 0,
+    preservedStateCount: 0,
+  };
+  const scopes = resolveSelectedScopeRoots(activeItem, isExactNativeGradientSelection);
+  if (scopes.invalid) {
+    state.invalid = true;
+    return state;
+  }
+  for (let rootIndex = 0; rootIndex < scopes.roots.length; rootIndex += 1) {
+    const root = scopes.roots[rootIndex];
+    collectResolvedTargets(
+      root.property,
+      root.layer,
+      activeItem,
+      state,
+      includeDisabledTargets,
+      root.exact
+    );
+    if (state.invalid) return state;
+  }
+  state.targets.sort((left, right) => {
+    if (left.descriptor.layerIndex !== right.descriptor.layerIndex) {
+      return left.descriptor.layerIndex - right.descriptor.layerIndex;
+    }
+    return compareSelectionPropertyPaths(left.descriptor, right.descriptor);
+  });
+  return state;
 };
 
 const buildSelectionPath = (layer: any, property: any): PropertyPath | null => {
@@ -633,24 +785,36 @@ export const applyNativeGradientPresetToSelectedTarget = (
     return failBeforeMutation(result, "no-active-comp");
   }
 
-  const selected = resolveSelectedTargets(activeItem);
+  const selected = resolveSelectedTargets(activeItem, request.includeDisabledTargets);
   result.selectedTargetCount = selected.targets.length;
+  result.skippedDisabledCount = selected.skippedDisabledCount;
+  result.preservedStateCount = selected.preservedStateCount;
   if (selected.invalid) return failBeforeMutation(result, "unsupported-selected-gradient");
   if (selected.targets.length === 0) {
-    return failBeforeMutation(result, "no-selected-gradient");
-  }
-  if (selected.targets.length !== 1) {
-    return failBeforeMutation(result, "ambiguous-selected-gradient");
+    return failBeforeMutation(
+      result,
+      selected.preservedStateCount > 0
+        ? "unsupported-selected-gradient"
+        : "no-selected-gradient"
+    );
   }
 
   result.target = selected.targets[0].descriptor;
+  for (let index = 0; index < selected.targets.length; index += 1) {
+    result.targets.push(selected.targets[index].descriptor);
+  }
   const snapshot = captureSelection(activeItem);
   if (!snapshot) return failBeforeMutation(result, "selection-snapshot-failed");
   if (!selectionMatchesSnapshot(activeItem, snapshot)) {
     return failBeforeMutation(result, "selection-snapshot-failed");
   }
-  const target = reResolveTarget(activeItem, selected.targets[0].descriptor);
-  if (!target) return failBeforeMutation(result, "target-drift");
+  for (let index = 0; index < selected.targets.length; index += 1) {
+    const target = reResolveTarget(activeItem, selected.targets[index].descriptor);
+    if (!target) {
+      result.failedTargetIndex = index;
+      return failBeforeMutation(result, "target-drift");
+    }
+  }
 
   let selectionMutationEntered = false;
 
@@ -664,26 +828,50 @@ export const applyNativeGradientPresetToSelectedTarget = (
 
   if (result.undoGroupOpened) {
     selectionMutationEntered = true;
+    let currentApplyAttempted = false;
+    let currentTargetDrifted = false;
+    let currentTargetIndex = -1;
     try {
-      clearSelection(activeItem);
-      target.layer.selected = true;
-      target.payload.selected = true;
-      const expectedTargetSelection = targetSelectionSnapshot(snapshot, target.descriptor);
-      if (
-        !expectedTargetSelection ||
-        !selectionMatchesSnapshot(activeItem, expectedTargetSelection)
-      ) {
-        throw new Error("Target selection was not exact");
+      for (let targetIndex = 0; targetIndex < selected.targets.length; targetIndex += 1) {
+        currentTargetIndex = targetIndex;
+        const target = reResolveTarget(
+          activeItem,
+          selected.targets[targetIndex].descriptor
+        );
+        currentApplyAttempted = false;
+        currentTargetDrifted = target === null;
+        if (!target) throw new Error("Target drifted before apply");
+        clearSelection(activeItem);
+        target.layer.selected = true;
+        target.payload.selected = true;
+        const expectedTargetSelection = targetSelectionSnapshot(snapshot, target.descriptor);
+        if (
+          !expectedTargetSelection ||
+          !selectionMatchesSnapshot(activeItem, expectedTargetSelection)
+        ) {
+          throw new Error("Target selection was not exact");
+        }
+        result.mutationAttempted = true;
+        currentApplyAttempted = true;
+        result.attemptedTargetCount += 1;
+        target.layer.applyPreset(presetFiles[target.descriptor.kind]);
+        currentApplyAttempted = false;
+        result.appliedTargetCount += 1;
       }
-      result.mutationAttempted = true;
-      target.layer.applyPreset(presetFiles[target.descriptor.kind]);
       result.applyCompleted = true;
       result.primaryStatus = "ok";
     } catch (error) {
-      if (result.mutationAttempted) result.applyError = captureApplyError(error);
-      result.primaryStatus = result.mutationAttempted
-        ? "apply-unknown-completion"
-        : "selection-mutation-failed";
+      if (currentApplyAttempted) {
+        result.applyError = captureApplyError(error);
+        result.unknownCompletionTargetIndex = currentTargetIndex;
+      } else {
+        result.failedTargetIndex = currentTargetIndex;
+      }
+      result.primaryStatus = currentTargetDrifted
+        ? "target-drift"
+        : currentApplyAttempted
+          ? "apply-unknown-completion"
+          : "selection-mutation-failed";
     }
     result.status = result.primaryStatus;
   }

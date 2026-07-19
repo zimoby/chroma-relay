@@ -767,6 +767,7 @@ export type NativeGradientHostApplyRequest = Readonly<{
   schemaVersion: 1;
   expectedHostVersion: string;
   stopCount: number;
+  includeDisabledTargets: boolean;
   presets: Readonly<Record<GradientFfxKind, NativeGradientHostPresetRecord>>;
 }>;
 
@@ -796,6 +797,36 @@ export const nativeGradientResultMessage = (
   report: NativeGradientRendererReport,
   stopCount: number,
 ) => {
+  const hostRecord =
+    report.hostResult && typeof report.hostResult === "object"
+      ? (report.hostResult as {
+          status?: unknown;
+          primaryStatus?: unknown;
+          appliedTargetCount?: unknown;
+          selectedTargetCount?: unknown;
+          unknownCompletionTargetIndex?: unknown;
+          skippedDisabledCount?: unknown;
+          preservedStateCount?: unknown;
+        })
+      : null;
+  const appliedTargetCount =
+    typeof hostRecord?.appliedTargetCount === "number" ? hostRecord.appliedTargetCount : 0;
+  const skippedTargetCount =
+    (typeof hostRecord?.skippedDisabledCount === "number"
+      ? hostRecord.skippedDisabledCount
+      : 0) +
+    (typeof hostRecord?.preservedStateCount === "number" ? hostRecord.preservedStateCount : 0);
+  const unknownCompletionMessage =
+    typeof hostRecord?.unknownCompletionTargetIndex === "number" &&
+    typeof hostRecord?.selectedTargetCount === "number"
+      ? `Gradient apply may have completed on target ${
+          hostRecord.unknownCompletionTargetIndex + 1
+        } of ${hostRecord.selectedTargetCount}; ${appliedTargetCount} earlier confirmed`
+      : "Gradient apply may have completed; verify the selected gradient";
+  const successMessage =
+    appliedTargetCount > 1
+      ? `Applied ${stopCount}-color native gradient to ${appliedTargetCount} properties`
+      : `Applied ${stopCount}-color native gradient`;
   let message: string;
   if (report.primaryStatus === "preset-generation-failed") {
     message = "Could not prepare the active palette gradient";
@@ -803,14 +834,10 @@ export const nativeGradientResultMessage = (
     report.primaryStatus === "host-call-unknown-completion" ||
     report.primaryStatus === "host-unknown-completion"
   ) {
-    message = "Gradient apply may have completed; verify the selected gradient";
+    message = unknownCompletionMessage;
   } else if (report.primaryStatus === "ok") {
-    message = `Applied ${stopCount}-color native gradient`;
+    message = successMessage;
   } else {
-    const hostRecord =
-      report.hostResult && typeof report.hostResult === "object"
-        ? (report.hostResult as { status?: unknown; primaryStatus?: unknown })
-        : null;
     const hostStatus = hostRecord?.status;
     const hostPrimaryStatus =
       typeof hostRecord?.primaryStatus === "string" ? hostRecord.primaryStatus : hostStatus;
@@ -821,15 +848,15 @@ export const nativeGradientResultMessage = (
       "invalid-preset": "Could not validate the temporary gradient preset",
       "no-project": "Open an After Effects project first",
       "no-active-comp": "Open a composition first",
-      "no-selected-gradient": "Select one native Fill or Stroke gradient",
-      "ambiguous-selected-gradient": "Select only one native Fill or Stroke gradient",
+      "no-selected-gradient": "Select a native Fill or Stroke gradient, group, or layer",
+      "ambiguous-selected-gradient": "Could not resolve the selected native gradients",
       "unsupported-selected-gradient": "Select a static, unlocked native gradient",
       "target-drift": "The selected gradient changed before apply",
       "selection-snapshot-failed": "The property selection changed before apply",
-      "apply-unknown-completion": "Gradient apply may have completed; verify the selected gradient",
+      "apply-unknown-completion": unknownCompletionMessage,
     };
     message = hostPrimaryStatus === "ok"
-      ? `Applied ${stopCount}-color native gradient`
+      ? successMessage
       : typeof hostPrimaryStatus === "string" &&
           messages[hostPrimaryStatus as NativeGradientApplyStatus]
         ? messages[hostPrimaryStatus as NativeGradientApplyStatus]!
@@ -847,6 +874,13 @@ export const nativeGradientResultMessage = (
     ) {
       message = `${message}; ${finalizationMessages[hostStatus as NativeGradientApplyStatus]}`;
     }
+  }
+
+  if (
+    skippedTargetCount > 0 &&
+    (report.primaryStatus === "ok" || hostRecord?.primaryStatus === "ok")
+  ) {
+    message = `${message}; skipped ${skippedTargetCount}`;
   }
 
   if (report.status === "host-finalization-failed") {
@@ -904,6 +938,7 @@ export const applyActivePaletteNativeGradient = async (
     tempBasePath: string;
     templateRootPath: string;
     hostVersion: string;
+    includeDisabledTargets: boolean;
   }>,
   invokeHost: (request: NativeGradientHostApplyRequest) => Promise<unknown>,
 ): Promise<NativeGradientRendererReport> => {
@@ -957,6 +992,7 @@ export const applyActivePaletteNativeGradient = async (
       schemaVersion: 1,
       expectedHostVersion: options.hostVersion,
       stopCount: gradient.colorStops.length,
+      includeDisabledTargets: options.includeDisabledTargets,
       presets: {
         fill: hostPresetRecord(generated[0]),
         stroke: hostPresetRecord(generated[1]),

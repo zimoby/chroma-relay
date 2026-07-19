@@ -13,6 +13,7 @@ const createHostModuleLoader = (sandboxGlobals) => {
     "./color-apply": "src/jsx/aeft/color-apply.ts",
     "./native-gradient-apply": "src/jsx/aeft/native-gradient-apply.ts",
     "./native-gradient-target": "src/jsx/aeft/native-gradient-target.ts",
+    "./selection-scope": "src/jsx/aeft/selection-scope.ts",
     "../../js/shared/native-gradient-contract.ts": "src/js/shared/native-gradient-contract.ts",
   };
   const cache = {};
@@ -80,6 +81,8 @@ const loadAeftHost = async () => {
       matchName,
       name,
       propertyType: sandbox.PropertyType.NAMED_GROUP,
+      canSetEnabled: true,
+      enabled: true,
       parentProperty: null,
       propertyIndex: 0,
       numProperties: children.length,
@@ -174,9 +177,23 @@ const loadNativeGradientApplyHost = ({ kind = "fill", selection = "parent" } = {
     Object.defineProperty(this, "length", {
       enumerable: true,
       get() {
-        return record && record.regular === true ? record.length : 0;
+        return record && record.regular === true
+          ? record.staleLength === true && record.metadataRefreshed !== true
+            ? -1
+            : record.length
+          : 0;
       },
     });
+    this.open = (mode) => {
+      if (!record || record.regular !== true || mode !== "r") return false;
+      record.metadataRefreshed = true;
+      return true;
+    };
+    this.read = (limit) =>
+      record && record.regular === true
+        ? "X".repeat(Math.min(record.length, limit))
+        : "";
+    this.close = () => true;
   }
 
   class CompItem {}
@@ -221,6 +238,8 @@ const loadNativeGradientApplyHost = ({ kind = "fill", selection = "parent" } = {
       matchName,
       name,
       propertyType: PropertyType.NAMED_GROUP,
+      canSetEnabled: true,
+      enabled: true,
       parentProperty: null,
       propertyIndex: 0,
       numProperties: children.length,
@@ -274,7 +293,9 @@ const loadNativeGradientApplyHost = ({ kind = "fill", selection = "parent" } = {
       selectedLayerIds: comp.selectedLayers.map((selectedLayer) => selectedLayer.id),
       selectedPropertyMatchNames: layer.selectedProperties.map((property) => property.matchName),
     });
-    if (layer.throwApply) throw new Error("applyPreset unknown completion");
+    if (layer.throwApply || layer.throwOnApplyCall === applyCalls.length) {
+      throw new Error("applyPreset unknown completion");
+    }
   };
   layer.selectedPropertiesResolver = () =>
     descendants(layer).filter((property) => property.selected === true);
@@ -285,12 +306,25 @@ const loadNativeGradientApplyHost = ({ kind = "fill", selection = "parent" } = {
   });
 
   const otherProperty = leaf("ADBE Opacity", PropertyValueType.NO_VALUE);
-  const otherLayer = group("ADBE AV Layer", [otherProperty], "Other layer");
+  const otherGradient = makeGradient("stroke");
+  const otherLayer = group(
+    "ADBE AV Layer",
+    [otherProperty, otherGradient.parent],
+    "Other layer"
+  );
   otherLayer.id = 2002;
   otherLayer.index = 2;
   otherLayer.locked = false;
-  otherLayer.applyPreset = () => {
-    throw new Error("wrong layer applyPreset");
+  otherLayer.applyPreset = (presetFile) => {
+    events.push(`apply:${presetFile.fsName}`);
+    applyCalls.push({
+      path: presetFile.fsName,
+      isFile: presetFile instanceof File,
+      selectedLayerIds: comp.selectedLayers.map((selectedLayer) => selectedLayer.id),
+      selectedPropertyMatchNames: otherLayer.selectedProperties.map(
+        (property) => property.matchName
+      ),
+    });
   };
   otherLayer.selectedPropertiesResolver = () =>
     descendants(otherLayer).filter((property) => property.selected === true);
@@ -355,6 +389,7 @@ const loadNativeGradientApplyHost = ({ kind = "fill", selection = "parent" } = {
     schemaVersion: 1,
     expectedHostVersion: "25.6.6",
     stopCount: 4,
+    includeDisabledTargets: false,
     presets: {
       fill: presetRecord("fill", FILL_TOKEN),
       stroke: presetRecord("stroke", STROKE_TOKEN),
@@ -447,6 +482,7 @@ const loadNativeGradientApplyHost = ({ kind = "fill", selection = "parent" } = {
     layer,
     otherLayer,
     otherProperty,
+    otherGradient,
     fill,
     stroke,
     userGroup,
@@ -569,7 +605,24 @@ nativeGradientBehaviorTest(
     assert.equal(dedupedResult.selectedTargetCount, 1);
     assert.equal(deduped.applyCalls.length, 1);
 
+    const disabledParent = loadNativeGradientApplyHost({ kind: "fill", selection: "parent" });
+    disabledParent.fill.parent.enabled = false;
+    disabledParent.fill.parent.canSetEnabled = true;
+    const disabledParentResult = plainHostValue(disabledParent.invoke());
+    assert.equal(disabledParentResult.status, "no-selected-gradient");
+    assert.equal(disabledParentResult.skippedDisabledCount, 1);
+    assertNoNativeGradientMutation(disabledParent);
+
+    const disabledPayload = loadNativeGradientApplyHost({ kind: "fill", selection: "payload" });
+    disabledPayload.fill.parent.enabled = false;
+    disabledPayload.fill.parent.canSetEnabled = true;
+    const disabledPayloadResult = plainHostValue(disabledPayload.invoke());
+    assert.equal(disabledPayloadResult.status, "ok");
+    assert.equal(disabledPayloadResult.appliedTargetCount, 1);
+    assert.equal(disabledPayload.applyCalls.length, 1);
+
     const zero = loadNativeGradientApplyHost({ selection: "none" });
+    zero.layer.selected = false;
     const zeroResult = plainHostValue(zero.invoke());
     assert.equal(zeroResult.status, "no-selected-gradient");
     assertNoNativeGradientMutation(zero);
@@ -590,16 +643,32 @@ nativeGradientBehaviorTest(
     ancestorOnly.contents.selected = true;
     ancestorOnly.events.length = 0;
     const ancestorResult = plainHostValue(ancestorOnly.invoke());
-    assert.equal(ancestorResult.status, "no-selected-gradient");
-    assertNoNativeGradientMutation(ancestorOnly);
+    assert.equal(ancestorResult.status, "ok");
+    assert.equal(ancestorResult.selectedTargetCount, 2);
+    assert.equal(ancestorOnly.applyCalls.length, 2);
 
-    const ambiguous = loadNativeGradientApplyHost({ kind: "fill" });
-    ambiguous.stroke.parent.selected = true;
-    ambiguous.events.length = 0;
-    const ambiguousResult = plainHostValue(ambiguous.invoke());
-    assert.equal(ambiguousResult.status, "ambiguous-selected-gradient");
-    assert.equal(ambiguousResult.selectedTargetCount, 2);
-    assertNoNativeGradientMutation(ambiguous);
+    const multiple = loadNativeGradientApplyHost({ kind: "fill" });
+    multiple.stroke.parent.selected = true;
+    multiple.events.length = 0;
+    const multipleResult = plainHostValue(multiple.invoke());
+    assert.equal(multipleResult.status, "ok");
+    assert.equal(multipleResult.selectedTargetCount, 2);
+    assert.equal(multipleResult.attemptedTargetCount, 2);
+    assert.equal(multipleResult.appliedTargetCount, 2);
+    assert.equal(multiple.applyCalls.length, 2);
+
+    const multipleLayers = loadNativeGradientApplyHost({ kind: "fill" });
+    multipleLayers.otherProperty.selected = false;
+    multipleLayers.otherGradient.parent.selected = true;
+    multipleLayers.events.length = 0;
+    const multipleLayerResult = plainHostValue(multipleLayers.invoke());
+    assert.equal(multipleLayerResult.status, "ok");
+    assert.equal(multipleLayerResult.selectedTargetCount, 2);
+    assert.deepEqual(
+      multipleLayerResult.targets.map((target) => target.layerId),
+      [2001, 2002]
+    );
+    assert.equal(multipleLayers.applyCalls.length, 2);
 
     const malformed = loadNativeGradientApplyHost({ kind: "fill" });
     const malformedNative = {
@@ -714,6 +783,17 @@ nativeGradientBehaviorTest(
       assert.equal(result.mutationAttempted, false, label);
       assertNoNativeGradientMutation(fixture);
     }
+
+    const staleMetadata = loadNativeGradientApplyHost();
+    for (const preset of [
+      staleMetadata.request.presets.fill,
+      staleMetadata.request.presets.stroke,
+    ]) {
+      staleMetadata.files.get(canonicalHostPath(preset.presetPath)).staleLength = true;
+    }
+    const refreshedResult = plainHostValue(staleMetadata.invoke());
+    assert.equal(refreshedResult.status, "ok");
+    assert.equal(staleMetadata.applyCalls.length, 1);
   }
 );
 
@@ -842,6 +922,47 @@ nativeGradientBehaviorTest(
 );
 
 nativeGradientBehaviorTest(
+  "B2 multi-target gradient apply stops after an unknown second completion",
+  () => {
+    const fixture = loadNativeGradientApplyHost({ selection: "multiple" });
+    const before = fixture.selectionSnapshot();
+    fixture.layer.throwOnApplyCall = 2;
+    const result = plainHostValue(fixture.invoke());
+    assert.equal(result.status, "apply-unknown-completion");
+    assert.equal(result.attemptedTargetCount, 2);
+    assert.equal(result.appliedTargetCount, 1);
+    assert.equal(result.unknownCompletionTargetIndex, 1);
+    assert.equal(result.failedTargetIndex, null);
+    assert.equal(result.applyCompleted, false);
+    assert.equal(fixture.applyCalls.length, 2);
+    assert.deepEqual(fixture.selectionSnapshot(), before);
+    assert.equal(fixture.events.filter((event) => event === "end").length, 1);
+  }
+);
+
+nativeGradientBehaviorTest(
+  "B2 multi-target gradient re-resolves each target after prior mutation",
+  () => {
+    const fixture = loadNativeGradientApplyHost({ selection: "multiple" });
+    const originalApplyPreset = fixture.layer.applyPreset;
+    fixture.layer.applyPreset = function (file) {
+      originalApplyPreset.call(this, file);
+      if (fixture.applyCalls.length === 1) {
+        fixture.stroke.parent.matchName = "ADBE Vector Graphic - G-Fill";
+      }
+    };
+
+    const result = plainHostValue(fixture.invoke());
+    assert.equal(result.primaryStatus, "target-drift");
+    assert.equal(result.appliedTargetCount, 1);
+    assert.equal(result.attemptedTargetCount, 1);
+    assert.equal(result.failedTargetIndex, 1);
+    assert.equal(result.unknownCompletionTargetIndex, null);
+    assert.equal(fixture.applyCalls.length, 1);
+  }
+);
+
+nativeGradientBehaviorTest(
   "B2 native-gradient verifies restoration instead of trusting silent setters",
   () => {
     const fixture = loadNativeGradientApplyHost();
@@ -925,9 +1046,10 @@ test("collector recurses selected groups or whole selected layers and can skip d
     source,
     /collectSelectedColors\s*=\s*\(\s*includeDisabledColors:\s*boolean,\s*skipWholeStillImageLayers\s*=\s*false\s*\)/
   );
-  assert.match(source, /selectedProperties\.length\s*>\s*0/);
-  assert.match(source, /readColorProperty\(\s*selectedLayer,/);
-  assert.match(source, /isDisabledBranch/);
+  assert.match(source, /resolveSelectedScopeRoots\(activeItem, isExactColorSelection\)/);
+  assert.match(source, /root\.wholeLayer/);
+  assert.match(source, /root\.exact/);
+  assert.match(source, /isSelectionBranchDisabled/);
   assert.match(source, /includeDisabledColors/);
 });
 
@@ -949,7 +1071,7 @@ test("collector classifies only exact native Shape gradient parents with an exac
   assert.match(aeftSource, /exactNativeGradientParent/);
   assert.match(
     aeftSource,
-    /if \(nativeGradientParent\) \{[\s\S]*?visited\.push\(nativeGradientParent\);[\s\S]*?unsupportedGradientCount \+= 1;[\s\S]*?return;/
+    /if \(nativeGradientParent\) \{[\s\S]*?buildNativeGradientTargetKey[\s\S]*?gradientKeys\.push\(gradientKey\);[\s\S]*?unsupportedGradientCount \+= 1;[\s\S]*?return;/
   );
 });
 
@@ -1039,12 +1161,18 @@ test("collector excludes material defaults and a disabled Stroke beside a native
   setProject(makeComp([layer]));
 
   const result = JSON.parse(JSON.stringify(host.resolvePaletteAddSelection(false)));
-  assert.equal(result.colors.status, "no-supported-colors");
+  assert.equal(result.colors.status, "ok");
   assert.deepEqual(result.colors.colors, []);
-  assert.deepEqual(result.colors.entries, [{ type: "native-gradient", gradientIndex: 0 }]);
+  assert.equal(result.colors.entries.length, 1);
+  assert.equal(result.colors.entries[0].type, "native-gradient");
+  assert.equal(result.colors.entries[0].gradientIndex, 0);
   assert.equal(result.colors.unsupportedGradientCount, 1);
   assert.equal(result.nativeGradients.status, "ok");
   assert.equal(result.nativeGradients.descriptors.length, 1);
+  assert.equal(
+    result.colors.entries[0].targetKey,
+    result.nativeGradients.descriptors[0].targetKey
+  );
 });
 
 test("palette add selection preserves mixed traversal order and fails closed on descriptor drift", async () => {
@@ -1063,23 +1191,47 @@ test("palette add selection preserves mixed traversal order and fails closed on 
     [0.1, 0.2, 0.3, 1],
     [0.7, 0.8, 0.9, 1],
   ]);
-  assert.deepEqual(clean.colors.entries, [
-    { type: "solid", colorIndex: 0 },
-    { type: "native-gradient", gradientIndex: 0 },
-    { type: "solid", colorIndex: 1 },
-  ]);
+  assert.deepEqual(
+    clean.colors.entries.map(({ targetKey: _targetKey, ...entry }) => entry),
+    [
+      { type: "solid", colorIndex: 0 },
+      { type: "native-gradient", gradientIndex: 0 },
+      { type: "solid", colorIndex: 1 },
+    ]
+  );
   assert.equal(clean.nativeGradients.status, "ok");
   assert.equal(clean.nativeGradients.descriptors.length, 1);
+  assert.equal(clean.colors.entries[1].targetKey, clean.nativeGradients.descriptors[0].targetKey);
+
+  layer.selectedProperties = [lastColor, nativeFill, firstColor];
+  const reversed = JSON.parse(JSON.stringify(host.resolvePaletteAddSelection(true)));
+  assert.deepEqual(reversed.colors, clean.colors);
+  assert.deepEqual(reversed.nativeGradients, clean.nativeGradients);
+  layer.selectedProperties = [firstColor, nativeFill, lastColor];
 
   nativeFill.enabled = false;
-  const disabled = JSON.parse(JSON.stringify(host.resolvePaletteAddSelection(false)));
-  assert.deepEqual(disabled.colors.entries, [
+  const disabledParent = JSON.parse(JSON.stringify(host.resolvePaletteAddSelection(false)));
+  assert.deepEqual(disabledParent.colors.entries, [
     { type: "solid", colorIndex: 0 },
     { type: "solid", colorIndex: 1 },
   ]);
-  assert.deepEqual(disabled.nativeGradients, { status: "none", descriptors: [] });
+  assert.equal(disabledParent.nativeGradients.status, "none");
+
+  layer.selectedProperties = [firstColor, payload, lastColor];
+  const disabledExactPayload = JSON.parse(JSON.stringify(host.resolvePaletteAddSelection(false)));
+  assert.deepEqual(disabledExactPayload.colors.entries, clean.colors.entries);
+  assert.equal(disabledExactPayload.nativeGradients.status, "ok");
+
+  layer.selectedProperties = [];
+  const disabledRecursive = JSON.parse(JSON.stringify(host.resolvePaletteAddSelection(false)));
+  assert.deepEqual(disabledRecursive.colors.entries, [
+    { type: "solid", colorIndex: 0 },
+    { type: "solid", colorIndex: 1 },
+  ]);
+  assert.deepEqual(disabledRecursive.nativeGradients, { status: "none", descriptors: [] });
 
   nativeFill.enabled = true;
+  layer.selectedProperties = [firstColor, nativeFill, lastColor];
   setProject(comp, { dirty: true, file: { exists: true, fsName: "/saved/exact/project.aep" } });
   const dirty = JSON.parse(JSON.stringify(host.resolvePaletteAddSelection(true)));
   assert.deepEqual(dirty.colors.entries, clean.colors.entries);
@@ -1098,7 +1250,12 @@ test("selected native gradient descriptors execute exact path and fail-closed co
   setProject(comp);
 
   const descriptors = JSON.parse(JSON.stringify(host.collectSelectedNativeGradientTargets()));
-  assert.deepEqual(descriptors, [
+  assert.equal(
+    descriptors[0].targetKey,
+    "123456:987654:1:1.1.1.1:ADBE Root Vectors Group/ADBE Vector Group/ADBE Vector Graphic - G-Fill/ADBE Vector Grad Colors"
+  );
+  const { targetKey: _targetKey, ...descriptor } = descriptors[0];
+  assert.deepEqual([descriptor], [
     {
       projectPath: "/saved/exact/project.aep",
       projectDirty: false,
@@ -1169,6 +1326,8 @@ test("selected native gradient descriptors validate scoped slots across fresh AE
 
   assert.deepEqual(JSON.parse(JSON.stringify(host.collectSelectedNativeGradientTargets())), [
     {
+      targetKey:
+        "123456:987654:1:1.1.1.1:ADBE Root Vectors Group/ADBE Vector Group/ADBE Vector Graphic - G-Fill/ADBE Vector Grad Colors",
       projectPath: "/saved/exact/project.aep",
       projectDirty: false,
       compId: 123456,
@@ -1185,10 +1344,16 @@ test("selected native gradient descriptors validate scoped slots across fresh AE
     },
   ]);
   const selection = JSON.parse(JSON.stringify(host.resolvePaletteAddSelection(true)));
-  assert.deepEqual(selection.colors.entries, [{ type: "native-gradient", gradientIndex: 0 }]);
+  assert.equal(selection.colors.entries.length, 1);
+  assert.equal(selection.colors.entries[0].type, "native-gradient");
+  assert.equal(selection.colors.entries[0].gradientIndex, 0);
   assert.equal(selection.colors.unsupportedGradientCount, 1);
   assert.equal(selection.nativeGradients.status, "ok");
   assert.equal(selection.nativeGradients.descriptors.length, 1);
+  assert.equal(
+    selection.colors.entries[0].targetKey,
+    selection.nativeGradients.descriptors[0].targetKey
+  );
 });
 
 test("selected native gradient descriptors require clean saved stable exact identity", async () => {
@@ -1209,8 +1374,8 @@ test("selected native gradient descriptors require clean saved stable exact iden
   assert.match(source, /propertyIndexPath/);
   assert.match(source, /matchNamePath/);
   assert.match(source, /kind: NativeGradientKind/);
-  assert.match(source, /selectedProperties\.length > 0/);
-  assert.match(source, /collectNativeGradientTargets\(\s*layer,\s*layer,/);
+  assert.match(source, /resolveSelectedScopeRoots\(activeItem, isExactNativeGradientSelection\)/);
+  assert.match(source, /root\.exact/);
   assert.match(source, /payload\.parentProperty/);
   assert.match(source, /isSamePropertySlot/);
   assert.match(source, /isSameLayerSlot/);
@@ -1220,7 +1385,8 @@ test("selected native gradient descriptors require clean saved stable exact iden
   assert.match(source, /layer\.locked !== false/);
   assert.match(source, /payload\.numKeys !== 0/);
   assert.match(source, /payload\.expressionEnabled !== false/);
-  assert.match(source, /compId \+ ":" \+ layerId \+ ":" \+ propertyIndexPath\.join\("\."\)/);
+  assert.match(source, /buildNativeGradientTargetKey\(state\.compId, layer, payload\)/);
+  assert.match(source, /targetKey: key/);
   assert.doesNotMatch(source, /\.name\s*===/);
   assert.doesNotMatch(source, /nearest|offset|firstCandidate/i);
   assert.match(
@@ -1297,11 +1463,104 @@ test("normal apply uses exact native Shape gradient identity and keeps effect co
   assert.deepEqual(JSON.parse(JSON.stringify(nativeGeometryColor.value)), [1, 1, 1, 1]);
 });
 
+test("color collection and apply share exact, group, layer, multi-layer, and disabled scopes", async () => {
+  const { host, values, leaf, group, makeLayer, makeComp, setProject } = await loadAeftHost();
+  const exactDisabled = leaf("ADBE Vector Fill Color", values.COLOR, [0.1, 0.1, 0.1, 1]);
+  const exactDisabledGroup = group("ADBE Vector Group", [exactDisabled]);
+  exactDisabledGroup.enabled = false;
+  exactDisabledGroup.canSetEnabled = false;
+  const nestedDisabledColor = leaf(
+    "ADBE Vector Stroke Color",
+    values.COLOR,
+    [0.2, 0.2, 0.2, 1]
+  );
+  const nestedDisabledGroup = group("ADBE Vector Group", [nestedDisabledColor]);
+  nestedDisabledGroup.enabled = false;
+  nestedDisabledGroup.canSetEnabled = false;
+  const enabledColor = leaf("ADBE Vector Fill Color", values.COLOR, [0.3, 0.3, 0.3, 1]);
+  const selectedGroup = group("ADBE Vector Group", [
+    exactDisabledGroup,
+    nestedDisabledGroup,
+    enabledColor,
+  ]);
+  const outsideColor = leaf("ADBE Effect Color", values.COLOR, [0.4, 0.4, 0.4, 1]);
+  const firstLayer = makeLayer([selectedGroup, outsideColor], 3001, 1);
+  const secondLayerColor = leaf("ADBE Effect Color", values.COLOR, [0.5, 0.5, 0.5, 1]);
+  const secondLayer = makeLayer([secondLayerColor], 3002, 2);
+
+  firstLayer.selectedProperties = [exactDisabledGroup, exactDisabled];
+  setProject(makeComp([firstLayer], 4001));
+  const exactCollection = JSON.parse(JSON.stringify(host.collectSelectedColors(false)));
+  assert.deepEqual(exactCollection.colors, [[0.1, 0.1, 0.1, 1]]);
+  const exactApply = JSON.parse(
+    JSON.stringify(host.applyColorToSelectedProperties([0.9, 0.1, 0.1, 1], false))
+  );
+  assert.equal(exactApply.appliedCount, 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(exactDisabled.value)), [0.9, 0.1, 0.1, 1]);
+  assert.deepEqual(JSON.parse(JSON.stringify(enabledColor.value)), [0.3, 0.3, 0.3, 1]);
+
+  firstLayer.selectedProperties = [selectedGroup, exactDisabled];
+  const unionCollection = JSON.parse(JSON.stringify(host.collectSelectedColors(false)));
+  assert.deepEqual(unionCollection.colors, [
+    [0.9, 0.1, 0.1, 1],
+    [0.3, 0.3, 0.3, 1],
+  ]);
+  const unionApply = JSON.parse(
+    JSON.stringify(host.applyColorToSelectedProperties([0.7, 0.2, 0.6, 1], false))
+  );
+  assert.equal(unionApply.appliedCount, 2);
+  assert.deepEqual(JSON.parse(JSON.stringify(exactDisabled.value)), [0.7, 0.2, 0.6, 1]);
+  assert.deepEqual(JSON.parse(JSON.stringify(enabledColor.value)), [0.7, 0.2, 0.6, 1]);
+  assert.deepEqual(JSON.parse(JSON.stringify(nestedDisabledColor.value)), [0.2, 0.2, 0.2, 1]);
+
+  const duplicateLayerWrapper = { ...firstLayer, selectedProperties: [outsideColor] };
+  firstLayer.selectedProperties = [outsideColor];
+  const duplicateLayerComp = makeComp([firstLayer], 4003);
+  duplicateLayerComp.selectedLayers = [duplicateLayerWrapper, firstLayer];
+  setProject(duplicateLayerComp);
+  const duplicateLayerCollection = JSON.parse(JSON.stringify(host.collectSelectedColors(false)));
+  assert.deepEqual(duplicateLayerCollection.colors, [[0.4, 0.4, 0.4, 1]]);
+
+  firstLayer.selectedProperties = [selectedGroup];
+  setProject(makeComp([firstLayer], 4001));
+  const groupCollection = JSON.parse(JSON.stringify(host.collectSelectedColors(false)));
+  assert.deepEqual(groupCollection.colors, [[0.7, 0.2, 0.6, 1]]);
+  const groupApply = JSON.parse(
+    JSON.stringify(host.applyColorToSelectedProperties([0.1, 0.9, 0.1, 1], false))
+  );
+  assert.equal(groupApply.appliedCount, 1);
+  assert.equal(groupApply.skippedDisabledCount, 2);
+  assert.deepEqual(JSON.parse(JSON.stringify(enabledColor.value)), [0.1, 0.9, 0.1, 1]);
+  assert.deepEqual(JSON.parse(JSON.stringify(nestedDisabledColor.value)), [0.2, 0.2, 0.2, 1]);
+
+  const includeDisabledApply = JSON.parse(
+    JSON.stringify(host.applyColorToSelectedProperties([0.1, 0.1, 0.9, 1], true))
+  );
+  assert.equal(includeDisabledApply.appliedCount, 3);
+  assert.deepEqual(JSON.parse(JSON.stringify(nestedDisabledColor.value)), [0.1, 0.1, 0.9, 1]);
+
+  firstLayer.selectedProperties = [];
+  secondLayer.selectedProperties = [];
+  setProject(makeComp([firstLayer, secondLayer], 4002));
+  const layerCollection = JSON.parse(JSON.stringify(host.collectSelectedColors(false)));
+  assert.deepEqual(layerCollection.colors, [
+    [0.1, 0.1, 0.9, 1],
+    [0.4, 0.4, 0.4, 1],
+    [0.5, 0.5, 0.5, 1],
+  ]);
+  const multiLayerApply = JSON.parse(
+    JSON.stringify(host.applyColorToSelectedProperties([0.8, 0.8, 0.2, 1], false))
+  );
+  assert.equal(multiLayerApply.appliedCount, 3);
+  assert.deepEqual(JSON.parse(JSON.stringify(outsideColor.value)), [0.8, 0.8, 0.2, 1]);
+  assert.deepEqual(JSON.parse(JSON.stringify(secondLayerColor.value)), [0.8, 0.8, 0.2, 1]);
+});
+
 test("normal apply imports centralized exact identity without local gradient heuristics", async () => {
   const source = await read("src/jsx/aeft/color-apply.ts");
   assert.match(
     source,
-    /import \{ exactNativeGradientParent \} from "\.\/native-gradient-target";/
+    /import \{[\s\S]*?exactNativeGradientParent,[\s\S]*?findExactNativeGradientPayload,[\s\S]*?isExactNativeGradientPayload,[\s\S]*?\} from "\.\/native-gradient-target";/
   );
   assert.doesNotMatch(source, /isGradientProperty/);
   assert.doesNotMatch(source, /\.name[^\n]*toLowerCase\s*\(/);

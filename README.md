@@ -1,6 +1,6 @@
 # Chroma Relay
 
-After Effects CEP palette extension and 0.0.1 internal-alpha runtime candidate. Main persists exact RGBA colors, recursively collects colors from selected properties, groups, or whole selected layers, applies swatches to deterministic selected targets, and supports drag reorder plus Alt/Option-click removal. Settings owns palette create/select/rename/delete and color reorder/remove controls, Stretch or Fixed 24–64 px swatch sizing, and disabled-branch collection. The pre-hardening unsigned ZIP is historical; a refreshed package is pending after the next freeze.
+After Effects CEP palette extension and 0.0.1 internal-alpha runtime candidate. Main persists exact RGBA colors and native-gradient slots, recursively collects supported targets from exact properties, selected groups, whole selected layers, or multiple layers, and applies solid swatches or native gradients in deterministic target order. Settings owns palette create/select/rename/delete and color reorder/remove controls, Stretch or Fixed 24–64 px swatch sizing, and disabled-branch collection/application. The pre-hardening unsigned ZIP is historical; a refreshed package is pending after the next freeze.
 
 ## Local development
 
@@ -35,6 +35,7 @@ Capture responsive geometry/state fixtures with `npm run cdp:design -- --output=
 ```bash
 npm run test:domain
 npm run test:host-contract
+npm run test:native-gradient
 npm run check:cep
 npm run react:doctor -- --verbose
 npm run package:alpha
@@ -48,12 +49,12 @@ npm run package:alpha
 - Settings ID: `com.zimoby.chroma-relay.settings`.
 - AE host floor: 22.0; browser target: Chrome 74.
 - Main is the sole writer of versioned `palette.json`; Settings sends revisioned palette commands and remains the sole writer of versioned `settings.json`.
-- Palette schema v2 stores named palettes and one active palette. Schema-v1 files migrate in memory to a single active `Palette 1` and are rewritten only on the next successful mutation.
+- Palette schema v3 stores named palettes, one active palette, exact RGBA colors, and optional validated native-gradient slots. Older documents migrate through the existing versioned migration path and are rewritten only on a successful mutation.
 - Exact finite RGBA values are stored without display rounding, including HDR values.
 - Palette writes are queued, verified, recover interrupted replacement, and refuse to overwrite malformed primary data.
-- Collection is read-only. Selected properties/groups are traversed recursively; a selected layer with no selected properties is traversed completely, and multiple selected layers are combined.
-- Disabled layers/groups are skipped by default. Settings can include them; existing schema-v1 settings migrate to schema v2 with this preference off.
-- Application uses one balanced undo group and remains limited to selected supported target properties.
+- Collection is read-only. Exact supported leaves, selected groups, whole selected layers, and multiple selected layers form a union that is deduplicated and processed in stable layer/property-path order.
+- Disabled layers/groups are skipped by default in recursive scopes. Settings can include them; an exact selected supported leaf bypasses disabled-ancestor filtering for that leaf only.
+- Solid and native-gradient application use the same scope contract and one balanced Undo group. Native multi-target application re-resolves each target, stops without retry on unknown completion, and reports completed/failed/unknown target position explicitly.
 - Orientation is horizontal when width ≥ height and vertical otherwise.
 - Main declares a 128×32 minimum and the current strict matrix uses 128×32, 160×32, 128×160, and 200×200.
 - Stretch preserves equal-fill swatches. Fixed renders 24–64 px squares and places an equally sized, left-aligned Add button after the final color; default is 32 px.
@@ -69,9 +70,10 @@ npm run package:alpha
 - [x] I11 blocker review/fix loop and unsigned internal-alpha packaging pass.
 - [x] Post-I11 unified background, quiet Settings surface, 128 px minimum-width matrix, and left-safe Add behavior are live-validated.
 - [x] Palette schema v2, Main drag/removal gestures, Settings palette management, and Main-only single-writer synchronization are live-validated.
+- [x] Palette schema v3 exact gradient slots plus exact/group/layer/multi-layer collection and application are statically verified; the AE 25.6.6 solid scope matrix and bounded native-gradient paths are live-validated with cleanup proof.
+- [x] Establish a recoverable local Git baseline and commit the reviewed selection-scope feature using npm/`package-lock.json` as the declared package-manager contract.
 - [ ] Verify the declared 128 px minimum on a freshly reopened Main panel; the already-open panel could remain at 79 px outer width with a 132 px CEP viewport.
 - [ ] Decide whether Settings needs error-only save feedback after removal of the routine status footer.
-- [ ] Establish the repository's first Git baseline/commit when approved, resolving the dual-lockfile state in favor of npm/`package-lock.json`.
 - [ ] Rebuild and reverify the unsigned alpha package after the next freeze; replace the historical I11 package report and SHA.
 - [ ] Run Windows storage/replacement and runtime validation before any public cross-platform package claim.
 

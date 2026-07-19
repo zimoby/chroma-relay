@@ -1023,7 +1023,7 @@ export const App = () => {
                   }
                   type="checkbox"
                 />
-                <span>Read disabled layers and groups</span>
+                <span>Include disabled layers and groups</span>
               </label>
             </section>
 

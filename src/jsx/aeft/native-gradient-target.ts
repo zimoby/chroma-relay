@@ -1,6 +1,15 @@
+import {
+  compareSelectionPropertyPaths,
+  isSelectionBranchDisabled,
+  resolveSelectedScopeRoots,
+  selectionScopeKey,
+  selectionTargetKey,
+} from "./selection-scope";
+
 export type NativeGradientKind = "fill" | "stroke";
 
 export type NativeGradientTargetDescriptor = {
+  readonly targetKey: string;
   readonly projectPath: string;
   readonly projectDirty: false;
   readonly compId: number;
@@ -63,21 +72,6 @@ const isVisited = (visited: any[], candidate: any) => {
   return false;
 };
 
-const isDisabledNativeGradientBranch = (property: any) => {
-  let current = property;
-  while (current) {
-    try {
-      if (current.enabled === false) return true;
-    } catch (_error) {}
-    try {
-      current = current.parentProperty;
-    } catch (_error) {
-      return false;
-    }
-  }
-  return false;
-};
-
 export const findExactNativeGradientPayload = (parent: any) => {
   if (!nativeGradientKind(parent)) return null;
   try {
@@ -116,6 +110,16 @@ export const exactNativeGradientParent = (property: any) => {
   }
 };
 
+export const isExactNativeGradientPayload = (property: any) => {
+  try {
+    if (!property || property.matchName !== NATIVE_GRADIENT_PAYLOAD_MATCH_NAME) return false;
+    const parent = exactNativeGradientParent(property);
+    return !!parent && isSamePropertySlot(findExactNativeGradientPayload(parent), property);
+  } catch (_error) {
+    return false;
+  }
+};
+
 export type NativeGradientPropertyPath = {
   propertyIndexPath: number[];
   matchNamePath: string[];
@@ -127,7 +131,16 @@ type NativeGradientCollectorState = {
   compId: number;
   descriptors: NativeGradientTargetDescriptor[];
   keys: string[];
-  visited: any[];
+  visitedKeys: string[];
+};
+
+export const buildNativeGradientTargetKey = (
+  compId: number,
+  layer: any,
+  payload: any
+) => {
+  const propertyKey = selectionTargetKey(layer, payload);
+  return isPositiveInteger(compId) && propertyKey ? compId + ":" + propertyKey : null;
 };
 
 export const buildExactNativeGradientPropertyPath = (
@@ -226,12 +239,17 @@ const appendNativeGradientTarget = (
     }
 
     const propertyIndexPath = path.propertyIndexPath;
-    const key = state.compId + ":" + layerId + ":" + propertyIndexPath.join(".");
+    const key = buildNativeGradientTargetKey(state.compId, layer, payload);
+    if (!key) {
+      state.invalid = true;
+      return;
+    }
     for (let index = 0; index < state.keys.length; index += 1) {
       if (state.keys[index] === key) return;
     }
     state.keys.push(key);
     state.descriptors.push({
+      targetKey: key,
       projectPath: state.projectPath,
       projectDirty: false,
       compId: state.compId,
@@ -251,16 +269,30 @@ const collectNativeGradientTargets = (
   layer: any,
   activeItem: any,
   state: NativeGradientCollectorState,
-  includeDisabledGradients: boolean
+  includeDisabledGradients: boolean,
+  bypassDisabledFilter = false
 ) => {
   if (state.invalid) return;
   if (!property) {
     state.invalid = true;
     return;
   }
-  if (!includeDisabledGradients && isDisabledNativeGradientBranch(property)) return;
-  if (isVisited(state.visited, property)) return;
-  state.visited.push(property);
+  if (
+    !bypassDisabledFilter &&
+    !includeDisabledGradients &&
+    isSelectionBranchDisabled(property)
+  ) {
+    return;
+  }
+  const visitedKey = selectionScopeKey(layer, property);
+  if (!visitedKey) {
+    state.invalid = true;
+    return;
+  }
+  for (let index = 0; index < state.visitedKeys.length; index += 1) {
+    if (state.visitedKeys[index] === visitedKey) return;
+  }
+  state.visitedKeys.push(visitedKey);
 
   try {
     const kind = nativeGradientKind(property);
@@ -307,7 +339,8 @@ const collectNativeGradientTargets = (
         layer,
         activeItem,
         state,
-        includeDisabledGradients
+        includeDisabledGradients,
+        false
       );
       if (state.invalid) return;
     }
@@ -315,6 +348,9 @@ const collectNativeGradientTargets = (
     state.invalid = true;
   }
 };
+
+const isExactNativeGradientSelection = (property: any) =>
+  isExactNativeGradientPayload(property);
 
 export const collectSelectedNativeGradientTargets = (
   includeDisabledGradients = true
@@ -352,47 +388,30 @@ export const collectSelectedNativeGradientTargets = (
       compId: activeItem.id,
       descriptors: [],
       keys: [],
-      visited: [],
+      visitedKeys: [],
     };
 
-    for (let selectedLayerIndex = 0; selectedLayerIndex < selectedLayers.length; selectedLayerIndex += 1) {
-      const layer = selectedLayers[selectedLayerIndex];
-      if (
-        !layer ||
-        !isPositiveInteger(layer.id) ||
-        !isPositiveInteger(layer.index) ||
-        !isSameLayerSlot(activeItem.layer(layer.index), layer)
-      ) {
-        return [];
-      }
-
-      const selectedProperties = layer.selectedProperties;
-      if (!selectedProperties || typeof selectedProperties.length !== "number") return [];
-      if (selectedProperties.length > 0) {
-        for (let propertyIndex = 0; propertyIndex < selectedProperties.length; propertyIndex += 1) {
-          collectNativeGradientTargets(
-            selectedProperties[propertyIndex],
-            layer,
-            activeItem,
-            state,
-            includeDisabledGradients
-          );
-          if (state.invalid) return [];
-        }
-      } else {
-        collectNativeGradientTargets(
-          layer,
-          layer,
-          activeItem,
-          state,
-          includeDisabledGradients
-        );
-        if (state.invalid) return [];
-      }
+    const scopes = resolveSelectedScopeRoots(activeItem, isExactNativeGradientSelection);
+    if (scopes.invalid) return [];
+    for (let rootIndex = 0; rootIndex < scopes.roots.length; rootIndex += 1) {
+      const root = scopes.roots[rootIndex];
+      collectNativeGradientTargets(
+        root.property,
+        root.layer,
+        activeItem,
+        state,
+        includeDisabledGradients,
+        root.exact
+      );
+      if (state.invalid) return [];
     }
 
     if (state.invalid) return [];
     const descriptors = state.descriptors;
+    descriptors.sort((left, right) => {
+      if (left.layerIndex !== right.layerIndex) return left.layerIndex - right.layerIndex;
+      return compareSelectionPropertyPaths(left, right);
+    });
     if (descriptors.length === 0) return [];
     return descriptors;
   } catch (_error) {

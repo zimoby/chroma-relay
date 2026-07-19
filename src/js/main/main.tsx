@@ -574,6 +574,7 @@ export const App = () => {
           tempBasePath: getNativeGradientTempBasePath(),
           templateRootPath: path.join(extensionRoot, "assets", "native-gradient"),
           hostVersion,
+          includeDisabledTargets: layoutSettings.includeDisabledColors,
         },
         async (request) => {
           countersRef.current.hostCalls += 1;
@@ -598,7 +599,7 @@ export const App = () => {
       setPendingHostAction(null);
       setPendingPaletteMutation(false);
     }
-  }, []);
+  }, [layoutSettings.includeDisabledColors]);
 
   const handleApplyActivePaletteGradient = useCallback(async () => {
     const colors = getPaletteSolidColors(getActivePalette(paletteDocumentRef.current)).map(
@@ -638,7 +639,11 @@ export const App = () => {
     setLastResult("Applying selected color…");
     countersRef.current.hostCalls += 1;
     try {
-      const result = await evalTS("applyColorToSelectedProperties", rgba);
+      const result = await evalTS(
+        "applyColorToSelectedProperties",
+        rgba,
+        layoutSettings.includeDisabledColors
+      );
       lastHostResultRef.current = result;
       if (result.status !== "ok") {
         const messages = {
@@ -656,6 +661,7 @@ export const App = () => {
         result.unsupportedGradientCount +
         result.unsupportedTextCount +
         result.preservedStateCount +
+        result.skippedDisabledCount +
         result.failedCount;
       const propertyLabel = result.appliedCount === 1 ? "property" : "properties";
       setLastResult(
