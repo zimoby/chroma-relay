@@ -48,6 +48,32 @@ const includesKey = (keys: string[], candidate: string) => {
   return false;
 };
 
+const resolveLayerByIdentity = (activeItem: any, target: ColorApplyTarget) => {
+  try {
+    const preferred = activeItem.layer(target.layerIndex);
+    if (preferred && preferred.id === target.layerId) return preferred;
+  } catch (_error) {}
+
+  try {
+    const layerCount =
+      typeof activeItem.numLayers === "number"
+        ? activeItem.numLayers
+        : activeItem.selectedLayers?.length ?? 0;
+    for (let index = 1; index <= layerCount; index += 1) {
+      const candidate = activeItem.layer(index);
+      if (candidate && candidate.id === target.layerId) return candidate;
+    }
+  } catch (_error) {}
+
+  try {
+    const selectedLayers = activeItem.selectedLayers;
+    for (let index = 0; index < (selectedLayers?.length ?? 0); index += 1) {
+      if (selectedLayers[index]?.id === target.layerId) return selectedLayers[index];
+    }
+  } catch (_error) {}
+  return null;
+};
+
 const collectWritableColorProperties = (
   property: any,
   layer: any,
@@ -232,8 +258,8 @@ export const applyColorToSelectedProperties = (
     for (let targetIndex = 0; targetIndex < targets.length; targetIndex += 1) {
       try {
         const descriptor = targets[targetIndex];
-        const layer = activeItem.layer(descriptor.layerIndex);
-        if (!layer || layer.id !== descriptor.layerId) {
+        const layer = resolveLayerByIdentity(activeItem, descriptor);
+        if (!layer) {
           result.failedCount += 1;
           continue;
         }

@@ -62,7 +62,12 @@ import {
   dispatchPaletteCommand,
   listenForPaletteResults,
 } from "../shared/palette-events";
-import { loadPalette } from "../shared/palette-storage";
+import {
+  beginPaletteCommandRequest,
+  combinePaletteStatus,
+  inspectPalette,
+  scheduleSettingsPaletteCommandTimeout,
+} from "../shared/palette-storage";
 import {
   MAX_PALETTE_TRANSFER_BYTES,
   ensureJsonExtension,
@@ -207,7 +212,7 @@ export const App = () => {
   }, [configRoot]);
 
   useEffect(() => {
-    const loaded = loadPalette(configRoot);
+    const loaded = inspectPalette(configRoot);
     setPaletteDocument(loaded.document);
     setPaletteError(loaded.error);
     setNameDraft(getActivePalette(loaded.document).name);
@@ -265,16 +270,23 @@ export const App = () => {
 
   useEffect(() => {
     if (!pendingRequestId) return undefined;
-    const timeout = window.setTimeout(() => {
-      if (pendingRequestRef.current === pendingRequestId) {
+    const timeout = scheduleSettingsPaletteCommandTimeout({
+      requestId: pendingRequestId,
+      isCurrentRequest: (requestId) => pendingRequestRef.current === requestId,
+      temporaryRoot: configRoot,
+      clearPending: () => {
         pendingRequestRef.current = null;
         pendingAddedColorRef.current = null;
         setPendingRequestId(null);
-        setStatus("Main panel did not respond");
-      }
-    }, COMMAND_TIMEOUT_MS);
+      },
+      setDocument: setPaletteDocument,
+      setError: setPaletteError,
+      setStatus,
+      schedule: (callback, delayMs) => window.setTimeout(callback, delayMs),
+      delayMs: COMMAND_TIMEOUT_MS,
+    });
     return () => window.clearTimeout(timeout);
-  }, [pendingRequestId]);
+  }, [pendingRequestId, configRoot]);
 
   useEffect(() => {
     if (!status) return undefined;
@@ -325,15 +337,23 @@ export const App = () => {
   const sendPaletteCommand = (command: PaletteCommand) => {
     if (pendingRequestRef.current || paletteError) return false;
     const requestId = nextRequestId();
-    pendingRequestRef.current = requestId;
-    setPendingRequestId(requestId);
+    const started = beginPaletteCommandRequest(
+      requestId,
+      () => pendingRequestRef.current,
+      (nextRequestId) => {
+        pendingRequestRef.current = nextRequestId;
+        setPendingRequestId(nextRequestId);
+      },
+      () =>
+        dispatchPaletteCommand({
+          requestId,
+          baseRevision: paletteDocument.revision,
+          command,
+        })
+    );
+    if (!started) return false;
     setArmedDeleteId(null);
     setStatus("Saving palette…");
-    dispatchPaletteCommand({
-      requestId,
-      baseRevision: paletteDocument.revision,
-      command,
-    });
     countersRef.current.emittedEvents += 1;
     return true;
   };
@@ -719,7 +739,7 @@ export const App = () => {
         throw new Error("persistPalette is only available on the Main panel");
       },
       reloadPalette: () => {
-        const loaded = loadPalette(configRoot);
+        const loaded = inspectPalette(configRoot);
         setPaletteDocument(loaded.document);
         setPaletteError(loaded.error);
         return loaded;
@@ -1322,7 +1342,7 @@ export const App = () => {
         aria-live="polite"
         data-error={paletteError ? "true" : undefined}
       >
-        {paletteError || status || ""}
+        {combinePaletteStatus(status, paletteError)}
       </output>
     </main>
   );
