@@ -19,7 +19,8 @@ export type NativeGradientApplyStatus =
   | "undo-close-failed"
   | "finalization-failed";
 
-export type NativeGradientTemplateFamily = "ae25-6";
+export type NativeGradientTemplateFamily = "ae22-6" | "ae25-6" | "ae26-3";
+export type NativeGradientPlatform = "darwin" | "win32";
 
 export const MAX_NATIVE_GRADIENT_TARGET_COUNT = 64;
 export const MAX_NATIVE_GRADIENT_DESCRIPTOR_PATH_DEPTH = 64;
@@ -57,13 +58,20 @@ export const resolveNativeGradientTemplateFamily = (
   hostVersion: string
 ): NativeGradientTemplateFamily | null => {
   const normalized = normalizeNativeGradientHostVersion(hostVersion);
-  return normalized !== null && /^25\.6(?:\.\d+)?$/.test(normalized) ? "ae25-6" : null;
+  if (normalized === null) return null;
+  const versionParts = normalized.split(".");
+  const majorVersion = Number(versionParts[0]);
+  const minorVersion = Number(versionParts[1]);
+  if (majorVersion < 22 || majorVersion > 26) return null;
+  if (majorVersion === 26 && minorVersion >= 3) return "ae26-3";
+  if (majorVersion === 26 || (majorVersion === 25 && minorVersion >= 6)) return "ae25-6";
+  return "ae22-6";
 };
 
 export type NativeGradientRuntimeDecision =
   | {
       supported: true;
-      platform: "darwin";
+      platform: NativeGradientPlatform;
       hostVersion: string;
       templateFamily: NativeGradientTemplateFamily;
     }
@@ -75,13 +83,29 @@ export type NativeGradientRuntimeDecision =
       templateFamily: null;
     };
 
+export type NativeGradientCollectionRuntimeDecision =
+  | {
+      supported: true;
+      platform: NativeGradientPlatform;
+      hostVersion: string;
+    }
+  | {
+      supported: false;
+      platform: string;
+      hostVersion: string;
+      reason: "unsupported-platform" | "unsupported-host-version";
+    };
+
+const isNativeGradientPlatform = (platform: string): platform is NativeGradientPlatform =>
+  platform === "darwin" || platform === "win32";
+
 export const resolveNativeGradientRuntime = (
   platform: unknown,
   hostVersion: unknown,
 ): NativeGradientRuntimeDecision => {
   const normalizedPlatform = typeof platform === "string" ? platform : "";
   const normalizedHostVersion = typeof hostVersion === "string" ? hostVersion : "";
-  if (normalizedPlatform !== "darwin") {
+  if (!isNativeGradientPlatform(normalizedPlatform)) {
     return {
       supported: false,
       platform: normalizedPlatform,
@@ -102,9 +126,42 @@ export const resolveNativeGradientRuntime = (
   }
   return {
     supported: true,
-    platform: "darwin",
+    platform: normalizedPlatform,
     hostVersion: normalizedHostVersion,
     templateFamily,
+  };
+};
+
+export const resolveNativeGradientCollectionRuntime = (
+  platform: unknown,
+  hostVersion: unknown,
+): NativeGradientCollectionRuntimeDecision => {
+  const normalizedPlatform = typeof platform === "string" ? platform : "";
+  const sourceHostVersion = typeof hostVersion === "string" ? hostVersion : "";
+  if (!isNativeGradientPlatform(normalizedPlatform)) {
+    return {
+      supported: false,
+      platform: normalizedPlatform,
+      hostVersion: sourceHostVersion,
+      reason: "unsupported-platform",
+    };
+  }
+  const normalizedHostVersion = normalizeNativeGradientHostVersion(sourceHostVersion);
+  if (
+    normalizedHostVersion === null ||
+    resolveNativeGradientTemplateFamily(normalizedHostVersion) === null
+  ) {
+    return {
+      supported: false,
+      platform: normalizedPlatform,
+      hostVersion: sourceHostVersion,
+      reason: "unsupported-host-version",
+    };
+  }
+  return {
+    supported: true,
+    platform: normalizedPlatform,
+    hostVersion: sourceHostVersion,
   };
 };
 
@@ -118,7 +175,7 @@ export type NativeGradientCollectionDecision = Readonly<{
 export const resolveNativeGradientCollectionDecision = (
   nativeSelectionStatus: "none" | "ok" | "invalid",
   nativeEntryCount: number,
-  runtime: NativeGradientRuntimeDecision,
+  runtime: NativeGradientRuntimeDecision | NativeGradientCollectionRuntimeDecision,
 ): NativeGradientCollectionDecision => {
   const hasNativeEntries = nativeEntryCount > 0;
   if (nativeSelectionStatus === "invalid" && hasNativeEntries) {
@@ -173,7 +230,7 @@ export const orchestrateNativeGradientCollection = async <Descriptor, Gradient, 
   input: Readonly<{
     nativeSelectionStatus: "none" | "ok" | "invalid";
     nativeEntryCount: number;
-    runtime: NativeGradientRuntimeDecision;
+    runtime: NativeGradientRuntimeDecision | NativeGradientCollectionRuntimeDecision;
     entries: readonly NativeGradientCollectionEntry[];
     colors: readonly unknown[];
     descriptors: readonly Descriptor[];

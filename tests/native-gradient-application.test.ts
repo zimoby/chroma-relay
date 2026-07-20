@@ -44,21 +44,21 @@ const {
   boundNativeGradientDiagnostics,
   orchestrateNativeGradientCollection,
   resolveNativeGradientCollectionDecision,
+  resolveNativeGradientCollectionRuntime,
 } = await import(
   "../src/js/shared/native-gradient-contract.ts"
 );
-
 const REPO_ROOT = fileURLToPath(new URL("../", import.meta.url));
 const OWNED_TEMPLATE_ROOT = join(REPO_ROOT, "src/assets/native-gradient");
 const OWNED_TEMPLATES = {
-  fill: join(OWNED_TEMPLATE_ROOT, "ae25-6/fill-template.ffx"),
-  stroke: join(OWNED_TEMPLATE_ROOT, "ae25-6/stroke-template.ffx"),
+  fill: join(OWNED_TEMPLATE_ROOT, "ae22-6/fill-template.ffx"),
+  stroke: join(OWNED_TEMPLATE_ROOT, "ae22-6/stroke-template.ffx"),
 } as const;
 const TEMPLATE_SHA256 = {
-  fill: "a0cddaf936cc337a427d3a81c4224764fd6fc1f13a9bbeb6ae863276fa28dc59",
-  stroke: "cb1ffe6195604834203a950433a83dd7097e971f8477567fdc2c32e3c34ed9dd",
+  fill: "06120a98926bc03906a607481345e8e2d6d8938b32e090752f87847d21a426d2",
+  stroke: "e934fed01b7c9e52c60210714ea916556b3cf159bb7dc09114045b516cb47b3b",
 } as const;
-const RENDERER_HOST_VERSION = "25.6.6";
+const RENDERER_HOST_VERSION = "22.6.5";
 const decodeNativeGradientApplyResult = (
   value: unknown,
   expectedHostVersion = RENDERER_HOST_VERSION,
@@ -229,24 +229,47 @@ test("rejects count, shape, non-finite, and out-of-range RGBA before filesystem 
   });
 });
 
-test("owns AE25 kind-specific templates distinct from the AE26 toolkit assets", () => {
+test("owns AE22 and AE25 templates and stages the pinned package's AE26 templates", () => {
   const packageTemplates = {
     fill: fileURLToPath(import.meta.resolve("@zimoby/ae-native-gradient/templates/fill.ffx")),
     stroke: fileURLToPath(import.meta.resolve("@zimoby/ae-native-gradient/templates/stroke.ffx")),
   } as const;
+  const ae25Templates = {
+    fill: join(OWNED_TEMPLATE_ROOT, "ae25-6/fill-template.ffx"),
+    stroke: join(OWNED_TEMPLATE_ROOT, "ae25-6/stroke-template.ffx"),
+  } as const;
+  const ae25TemplateSha256 = {
+    fill: "a0cddaf936cc337a427d3a81c4224764fd6fc1f13a9bbeb6ae863276fa28dc59",
+    stroke: "cb1ffe6195604834203a950433a83dd7097e971f8477567fdc2c32e3c34ed9dd",
+  } as const;
 
   for (const kind of ["fill", "stroke"] as const) {
     const owned = readFileSync(OWNED_TEMPLATES[kind]);
+    const ae25Owned = readFileSync(ae25Templates[kind]);
     const installed = readFileSync(packageTemplates[kind]);
     assert.notDeepEqual(owned, installed);
+    assert.notDeepEqual(ae25Owned, installed);
     assert.equal(sha256(owned), TEMPLATE_SHA256[kind]);
-    assert.equal(owned.includes(Buffer.from("Adobe After Effects 2025 (Macintosh)")), true);
+    assert.equal(sha256(ae25Owned), ae25TemplateSha256[kind]);
+    assert.equal(owned.includes(Buffer.from("2022")), true);
+    assert.equal(ae25Owned.includes(Buffer.from("Adobe After Effects 2025 (Macintosh)")), true);
     assert.equal(installed.includes(Buffer.from("Adobe After Effects 2026 (Macintosh)")), true);
   }
 
   const config = readFileSync(join(REPO_ROOT, "cep.config.ts"), "utf8");
+  assert.match(config, /assets\/native-gradient\/ae22-6\/fill-template\.ffx/);
+  assert.match(config, /assets\/native-gradient\/ae22-6\/stroke-template\.ffx/);
   assert.match(config, /assets\/native-gradient\/ae25-6\/fill-template\.ffx/);
   assert.match(config, /assets\/native-gradient\/ae25-6\/stroke-template\.ffx/);
+  const viteConfig = readFileSync(join(REPO_ROOT, "vite.config.ts"), "utf8");
+  assert.match(viteConfig, /@zimoby\/ae-native-gradient\/templates\/fill\.ffx/);
+  assert.match(viteConfig, /@zimoby\/ae-native-gradient\/templates\/stroke\.ffx/);
+  assert.match(viteConfig, /"native-gradient", "ae26-3"/);
+  const liveRunner = readFileSync(join(REPO_ROOT, "scripts/run-live-ae-tests.mjs"), "utf8");
+  for (const family of ["ae22-6", "ae25-6", "ae26-3"]) {
+    assert.match(liveRunner, new RegExp(`assets/native-gradient/${family}/fill-template\\.ffx`));
+    assert.match(liveRunner, new RegExp(`assets/native-gradient/${family}/stroke-template\\.ffx`));
+  }
 });
 
 test("atomically publishes a token-owned preset and reports exact generated evidence", async () => {
@@ -369,6 +392,25 @@ test("uses the matching stroke template and rejects a kind-substituted template"
         }),
       assertFileError("template-mismatch"),
     );
+
+    const wrongFamilyRoot = join(base, "wrong-family", "ae22-6");
+    mkdirSync(wrongFamilyRoot, { recursive: true });
+    const wrongFamilyTemplate = join(wrongFamilyRoot, "fill-template.ffx");
+    writeFileSync(
+      wrongFamilyTemplate,
+      readFileSync(fileURLToPath(import.meta.resolve("@zimoby/ae-native-gradient/templates/fill.ffx"))),
+    );
+    assert.throws(
+      () =>
+        createNativeGradientPreset({
+          palette: [rgba(0), rgba(1)],
+          kind: "fill",
+          tempBasePath: base,
+          templatePath: wrongFamilyTemplate,
+        }),
+      assertFileError("template-mismatch"),
+    );
+    rmSync(join(base, "wrong-family"), { recursive: true });
     assert.deepEqual(readdirSync(base), []);
   });
 });
@@ -672,13 +714,33 @@ test("B3 renderer generates both kind leases, makes one host call, and cleans al
   });
 });
 
+test("B3 renderer emits a Windows host request and cleans both generated presets", async () => {
+  await withTempBase(async (base) => {
+    let requestPlatform: unknown = null;
+    const report = await applyActivePaletteNativeGradient(
+      { ...rendererOptions([rgba(0), rgba(1)], base), platform: "win32" },
+      async (request) => {
+        requestPlatform = request.platform;
+        return validHostResult();
+      },
+    );
+
+    assert.equal(requestPlatform, "win32");
+    assert.equal(report.status, "ok");
+    assert.equal(report.hostCallAttempted, true);
+    assert.equal(report.generated.length, 2);
+    assert.equal(report.cleanup.every((entry: any) => entry.removed === true), true);
+    assert.deepEqual(readdirSync(base), []);
+  });
+});
+
 test("B3 renderer rejects an unproven host before template reads or host mutation", async () => {
   await withTempBase(async (base) => {
     let hostCalls = 0;
     const report = await applyActivePaletteNativeGradient(
       {
         ...rendererOptions([rgba(0), rgba(1)], base),
-        hostVersion: "26.3x87",
+        hostVersion: "27.0x1",
       },
       async () => {
         hostCalls += 1;
@@ -728,12 +790,26 @@ test("B3 resolves the live macOS Folder.temp base without adding a Windows subdi
 
 test("S2 runtime gate is atomic and explicit for platform plus AE version", () => {
   const cases = [
+    ["darwin", "22.0.0", true, "ae22-6"],
+    ["darwin", "22.6.5x2", true, "ae22-6"],
+    ["darwin", "23.6.6x2", true, "ae22-6"],
+    ["darwin", "24.0.0", true, "ae22-6"],
+    ["darwin", "24.6.5x2", true, "ae22-6"],
+    ["darwin", "25.5.0", true, "ae22-6"],
     ["darwin", "25.6.6", true, "ae25-6"],
     ["darwin", "25.6.6x4", true, "ae25-6"],
-    ["win32", "25.6.6", false, "unsupported-platform"],
+    ["darwin", "26.0.0", true, "ae25-6"],
+    ["darwin", "26.2.9x12", true, "ae25-6"],
+    ["darwin", "26.3.0", true, "ae26-3"],
+    ["darwin", "26.3x87", true, "ae26-3"],
+    ["win32", "22.6.5x2", true, "ae22-6"],
+    ["win32", "24.6.4x3", true, "ae22-6"],
+    ["win32", "25.6.6", true, "ae25-6"],
+    ["win32", "26.3x87", true, "ae26-3"],
     ["linux", "25.6.6", false, "unsupported-platform"],
     ["", "25.6.6", false, "unsupported-platform"],
-    ["darwin", "26.3.0", false, "unsupported-host-version"],
+    ["darwin", "21.6.0", false, "unsupported-host-version"],
+    ["darwin", "27.0.0", false, "unsupported-host-version"],
     ["darwin", "unknown", false, "unsupported-host-version"],
   ] as const;
   for (const [platform, hostVersion, supported, expected] of cases) {
@@ -741,6 +817,76 @@ test("S2 runtime gate is atomic and explicit for platform plus AE version", () =
     assert.equal(decision.supported, supported, `${platform}/${hostVersion}`);
     assert.equal(decision.supported ? decision.templateFamily : decision.reason, expected);
   }
+});
+
+test("S2 optimistic application routing covers every AE 22-26 minor", () => {
+  for (const platform of ["darwin", "win32"] as const) {
+    for (let major = 22; major <= 26; major += 1) {
+      for (let minor = 0; minor <= 99; minor += 1) {
+        const hostVersion = `${major}.${minor}.9x123`;
+        const expectedFamily =
+          major === 26 && minor >= 3
+            ? "ae26-3"
+            : major === 26 || (major === 25 && minor >= 6)
+              ? "ae25-6"
+              : "ae22-6";
+        const decision = resolveNativeGradientRuntime(platform, hostVersion);
+        assert.equal(decision.supported, true, `${platform}/${hostVersion}`);
+        assert.equal(
+          decision.supported ? decision.templateFamily : null,
+          expectedFamily,
+          `${platform}/${hostVersion}`,
+        );
+      }
+    }
+  }
+});
+
+test("S2 collection runtime optimistically covers every AE 22-26 minor", () => {
+  const cases = [
+    ["darwin", "22.0.0", true, null],
+    ["darwin", "24.6.5x2", true, null],
+    ["darwin", "25.5.0", true, null],
+    ["darwin", "25.6.6", true, null],
+    ["darwin", "26.2", true, null],
+    ["darwin", "26.3", true, null],
+    ["darwin", "26.3x87", true, null],
+    ["darwin", "26.4", true, null],
+    ["win32", "22.0", true, null],
+    ["win32", "24.6.4x3", true, null],
+    ["win32", "25.6.6", true, null],
+    ["win32", "26.3x87", true, null],
+    ["darwin", "", false, "unsupported-host-version"],
+    ["darwin", "26.3beta", false, "unsupported-host-version"],
+    ["darwin", "unknown", false, "unsupported-host-version"],
+    ["darwin", "21.99", false, "unsupported-host-version"],
+    ["darwin", "27.0", false, "unsupported-host-version"],
+    ["darwin", undefined, false, "unsupported-host-version"],
+    ["darwin", 26.3, false, "unsupported-host-version"],
+    ["linux", "26.3", false, "unsupported-platform"],
+    [null, "26.3", false, "unsupported-platform"],
+  ] as const;
+  for (const [platform, hostVersion, supported, reason] of cases) {
+    const decision = resolveNativeGradientCollectionRuntime(platform, hostVersion);
+    assert.equal(decision.supported, supported, `${platform}/${hostVersion}`);
+    assert.equal(decision.supported ? null : decision.reason, reason);
+  }
+  for (const platform of ["darwin", "win32"] as const) {
+    for (let major = 22; major <= 26; major += 1) {
+      for (let minor = 0; minor <= 99; minor += 1) {
+        const hostVersion = `${major}.${minor}.9x123`;
+        assert.equal(
+          resolveNativeGradientCollectionRuntime(platform, hostVersion).supported,
+          true,
+          `${platform}/${hostVersion}`,
+        );
+      }
+    }
+  }
+  assert.equal(resolveNativeGradientRuntime("darwin", "26.3x87").supported, true);
+  const mainSource = readFileSync(join(REPO_ROOT, "src/js/main/main.tsx"), "utf8");
+  assert.match(mainSource, /const nativeRuntime = resolveNativeGradientCollectionRuntime\(/);
+  assert.doesNotMatch(mainSource, /const nativeRuntime = resolveNativeGradientRuntime\(/);
 });
 
 test("S2 unsupported platform performs no native template read, lease, host call, or residue", async () => {
@@ -755,7 +901,7 @@ test("S2 unsupported platform performs no native template read, lease, host call
     };
     try {
       const report = await applyActivePaletteNativeGradient(
-        { ...rendererOptions([rgba(0), rgba(1)], base), platform: "win32" },
+        { ...rendererOptions([rgba(0), rgba(1)], base), platform: "linux" },
         async () => {
           hostCalls += 1;
           return validHostResult();
@@ -774,10 +920,10 @@ test("S2 unsupported platform performs no native template read, lease, host call
   });
 });
 
-test("S2 collection seam blocks native parser and palette writer while retaining solid-only collection", () => {
+test("S2 collection seam permits optimistic AE 22-26 parsing without template or lease access", () => {
   const exercise = async (platform: string, hostVersion: string, nativeEntryCount: number) => {
     const operations = { parser: 0, templates: 0, leases: 0, paletteWriter: 0 };
-    const runtime = resolveNativeGradientRuntime(platform, hostVersion);
+    const runtime = resolveNativeGradientCollectionRuntime(platform, hostVersion);
     const result = await orchestrateNativeGradientCollection({
       nativeSelectionStatus: nativeEntryCount === 0 ? "none" : "ok",
       nativeEntryCount,
@@ -810,10 +956,18 @@ test("S2 collection seam blocks native parser and palette writer while retaining
     return { operations, result };
   };
   return Promise.all([
-    exercise("win32", RENDERER_HOST_VERSION, 2),
-    exercise("darwin", "26.3.0", 2),
+    exercise("linux", RENDERER_HOST_VERSION, 2),
+    exercise("darwin", "27.0.0", 2),
+    exercise("darwin", "24.6.5x2", 2),
+    exercise("win32", "24.6.4x3", 2),
     exercise("win32", "26.3.0", 0),
-  ]).then(([unsupportedPlatform, unsupportedVersion, solidOnly]) => {
+  ]).then(([
+    unsupportedPlatform,
+    unsupportedVersion,
+    supportedDarwinCollection,
+    supportedWindowsCollection,
+    solidOnly,
+  ]) => {
     assert.deepEqual(unsupportedPlatform.operations, {
     parser: 0,
     templates: 0,
@@ -828,6 +982,15 @@ test("S2 collection seam blocks native parser and palette writer while retaining
     paletteWriter: 0,
     });
     assert.equal(unsupportedVersion.result.allowed, false);
+    for (const supportedCollection of [supportedDarwinCollection, supportedWindowsCollection]) {
+      assert.deepEqual(supportedCollection.operations, {
+        parser: 1,
+        templates: 0,
+        leases: 0,
+        paletteWriter: 1,
+      });
+      assert.equal(supportedCollection.result.allowed, true);
+    }
     assert.deepEqual(solidOnly.operations, {
     parser: 0,
     templates: 0,
@@ -1158,7 +1321,7 @@ test("S2 final review binds decoded host versions and status semantics to the re
   const unsupported = validHostResult({
     status: "unsupported-host-version",
     primaryStatus: "unsupported-host-version",
-    hostVersion: "26.3.0",
+    hostVersion: "27.0.0",
     target: null,
     targets: [],
     selectedTargetCount: 0,
@@ -1175,7 +1338,7 @@ test("S2 final review binds decoded host versions and status semantics to the re
     selectionRestoreAttempted: false,
     selectionRestored: false,
   });
-  assert.equal(decodeNativeGradientApplyResult(unsupported, "26.3.0")?.status, "unsupported-host-version");
+  assert.equal(decodeNativeGradientApplyResult(unsupported, "27.0.0")?.status, "unsupported-host-version");
 
   const malformed: Array<[string, unknown, string]> = [
     ["mismatched version", validHostResult({ hostVersion: "26.3.0" }), "25.6.6"],
@@ -1371,7 +1534,7 @@ test("S2 decoder table covers every current host primary outcome and finalizatio
   const unsupportedVersionResult = validHostResult({
     status: "unsupported-host-version",
     primaryStatus: "unsupported-host-version",
-    hostVersion: "26.3.0",
+    hostVersion: "27.0.0",
     target: null,
     targets: [],
     selectedTargetCount: 0,
@@ -1389,7 +1552,7 @@ test("S2 decoder table covers every current host primary outcome and finalizatio
     selectionRestored: false,
   });
   assert.equal(
-    decodeNativeGradientApplyResult(unsupportedVersionResult, "26.3.0")?.primaryStatus,
+    decodeNativeGradientApplyResult(unsupportedVersionResult, "27.0.0")?.primaryStatus,
     "unsupported-host-version",
   );
   for (const status of ["target-drift", "undo-open-failed"] as const) {
@@ -1622,7 +1785,7 @@ test("B3 renderer cleans the first lease when second-kind generation fails befor
   await withTempBase(async (base) => {
     let hostCalls = 0;
     const templateRootPath = join(base, "templates");
-    const templateFamilyPath = join(templateRootPath, "ae25-6");
+    const templateFamilyPath = join(templateRootPath, "ae22-6");
     mkdirSync(templateFamilyPath, { recursive: true });
     writeFileSync(join(templateFamilyPath, "fill-template.ffx"), readFileSync(OWNED_TEMPLATES.fill));
     writeFileSync(join(templateFamilyPath, "stroke-template.ffx"), readFileSync(OWNED_TEMPLATES.fill));

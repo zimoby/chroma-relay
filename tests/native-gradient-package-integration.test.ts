@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 
 const PACKAGE_NAME = "@zimoby/ae-native-gradient";
 const PACKAGE_VERSION = "0.1.0";
-const APPROVED_SHA = "52b4b5c199691b4bc5e352a7d716192e061c750e";
+const APPROVED_SHA = "04144bea5f16e8b2dc2355b72f315f810c3f97e1";
 const APPROVED_SOURCE = `git+https://github.com/zimoby/ae-native-gradient-toolkit.git#${APPROVED_SHA}`;
 const REPO_ROOT = fileURLToPath(new URL("../", import.meta.url));
 

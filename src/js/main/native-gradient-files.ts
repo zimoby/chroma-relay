@@ -18,6 +18,7 @@ import {
   resolveNativeGradientTemplateFamily,
   type NativeGradientApplyResult,
   type NativeGradientApplyStatus,
+  type NativeGradientTemplateFamily,
 } from "../shared/native-gradient-contract.ts";
 export { resolveNativeGradientRuntime } from "../shared/native-gradient-contract.ts";
 
@@ -89,10 +90,26 @@ const RUN_TOKEN_PATTERN = /^[A-F0-9]{32}$/;
 const MAX_TEMPLATE_BYTES = 1024 * 1024;
 const MAX_PRESET_BYTES = 2 * 1024 * 1024;
 const TOOLKIT_COLOR_STOP_EXTRA = 1;
-const TEMPLATE_SHA256: Readonly<Record<GradientFfxKind, string>> = {
-  fill: "a0cddaf936cc337a427d3a81c4224764fd6fc1f13a9bbeb6ae863276fa28dc59",
-  stroke: "cb1ffe6195604834203a950433a83dd7097e971f8477567fdc2c32e3c34ed9dd",
+type KnownNativeGradientTemplateFamily = NativeGradientTemplateFamily;
+const TEMPLATE_SHA256: Readonly<
+  Record<KnownNativeGradientTemplateFamily, Readonly<Record<GradientFfxKind, string>>>
+> = {
+  "ae22-6": {
+    fill: "06120a98926bc03906a607481345e8e2d6d8938b32e090752f87847d21a426d2",
+    stroke: "e934fed01b7c9e52c60210714ea916556b3cf159bb7dc09114045b516cb47b3b",
+  },
+  "ae25-6": {
+    fill: "a0cddaf936cc337a427d3a81c4224764fd6fc1f13a9bbeb6ae863276fa28dc59",
+    stroke: "cb1ffe6195604834203a950433a83dd7097e971f8477567fdc2c32e3c34ed9dd",
+  },
+  "ae26-3": {
+    fill: "01dd99135c1ce428fabad2422d18e7742a87853d717e0f8342d64e9c84cdef28",
+    stroke: "693fb4244b2cc7795401f63e24410854bd54ac928f9434289d2a7b6f229a0d3e",
+  },
 };
+
+const isKnownTemplateFamily = (value: string): value is KnownNativeGradientTemplateFamily =>
+  Object.prototype.hasOwnProperty.call(TEMPLATE_SHA256, value);
 
 const fail = (code: string, message: string): never => {
   throw new NativeGradientFileError(code, message);
@@ -264,7 +281,8 @@ const readVerifiedTemplate = (templatePath: string, kind: GradientFfxKind) => {
     fail("template-invalid", "Native gradient template changed while it was being read");
   }
   const sha256 = hashBytes(bytes);
-  if (sha256 !== TEMPLATE_SHA256[kind]) {
+  const templateFamily = path.basename(path.dirname(realTemplatePath));
+  if (!isKnownTemplateFamily(templateFamily) || sha256 !== TEMPLATE_SHA256[templateFamily][kind]) {
     fail("template-mismatch", `Native gradient ${kind} template hash does not match the owned asset`);
   }
   return { bytes, sha256 };
@@ -1351,7 +1369,7 @@ const hostPresetRecord = (lease: NativeGradientPresetLease): NativeGradientHostP
 export const getNativeGradientTempBasePath = (
   platform = typeof process !== "undefined" ? process.platform : "",
   tempBasePath = os.tmpdir(),
-) => (platform === "darwin" ? path.join(tempBasePath, "TemporaryItems") : tempBasePath);
+) => (platform === "darwin" ? path.posix.join(tempBasePath, "TemporaryItems") : tempBasePath);
 
 type NativeGradientApplicationInput =
   | Readonly<{ palette: readonly PaletteRgba[]; gradient?: never }>

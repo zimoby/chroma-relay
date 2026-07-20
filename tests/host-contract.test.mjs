@@ -1019,6 +1019,18 @@ nativeGradientBehaviorTest("B2 native-gradient classifies request envelopes sepa
   assertNoNativeGradientMutation(invalidPreset);
 });
 
+nativeGradientBehaviorTest("B2 native-gradient accepts Windows and rejects unknown request platforms", () => {
+  const windows = loadNativeGradientApplyHost();
+  windows.request.platform = "win32";
+  assert.equal(plainHostValue(windows.invoke()).status, "ok");
+  assert.equal(windows.applyCalls.length, 1);
+
+  const unsupported = loadNativeGradientApplyHost();
+  unsupported.request.platform = "linux";
+  assert.equal(plainHostValue(unsupported.invoke()).status, "unsupported-platform");
+  assertNoNativeGradientMutation(unsupported);
+});
+
 nativeGradientBehaviorTest("B2 native-gradient apply source has one bounded mutation site", async () => {
   const source = await read(NATIVE_GRADIENT_APPLY_SOURCE);
   assert.equal((source.match(/\.applyPreset\s*\(/g) || []).length, 1);

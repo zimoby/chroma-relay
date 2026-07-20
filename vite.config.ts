@@ -4,7 +4,8 @@ import react from "@vitejs/plugin-react";
 
 import { cep, CepOptions, runAction } from "vite-cep-plugin";
 import cepConfig from "./cep.config";
-import { existsSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, rmSync } from "node:fs";
+import { createRequire } from "node:module";
 import path from "path";
 import { extendscriptConfig } from "./vite.es.config";
 
@@ -16,6 +17,11 @@ const cepDist = "cep";
 const src = path.resolve(__dirname, "src");
 const root = path.resolve(src, "js");
 const outDir = path.resolve(__dirname, "dist", cepDist);
+const nodeRequire = createRequire(path.join(__dirname, "package.json"));
+const ae26TemplateSources = {
+  fill: nodeRequire.resolve("@zimoby/ae-native-gradient/templates/fill.ffx"),
+  stroke: nodeRequire.resolve("@zimoby/ae-native-gradient/templates/stroke.ffx"),
+};
 
 const debugReact = process.env.DEBUG_REACT === "true";
 const isProduction = process.env.NODE_ENV === "production";
@@ -66,6 +72,16 @@ const sanitizeReleaseBundle = () => ({
   },
 });
 
+const stagePackageNativeGradientTemplates = () => ({
+  name: "stage-package-native-gradient-templates",
+  writeBundle() {
+    const destination = path.join(outDir, "assets", "native-gradient", "ae26-3");
+    mkdirSync(destination, { recursive: true });
+    copyFileSync(ae26TemplateSources.fill, path.join(destination, "fill-template.ffx"));
+    copyFileSync(ae26TemplateSources.stroke, path.join(destination, "stroke-template.ffx"));
+  },
+});
+
 const waitForExtendScript = () => ({
   name: "wait-for-chroma-relay-extendscript",
   async buildStart() {
@@ -78,6 +94,7 @@ export default defineConfig({
   plugins: [
     waitForExtendScript(),
     react(), 
+    stagePackageNativeGradientTemplates(),
     sanitizeReleaseBundle(),
     cep(config),
   ],

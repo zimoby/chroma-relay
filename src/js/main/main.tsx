@@ -62,7 +62,7 @@ import {
 import { nativeGradientToCssPreview } from "../shared/native-gradient-preview";
 import {
   orchestrateNativeGradientCollection,
-  resolveNativeGradientRuntime,
+  resolveNativeGradientCollectionRuntime,
 } from "../shared/native-gradient-contract";
 import {
   type PaletteCommand,
@@ -441,7 +441,7 @@ export const App = () => {
         }));
         sourceName = selection.image.name || "selected image";
       } else if (hasColors) {
-        const nativeRuntime = resolveNativeGradientRuntime(
+        const nativeRuntime = resolveNativeGradientCollectionRuntime(
           getNativeGradientPlatform(),
           csi.hostEnvironment.appVersion,
         );

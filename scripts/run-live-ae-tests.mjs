@@ -336,6 +336,18 @@ const readBuildProvenance = async () => {
   }
 };
 
+const syncDirectoryDurably = async (directoryPath) => {
+  // Node cannot fsync directory handles on Windows; the file itself is
+  // still flushed before the atomic rename on every platform.
+  if (process.platform === "win32") return;
+  const directoryHandle = await open(directoryPath, "r");
+  try {
+    await directoryHandle.sync();
+  } finally {
+    await directoryHandle.close();
+  }
+};
+
 const writeAtomicallyDurableJson = async (path, value) => {
   const temporaryPath = `${path}.${RUN_TOKEN}.tmp`;
   const handle = await open(temporaryPath, "wx", 0o600);
@@ -346,12 +358,7 @@ const writeAtomicallyDurableJson = async (path, value) => {
     await handle.close();
   }
   await rename(temporaryPath, path);
-  const directoryHandle = await open(dirname(path), "r");
-  try {
-    await directoryHandle.sync();
-  } finally {
-    await directoryHandle.close();
-  }
+  await syncDirectoryDurably(dirname(path));
 };
 
 export const createReviewedInputManifest = async (input = {}) => {
@@ -550,8 +557,12 @@ const createBuildManifest = async (label) => {
     ...settingsRuntime.styles,
     await realpath(resolve(BUILD_ROOT, "jsx/index.js")),
     await realpath(resolve(BUILD_ROOT, "CSXS/manifest.xml")),
+    await realpath(resolve(BUILD_ROOT, "assets/native-gradient/ae22-6/fill-template.ffx")),
+    await realpath(resolve(BUILD_ROOT, "assets/native-gradient/ae22-6/stroke-template.ffx")),
     await realpath(resolve(BUILD_ROOT, "assets/native-gradient/ae25-6/fill-template.ffx")),
     await realpath(resolve(BUILD_ROOT, "assets/native-gradient/ae25-6/stroke-template.ffx")),
+    await realpath(resolve(BUILD_ROOT, "assets/native-gradient/ae26-3/fill-template.ffx")),
+    await realpath(resolve(BUILD_ROOT, "assets/native-gradient/ae26-3/stroke-template.ffx")),
   ];
   const files = [];
   for (const path of [...new Set(requiredPaths)].sort()) {
@@ -664,12 +675,7 @@ const writeDurableJson = async (path, value, { overwrite = false } = {}) => {
   try {
     await rename(temporaryPath, path);
     renamed = true;
-    const directoryHandle = await open(OUTPUT_DIRECTORY, "r");
-    try {
-      await directoryHandle.sync();
-    } finally {
-      await directoryHandle.close();
-    }
+    await syncDirectoryDurably(OUTPUT_DIRECTORY);
   } catch (error) {
     if (!renamed) await rm(temporaryPath, { force: true }).catch(() => {});
     throw error;

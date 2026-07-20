@@ -79,7 +79,10 @@ const FIXTURE_VIEWPORTS = new Set([
   "128x160",
   "200x200",
 ]);
-const TEMPORARY_CONFIG_ROOT = /^\/(?:private\/)?tmp\/chroma-relay-[a-zA-Z0-9._-]+$/;
+const POSIX_TEMPORARY_CONFIG_ROOT =
+  /^\/(?:private\/)?tmp\/chroma-relay-[a-zA-Z0-9._-]+$/;
+const WINDOWS_TEMPORARY_CONFIG_ROOT =
+  /^[a-zA-Z]:[\\/]Users[\\/][^\\/]+[\\/]AppData[\\/]Local[\\/]Temp[\\/]chroma-relay-[a-zA-Z0-9._-]+$/i;
 
 const toRect = (element: Element | null): DebugRect | null => {
   if (!element) return null;
@@ -97,10 +100,13 @@ export const isFixtureViewport = (width: number, height: number) =>
 
 export const normalizeTemporaryConfigRoot = (root: string | null) => {
   if (root === null) return null;
-  const normalized = root.replace(/\/+$/, "");
-  if (!TEMPORARY_CONFIG_ROOT.test(normalized)) {
+  const normalized = root.replace(/[\\/]+$/, "");
+  if (
+    !POSIX_TEMPORARY_CONFIG_ROOT.test(normalized) &&
+    !WINDOWS_TEMPORARY_CONFIG_ROOT.test(normalized)
+  ) {
     throw new Error(
-      "Debug config roots must match /tmp/chroma-relay-* or /private/tmp/chroma-relay-*"
+      "Debug config roots must be a chroma-relay-* child of the supported macOS or Windows temp directory"
     );
   }
   return normalized;

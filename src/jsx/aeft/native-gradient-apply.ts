@@ -812,7 +812,11 @@ export const applyNativeGradientPresetToSelectedTarget = (
   if (!isValidRequestEnvelope(request)) {
     return failBeforeMutation(result, "invalid-request");
   }
-  if (request.platform !== undefined && request.platform !== "darwin") {
+  if (
+    request.platform !== undefined &&
+    request.platform !== "darwin" &&
+    request.platform !== "win32"
+  ) {
     return failBeforeMutation(result, "unsupported-platform");
   }
   if (
