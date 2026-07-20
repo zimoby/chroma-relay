@@ -164,9 +164,9 @@ It reopens the archive and rejects missing manifest resources or icons, debug en
 
 Generated `dist/` output is not durable source evidence and should not be committed.
 
-## Data and compatibility contract
+## Data and identity contract
 
-User data remains under the CEP user-data directory named `Chroma Relay/` for compatibility.
+User data is stored under the CEP user-data directory named `Chroma Relay/`.
 
 | Document | Current schema | Writer |
 |---|---:|---|
@@ -178,15 +178,13 @@ Main owns all palette persistence and AE host calls. Settings reads palette stat
 
 Palette writes are serialized and verified, recover interrupted replacement from owned temporary/backup files, and preserve malformed primary data rather than overwriting it. Finite RGBA values are stored exactly, including HDR and negative channels; CSS previews never become canonical data.
 
-The public display name is **Chroma Relay**. These compatibility identities intentionally remain unchanged for now:
+The product has one canonical identity:
 
 - extension ID: `com.zimoby.chroma-relay`
 - Main panel: `com.zimoby.chroma-relay.main`
 - Settings panel: `com.zimoby.chroma-relay.settings`
 - storage directory: `Chroma Relay`
 - portable format marker: `chroma-relay`
-
-Publisher identity and replacement CEP namespaces remain separate pre-publication decisions because changing them requires an explicit migration policy.
 
 ## Architecture
 
@@ -202,7 +200,7 @@ docs/               Design, storage, implementation, provenance, and planning do
 evidence/           Preserved milestone passes, failures, reports, and screenshots
 ```
 
-The native-gradient path uses `@zimoby/ae-native-gradient`, pinned to an exact Git commit. Keep package ownership, runtime IDs, and product branding as separate concerns when updating that dependency.
+The native-gradient path uses `@zimoby/ae-native-gradient`, pinned to an exact Git commit. Toolkit package ownership remains independent from the product runtime identity.
 
 ## Project status
 
@@ -211,7 +209,7 @@ The source is an internal 0.0.1 alpha with static verification, bounded live mac
 - live Windows AE 22, 23, 25, and 26 native-gradient validation;
 - full-restart persistence proof;
 - fresh-panel confirmation of the declared 128 px Main minimum width;
-- final publisher, namespace, distribution, and release-policy decisions.
+- final signing, distribution, and release-policy decisions.
 
 Use the product contract for current identities and schemas, and the evidence index for preserved validation history. Do not infer release readiness from generated artifacts.
 

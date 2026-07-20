@@ -123,7 +123,7 @@ Alpha must be finite and within `[0,1]` for application.
 
 ## Implementation and release order
 
-1. **Completed:** Chroma Relay uses the private `@zimoby/ae-native-gradient` package pinned at exact commit `52b4b5c199691b4bc5e352a7d716192e061c750e`. Chroma Relay keeps only product semantics, UI, CEP bridge, and runtime adapters. `Chroma Relay` remains the legacy codename/storage identity; `Zimoby` and the `com.zimoby.chroma-relay` CEP identity remain provisional technical/publisher identities and do not define toolkit ownership.
+1. **Completed:** Chroma Relay uses the private `@zimoby/ae-native-gradient` package pinned at exact commit `52b4b5c199691b4bc5e352a7d716192e061c750e`. Chroma Relay owns product semantics, UI, CEP bridge, and runtime adapters under the `com.zimoby.chroma-relay` CEP identity; the standalone package independently owns the toolkit implementation.
 2. **Track A implemented:** one read-only host selection returns exact descriptors plus solid/gradient traversal tokens; the renderer reads one bounded stable saved AEP snapshot, resolves every descriptor exactly, and performs one atomic active-palette write.
 3. **Track A2 implemented:** schema v3/layout v4/portable v2 migration, exact collection, preview, management, round-trip transfer, direct preset generation, and click routing pass domain, native-gradient, host-contract, CEP-compatibility, TypeScript, and production-build gates.
 4. **Track B implemented.** Gradient-slot click reuses this application path rather than owning a second mutation path.

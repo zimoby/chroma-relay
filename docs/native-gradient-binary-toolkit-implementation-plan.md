@@ -25,7 +25,7 @@ Collection and application remain separate reviewed tracks. The decision does no
 The standalone `$HOME/Documents/Dev_code/_Collaborations/ae-native-gradient-toolkit` project now owns the binary implementation, fixtures, templates, CLI, and proof harness. Chroma Relay completed its migration to the exact private `@zimoby/ae-native-gradient` commit `891eb6ba964ffdf99a382c285eef249fb24ce180`. This supersedes the original pre-extraction ownership decision in this plan.
 
 - Chroma Relay consumes that reproducibly pinned package and keeps only product semantics, UI, CEP bridge, and future runtime adapters.
-- `@zimoby` is the toolkit owner scope. `Chroma Relay`, `Zimoby`, and the current `com.zimoby.chroma-relay` CEP identity remain provisional and must not be used as the toolkit owner, GitHub organization, or package namespace.
+- `@zimoby` is the toolkit owner scope. The `com.zimoby.chroma-relay` CEP identity belongs to the consuming product and does not replace the toolkit package namespace.
 - Do not commit an absolute import, sibling `file:` dependency, source symlink, copied toolkit source, or generated vendor copy.
 - Package templates remain canonical and may enter the CEP artifact only through the consumer build pipeline.
 - AutoTools remains read-only reference material.
