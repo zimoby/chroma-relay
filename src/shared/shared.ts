@@ -1,5 +1,7 @@
-import config from "../../cep.config";
-export const ns = config.id;
-export const company = config.zxp.org;
-export const displayName = config.displayName;
-export const version = config.version;
+import { version as packageVersion } from "../../package.json";
+import contract from "./product-contract.json" with { type: "json" };
+
+export const ns = contract.product.extensionId;
+export const company = "Company";
+export const displayName = contract.product.displayName;
+export const version = packageVersion;

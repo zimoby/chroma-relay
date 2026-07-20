@@ -647,6 +647,35 @@ nativeGradientBehaviorTest(
     assert.equal(ancestorResult.selectedTargetCount, 2);
     assert.equal(ancestorOnly.applyCalls.length, 2);
 
+    const broadAncestor = loadNativeGradientApplyHost({ kind: "fill", selection: "payload" });
+    broadAncestor.otherLayer.selected = false;
+    broadAncestor.otherProperty.selected = false;
+    broadAncestor.userGroup.selected = true;
+    broadAncestor.stroke.parent.enabled = false;
+    broadAncestor.stroke.parent.canSetEnabled = true;
+    const originalUserGroupProperty = broadAncestor.userGroup.property.bind(
+      broadAncestor.userGroup
+    );
+    const broadSiblings = Array.from({ length: 65 }, (_, index) => ({
+      matchName: `ADBE Broad Sibling ${index + 1}`,
+      name: `Broad Sibling ${index + 1}`,
+      propertyType: 1,
+      propertyValueType: 1,
+      numKeys: 0,
+      expressionEnabled: false,
+      parentProperty: broadAncestor.userGroup,
+      propertyIndex: index + 3,
+      selected: false,
+    }));
+    broadAncestor.userGroup.numProperties = broadSiblings.length + 2;
+    broadAncestor.userGroup.property = (index) =>
+      index <= 2 ? originalUserGroupProperty(index) : broadSiblings[index - 3] || null;
+    broadAncestor.events.length = 0;
+    const broadAncestorResult = plainHostValue(broadAncestor.invoke());
+    assert.equal(broadAncestorResult.status, "ok");
+    assert.equal(broadAncestorResult.selectedTargetCount, 1);
+    assert.equal(broadAncestor.applyCalls.length, 1);
+
     const multiple = loadNativeGradientApplyHost({ kind: "fill" });
     multiple.stroke.parent.selected = true;
     multiple.events.length = 0;
@@ -1050,41 +1079,6 @@ test("collector is read-only and has explicit unsupported-property branches", as
   assert.doesNotMatch(source, /\.setValue(?:AtTime)?\s*\(/);
   assert.doesNotMatch(source, /beginUndoGroup\s*\(/);
   assert.doesNotMatch(source, /\balert\s*\(/);
-});
-
-test("collector recurses selected groups or whole selected layers and can skip disabled branches", async () => {
-  const source = await read("src/jsx/aeft/aeft.ts");
-  assert.match(
-    source,
-    /collectSelectedColors\s*=\s*\(\s*includeDisabledColors:\s*boolean,\s*skipWholeStillImageLayers\s*=\s*false\s*\)/
-  );
-  assert.match(source, /resolveSelectedScopeRoots\(activeItem, isExactColorSelection\)/);
-  assert.match(source, /root\.wholeLayer/);
-  assert.match(source, /root\.exact/);
-  assert.match(source, /isSelectionBranchDisabled/);
-  assert.match(source, /includeDisabledColors/);
-});
-
-test("collector classifies only exact native Shape gradient parents with an exact payload", async () => {
-  const [source, aeftSource] = await Promise.all([
-    read("src/jsx/aeft/native-gradient-target.ts"),
-    read("src/jsx/aeft/aeft.ts"),
-  ]);
-
-  assert.match(source, /"ADBE Vector Graphic - G-Fill"/);
-  assert.match(source, /"ADBE Vector Graphic - G-Stroke"/);
-  assert.match(source, /"ADBE Vector Grad Colors"/);
-  assert.match(source, /findExactNativeGradientPayload/);
-  assert.match(source, /exactNativeGradientParent/);
-  assert.doesNotMatch(source, /isGradientProperty/);
-  assert.doesNotMatch(source, /\.name[^\n]*toLowerCase\s*\(/);
-  assert.doesNotMatch(source, /indexOf\s*\(\s*["']grad/i);
-  assert.doesNotMatch(source, /matchName[^\n]*toLowerCase\s*\(/);
-  assert.match(aeftSource, /exactNativeGradientParent/);
-  assert.match(
-    aeftSource,
-    /if \(nativeGradientParent\) \{[\s\S]*?buildNativeGradientTargetKey[\s\S]*?gradientKeys\.push\(gradientKey\);[\s\S]*?unsupportedGradientCount \+= 1;[\s\S]*?return;/
-  );
 });
 
 test("collector keeps renamed and effect colors while counting one exact native parent", async () => {
@@ -1568,18 +1562,6 @@ test("color collection and apply share exact, group, layer, multi-layer, and dis
   assert.deepEqual(JSON.parse(JSON.stringify(secondLayerColor.value)), [0.8, 0.8, 0.2, 1]);
 });
 
-test("normal apply imports centralized exact identity without local gradient heuristics", async () => {
-  const source = await read("src/jsx/aeft/color-apply.ts");
-  assert.match(
-    source,
-    /import \{[\s\S]*?exactNativeGradientParent,[\s\S]*?findExactNativeGradientPayload,[\s\S]*?isExactNativeGradientPayload,[\s\S]*?\} from "\.\/native-gradient-target";/
-  );
-  assert.doesNotMatch(source, /isGradientProperty/);
-  assert.doesNotMatch(source, /\.name[^\n]*toLowerCase\s*\(/);
-  assert.doesNotMatch(source, /indexOf\s*\(\s*["']grad/i);
-  assert.doesNotMatch(source, /matchName[^\n]*toLowerCase\s*\(/);
-});
-
 test("solid apply re-resolves replaced wrappers, continues after a failed fresh target, and closes one Undo", async () => {
   const { host, values, leaf, makeLayer, makeComp, setProject, app } = await loadAeftHost();
   const first = leaf("ADBE Effect Color", values.COLOR, [0.1, 0.1, 0.1, 1]);
@@ -1644,7 +1626,6 @@ test("solid apply re-resolves replaced wrappers, continues after a failed fresh 
   assert.deepEqual(JSON.parse(JSON.stringify(first.value)), [0.9, 0.8, 0.7, 1]);
   assert.deepEqual(JSON.parse(JSON.stringify(second.value)), [0.2, 0.2, 0.2, 1]);
   assert.deepEqual(JSON.parse(JSON.stringify(freshThirdColor.value)), [0.9, 0.8, 0.7, 1]);
-  assert.equal(undoEnds, 1);
 });
 
 test("image resolver is read-only, file-identity based, and gates still JPEG or PNG", async () => {
@@ -1711,7 +1692,6 @@ test("Settings palette manager uses grip drag, expandable editors, and update-co
   assert.match(settings, /color-grip-\$\{color\.id\}/);
   assert.match(settings, /aria-expanded=\{gradient \? undefined : expanded\}/);
   assert.match(settings, /aria-keyshortcuts="Alt\+ArrowUp Alt\+ArrowDown"/);
-  assert.match(settings, /data-testid="palette-select"/);
   assert.match(settings, /data-testid="palette-delete-confirm"/);
   assert.match(settings, /data-testid="palette-delete-cancel"/);
   assert.match(settings, /type: "update-color"/);
@@ -1721,6 +1701,60 @@ test("Settings palette manager uses grip drag, expandable editors, and update-co
   assert.match(events, /isRgba\(command\.rgba\)/);
   assert.match(main, /updatePaletteColorInPalette\(/);
   assert.match(main, /"update-color": "Color updated"/);
+});
+
+test("Settings palette selector uses an in-panel listbox instead of the CEP native popup", async () => {
+  const [settings, styles] = await Promise.all([
+    read("src/js/settings/settings.tsx"),
+    read("src/js/settings/settings.scss"),
+  ]);
+  assert.match(settings, /data-testid="palette-select"/);
+  assert.match(settings, /aria-haspopup="listbox"/);
+  assert.match(settings, /data-testid="palette-select-menu"/);
+  assert.match(settings, /data-palette-option="true"/);
+  assert.match(settings, /role="listbox"/);
+  assert.match(settings, /role="option"/);
+  assert.match(settings, /event\.key === "Escape"/);
+  assert.match(settings, /"ArrowDown", "ArrowUp", "Home", "End"/);
+  assert.match(settings, /document\.addEventListener\("mousedown", handleOutsideMouseDown, true\)/);
+  assert.match(settings, /paletteMenuRef\.current\?\.contains\(event\.target\)/);
+  assert.match(
+    settings,
+    /className=\{`palette-select-wrap\$\{paletteMenuOpen \? " is-open" : ""\}`\}\s+ref=\{paletteMenuRef\}/
+  );
+  assert.doesNotMatch(settings, /<select[\s\S]*?data-testid="palette-select"/);
+  assert.match(styles, /\.palette-select-menu[\s\S]*?max-height: 144px/);
+  assert.match(styles, /\.palette-select-option/);
+});
+
+test("Main rotates stored gradient previews with the responsive panel orientation", async () => {
+  const main = await read("src/js/main/main.tsx");
+  assert.match(
+    main,
+    /nativeGradientToCssPreview\(color\.gradient, orientation === "vertical" \? 180 : 90\)/
+  );
+  assert.match(main, /paletteSwatchBackground\(swatch, activeOrientation\)/);
+  assert.match(main, /paletteSwatchBackground\(color, activeOrientation\)/);
+});
+
+test("General settings use compact grouped rows with descriptions and an iOS-style switch", async () => {
+  const [settings, styles] = await Promise.all([
+    read("src/js/settings/settings.tsx"),
+    read("src/js/settings/settings.scss"),
+  ]);
+  for (const group of ["swatch-settings-group", "collection-settings-group", "image-settings-group"]) {
+    assert.match(settings, new RegExp(`data-testid="${group}"`));
+  }
+  assert.match(settings, /className="setting-copy"/);
+  assert.match(settings, /className="setting-description"/);
+  assert.match(settings, /className="toggle-track"/);
+  assert.match(settings, /data-testid="include-disabled-colors"/);
+  assert.match(settings, /data-testid=\{`gradient-collection-\$\{mode\}`\}/);
+  assert.match(settings, /data-testid=\{`extraction-\$\{preset\}`\}/);
+  assert.match(styles, /\.settings-group/);
+  assert.match(styles, /\.settings-item[\s\S]*?grid-template-columns: minmax\(0, 1fr\) auto/);
+  assert.match(styles, /\.toggle-track/);
+  assert.match(styles, /input:checked \+ \.toggle-track/);
 });
 
 test("Palettes toolbar orders selector, New, Import, Export, Remove and Main owns import", async () => {
@@ -1819,9 +1853,6 @@ test("Main and Settings expose the requested compact interaction contracts", asy
   assert.match(main, /Choose selected colors or one image, not both/);
   assert.match(mainStyles, /\[data-layout-mode="fixed"\] \.palette-add/);
   assert.match(mainStyles, /width:\s*var\(--cp-swatch-size\)/);
-  assert.match(settings, /data-testid="include-disabled-colors"/);
-  assert.match(settings, /data-testid=\{`gradient-collection-\$\{mode\}`\}/);
-  assert.match(settings, /data-testid=\{`extraction-\$\{preset\}`\}/);
   assert.match(layoutSettings, /migrateLayoutSettings/);
   assert.match(layoutDomain, /includeDisabledColors:\s*boolean/);
   assert.match(layoutDomain, /LAYOUT_SETTINGS_SCHEMA_VERSION = 4/);

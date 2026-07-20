@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 
 import { mkdir, writeFile } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
 import { isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { pathToFileURL } from "node:url";
 import { CdpClient } from "./lib/cdp-client.mjs";
 import {
   createOwnedRunDirectory,
-  createOwnedScratchDirectory,
   parseRunnerArgs,
   removeOwnedRunDirectory,
 } from "./lib/live-runner-policy.mjs";
@@ -15,6 +15,7 @@ import contract from "../src/shared/product-contract.json" with { type: "json" }
 import packageJson from "../package.json" with { type: "json" };
 
 const EXPECTED_BUILD_MARKER = `${contract.marker.current} · ${packageJson.version}`;
+const TEMPORARY_CONFIG_PARENT = "/private/tmp";
 
 const REPO_ROOT = fileURLToPath(new URL("../", import.meta.url));
 const FIXTURES = [
@@ -160,10 +161,13 @@ export const runDesignCaptureLifecycle = async ({
   return report;
 };
 
-const capturePanel = async (panel, outputDirectory, parentRun) => {
+const capturePanel = async (panel, outputDirectory) => {
   const panelDirectory = resolve(outputDirectory, panel.page);
   await mkdir(panelDirectory, { recursive: true });
-  const scratch = await createOwnedScratchDirectory(parentRun);
+  const scratch = await createOwnedRunDirectory(TEMPORARY_CONFIG_PARENT, {
+    tokenFactory: () =>
+      `chroma-relay-design-${panel.page}-${Date.now().toString(36)}-${randomBytes(8).toString("hex")}`,
+  });
   let target;
   let client;
   let report = null;
@@ -402,11 +406,17 @@ const capturePanel = async (panel, outputDirectory, parentRun) => {
 };
 
 const main = async () => {
-  const options = parseRunnerArgs(process.argv.slice(2), { allowed: ["output"] });
+  const options = parseRunnerArgs(process.argv.slice(2), { allowed: ["output", "panel"] });
+  if (options.panel && options.panel !== "main" && options.panel !== "settings") {
+    throw new Error(`Unsupported design panel: ${options.panel}`);
+  }
   const root = options.output || "evidence/i05/responsive";
   const run = await createOwnedRunDirectory(resolve(REPO_ROOT, root));
   const reports = [];
-  for (const panel of PANELS) reports.push(await capturePanel(panel, run.path, run));
+  const selectedPanels = options.panel
+    ? PANELS.filter((panel) => panel.page === options.panel)
+    : PANELS;
+  for (const panel of selectedPanels) reports.push(await capturePanel(panel, run.path));
   const summary = {
     capturedAt: new Date().toISOString(),
     passed: true,

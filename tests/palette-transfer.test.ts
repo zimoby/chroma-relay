@@ -81,8 +81,14 @@ test("a valid empty palette round-trips", () => {
 
 test("rejects malformed JSON, wrong format, and unsupported versions", () => {
   assert.equal(parsePortablePalette("not json").ok, false);
-  assert.equal(parsePortablePalette("[]").ok, false);
-  assert.equal(parsePortablePalette("null").ok, false);
+  assert.deepEqual(parsePortablePalette("[]"), {
+    ok: false,
+    error: "File is not a Chroma Relay export",
+  });
+  assert.deepEqual(parsePortablePalette("null"), {
+    ok: false,
+    error: "File is not a Chroma Relay export",
+  });
   assert.equal(
     parsePortablePalette(JSON.stringify({ format: "swatches", version: 1, name: "A", colors: [] }))
       .ok,
@@ -126,6 +132,8 @@ test("rejects oversized color lists and bad RGBA entries without truncating", ()
 });
 
 test("builds filesystem-safe export names and normalizes .json extensions", () => {
+  assert.equal(PALETTE_TRANSFER_FORMAT, "chroma-relay");
+  assert.equal(PALETTE_TRANSFER_EXTENSION, ".chroma-relay.json");
   assert.equal(
     portablePaletteFileName('My: "Palette"/2*?'),
     `My Palette 2${PALETTE_TRANSFER_EXTENSION}`

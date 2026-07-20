@@ -30,7 +30,7 @@ const config: CEP_Config = {
       mainPath: "./main/index.html",
       name: "main",
       id: contract.product.panelIds.main,
-      panelDisplayName: "Chroma Relay", 
+      panelDisplayName: contract.product.displayName,
       autoVisible: true,
       width: 320,
       height: 80,

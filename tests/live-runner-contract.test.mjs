@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve, sep } from "node:path";
 import test from "node:test";
 import { CdpClient } from "../scripts/lib/cdp-client.mjs";
 import {
@@ -99,9 +99,11 @@ test("owned cleanup recomputes the marker path and rejects forged, swapped, and 
 
 test("marker-write failure leaves residue and never calls recursive rm", async () => {
   const calls = [];
+  const outputRoot = resolve(sep, "workspace", "out");
+  const residuePath = join(outputRoot, "residue-token");
   const fs = {
     lstat: async (path) => {
-      if (path === "/workspace/out") return { isDirectory: () => true, isSymbolicLink: () => false };
+      if (path === outputRoot) return { isDirectory: () => true, isSymbolicLink: () => false };
       throw Object.assign(new Error("missing"), { code: "ENOENT" });
     },
     realpath: async (path) => path,
@@ -110,12 +112,12 @@ test("marker-write failure leaves residue and never calls recursive rm", async (
     rm: async (...args) => calls.push(["rm", ...args]),
   };
   await assert.rejects(
-    createOwnedRunDirectory("/workspace/out", {
+    createOwnedRunDirectory(outputRoot, {
       fs,
       tokenFactory: () => "residue-token",
     }),
     (error) => {
-      assert.equal(error.residuePath, "/workspace/out/residue-token");
+      assert.equal(error.residuePath, residuePath);
       return true;
     }
   );
@@ -374,7 +376,14 @@ test("owned runners do not recursively remove fixed scratch roots and await asyn
     const source = await readFile(new URL(`../scripts/${file}`, import.meta.url), "utf8");
     assert.doesNotMatch(source, /rm\([^\n]*\{\s*recursive:\s*true/);
     assert.doesNotMatch(source, /(?<!await\s)\bclient\.close\(\)/);
-    assert.match(source, /createOwnedScratchDirectory/);
+    if (file === "cep-design-capture.mjs") {
+      assert.match(source, /const TEMPORARY_CONFIG_PARENT = "\/private\/tmp"/);
+      assert.match(source, /createOwnedRunDirectory\(TEMPORARY_CONFIG_PARENT/);
+      assert.match(source, /chroma-relay-design-/);
+      assert.doesNotMatch(source, /createOwnedScratchDirectory\(parentRun\)/);
+    } else {
+      assert.match(source, /createOwnedScratchDirectory/);
+    }
     assert.match(source, /removeOwnedRunDirectory/);
   }
 });
@@ -389,6 +398,17 @@ test("all five runners are importable without invoking their CLI", async () => {
   ]) {
     await assert.doesNotReject(import(`../scripts/${file}?s4=${Date.now()}-${file}`));
   }
+});
+
+test("design capture can target Settings without weakening the Main compositor gate", async () => {
+  const source = await readFile(
+    new URL("../scripts/cep-design-capture.mjs", import.meta.url),
+    "utf8"
+  );
+  assert.match(source, /allowed: \["output", "panel"\]/);
+  assert.match(source, /options\.panel !== "main" && options\.panel !== "settings"/);
+  assert.match(source, /const selectedPanels = options\.panel/);
+  assert.match(source, /Main compositor is \$\{captureViewport\.width\}x\$\{captureViewport\.height\}/);
 });
 
 test("design capture lifecycle returns only after successful cleanup", async () => {

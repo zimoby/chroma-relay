@@ -1,5 +1,5 @@
 import { lstat, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { isAbsolute, join, parse, relative, resolve, sep } from "node:path";
 import { randomBytes } from "node:crypto";
 import contract from "../../src/shared/product-contract.json" with { type: "json" };
 
@@ -62,10 +62,11 @@ const isDirectChild = (root, candidate) => {
 };
 
 const rejectSymlinkComponents = async (path, fs) => {
-  const parts = path.split(sep).filter(Boolean);
-  let current = path.startsWith(sep) ? sep : "";
+  const root = parse(path).root;
+  const parts = path.slice(root.length).split(sep).filter(Boolean);
+  let current = root;
   for (let index = 0; index < parts.length; index += 1) {
-    current = current === sep ? `${current}${parts[index]}` : `${current}${sep}${parts[index]}`;
+    current = join(current, parts[index]);
     try {
       const stat = await fs.lstat(current);
       if (stat.isSymbolicLink?.() && index > 0 && current !== "/tmp" && current !== "/private/tmp") {

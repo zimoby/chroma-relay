@@ -9,6 +9,7 @@ yarn-error.log
 .env.production
 # Formal live-runner children are local evidence/residue; cleanup is explicit and ownership-checked.
 /evidence/local/native-gradient/track-b-apply-ae25/track-b-*/
+/evidence/local/polish-*/
 # Keep raw local-machine smoke output private; commit only redacted summaries.
 /evidence/windows-smoke-*/**/apply/
 /evidence/windows-smoke-*/**/collect/

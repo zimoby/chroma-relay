@@ -178,7 +178,10 @@ export const App = () => {
   const [editorInvalid, setEditorInvalid] = useState<Record<string, boolean>>({});
   const [editorError, setEditorError] = useState<string | null>(null);
   const [colorDrag, setColorDrag] = useState<ColorDragState | null>(null);
+  const [paletteMenuOpen, setPaletteMenuOpen] = useState(false);
   const [status, setStatus] = useState<string | null>("Stretch layout is active");
+  const paletteMenuRef = useRef<HTMLDivElement>(null);
+  const paletteSelectRef = useRef<HTMLButtonElement>(null);
   const pendingRequestRef = useRef<string | null>(null);
   const pendingAddedColorRef = useRef<{
     paletteId: string;
@@ -222,6 +225,20 @@ export const App = () => {
     setNameDraft(activePalette.name);
     setArmedDeleteId(null);
   }, [activePalette.id, activePalette.name]);
+
+  useEffect(() => {
+    setPaletteMenuOpen(false);
+  }, [activePalette.id, activeTab, paletteBusy, paletteError]);
+
+  useEffect(() => {
+    if (!paletteMenuOpen) return;
+    const handleOutsideMouseDown = (event: MouseEvent) => {
+      if (event.target instanceof Node && paletteMenuRef.current?.contains(event.target)) return;
+      setPaletteMenuOpen(false);
+    };
+    document.addEventListener("mousedown", handleOutsideMouseDown, true);
+    return () => document.removeEventListener("mousedown", handleOutsideMouseDown, true);
+  }, [paletteMenuOpen]);
 
   useEffect(() => {
     if (!expandedColor) {
@@ -356,6 +373,59 @@ export const App = () => {
     setStatus("Saving palette…");
     countersRef.current.emittedEvents += 1;
     return true;
+  };
+
+  const focusPaletteOption = (paletteId: string) => {
+    window.requestAnimationFrame(() => {
+      const option = Array.from(
+        document.querySelectorAll<HTMLButtonElement>("[data-palette-option]")
+      ).find((candidate) => candidate.dataset.paletteId === paletteId);
+      option?.focus();
+    });
+  };
+
+  const closePaletteMenu = (restoreFocus = false) => {
+    setPaletteMenuOpen(false);
+    if (restoreFocus) {
+      window.requestAnimationFrame(() => paletteSelectRef.current?.focus());
+    }
+  };
+
+  const openPaletteMenu = () => {
+    if (paletteBusy || paletteError !== null) return;
+    setPaletteMenuOpen(true);
+    focusPaletteOption(activePalette.id);
+  };
+
+  const selectPaletteFromMenu = (paletteId: string) => {
+    closePaletteMenu(true);
+    if (paletteId !== activePalette.id) {
+      sendPaletteCommand({ type: "select", paletteId });
+    }
+  };
+
+  const handlePaletteOptionKeyDown = (
+    event: ReactKeyboardEvent<HTMLButtonElement>,
+    paletteId: string
+  ) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closePaletteMenu(true);
+      return;
+    }
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
+    event.preventDefault();
+    const currentIndex = paletteDocument.palettes.findIndex((palette) => palette.id === paletteId);
+    const lastIndex = paletteDocument.palettes.length - 1;
+    const nextIndex =
+      event.key === "Home"
+        ? 0
+        : event.key === "End"
+        ? lastIndex
+        : event.key === "ArrowDown"
+        ? Math.min(currentIndex + 1, lastIndex)
+        : Math.max(currentIndex - 1, 0);
+    focusPaletteOption(paletteDocument.palettes[nextIndex].id);
   };
 
   const selectLayoutMode = (layoutMode: LayoutMode) => {
@@ -939,162 +1009,247 @@ export const App = () => {
 
       <div className="settings-content">
         {activeTab === "general" ? (
-          <div id="general-settings" role="tabpanel">
+          <div className="general-settings-panel" id="general-settings" role="tabpanel">
             <section className="settings-section" data-testid="layout-settings">
               <h3 className="settings-section-title">Swatches</h3>
-              <div className="setting-row">
-                <span className="setting-label" id="swatch-sizing-label">
-                  Sizing
-                </span>
-                <div className="segmented" role="radiogroup" aria-labelledby="swatch-sizing-label">
-                  <label>
-                    <input
-                      checked={settings.layoutMode === "stretch"}
-                      data-testid="layout-stretch"
-                      name="layout-mode"
-                      onChange={() => selectLayoutMode("stretch")}
-                      type="radio"
-                    />
-                    <span>Stretch</span>
-                  </label>
-                  <label>
-                    <input
-                      checked={settings.layoutMode === "fixed"}
-                      data-testid="layout-fixed"
-                      name="layout-mode"
-                      onChange={() => selectLayoutMode("fixed")}
-                      type="radio"
-                    />
-                    <span>Fixed</span>
-                  </label>
+              <div className="settings-group" data-testid="swatch-settings-group">
+                <div className="settings-item">
+                  <span className="setting-copy">
+                    <span className="setting-title" id="swatch-sizing-label">
+                      Swatch sizing
+                    </span>
+                    <span className="setting-description">
+                      Stretch to fill the panel or keep every swatch the same size.
+                    </span>
+                  </span>
+                  <div
+                    className="segmented settings-item-control"
+                    role="radiogroup"
+                    aria-labelledby="swatch-sizing-label"
+                  >
+                    <label>
+                      <input
+                        checked={settings.layoutMode === "stretch"}
+                        data-testid="layout-stretch"
+                        name="layout-mode"
+                        onChange={() => selectLayoutMode("stretch")}
+                        type="radio"
+                      />
+                      <span>Stretch</span>
+                    </label>
+                    <label>
+                      <input
+                        checked={settings.layoutMode === "fixed"}
+                        data-testid="layout-fixed"
+                        name="layout-mode"
+                        onChange={() => selectLayoutMode("fixed")}
+                        type="radio"
+                      />
+                      <span>Fixed</span>
+                    </label>
+                  </div>
                 </div>
-              </div>
 
-              <div className="setting-row" data-disabled={settings.layoutMode !== "fixed"}>
-                <span className="setting-label">Size</span>
-                <div className="size-controls">
-                  <input
-                    aria-label="Fixed color size"
-                    data-testid="swatch-size-slider"
-                    disabled={settings.layoutMode !== "fixed"}
-                    max={MAX_SWATCH_SIZE}
-                    min={MIN_SWATCH_SIZE}
-                    onBlur={(event) => commitSwatchSize(Number(event.currentTarget.value))}
-                    onChange={(event) => setDraftSize(Number(event.currentTarget.value))}
-                    onKeyUp={(event) => commitSwatchSize(Number(event.currentTarget.value))}
-                    onMouseUp={(event) => commitSwatchSize(Number(event.currentTarget.value))}
-                    step="1"
-                    type="range"
-                    value={draftSize}
-                  />
-                  <span className="number-control">
+                <div className="settings-item" data-disabled={settings.layoutMode !== "fixed"}>
+                  <span className="setting-copy">
+                    <span className="setting-title">Fixed size</span>
+                    <span className="setting-description">
+                      Width and height used when Fixed sizing is active.
+                    </span>
+                  </span>
+                  <div className="size-controls settings-item-control">
                     <input
-                      aria-label="Fixed color size in pixels"
-                      data-testid="swatch-size-input"
+                      aria-label="Fixed color size"
+                      data-testid="swatch-size-slider"
                       disabled={settings.layoutMode !== "fixed"}
                       max={MAX_SWATCH_SIZE}
                       min={MIN_SWATCH_SIZE}
                       onBlur={(event) => commitSwatchSize(Number(event.currentTarget.value))}
                       onChange={(event) => setDraftSize(Number(event.currentTarget.value))}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") event.currentTarget.blur();
-                      }}
+                      onKeyUp={(event) => commitSwatchSize(Number(event.currentTarget.value))}
+                      onMouseUp={(event) => commitSwatchSize(Number(event.currentTarget.value))}
                       step="1"
-                      type="number"
+                      type="range"
                       value={draftSize}
                     />
-                    <span>px</span>
-                  </span>
+                    <span className="number-control">
+                      <input
+                        aria-label="Fixed color size in pixels"
+                        data-testid="swatch-size-input"
+                        disabled={settings.layoutMode !== "fixed"}
+                        max={MAX_SWATCH_SIZE}
+                        min={MIN_SWATCH_SIZE}
+                        onBlur={(event) => commitSwatchSize(Number(event.currentTarget.value))}
+                        onChange={(event) => setDraftSize(Number(event.currentTarget.value))}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") event.currentTarget.blur();
+                        }}
+                        step="1"
+                        type="number"
+                        value={draftSize}
+                      />
+                      <span>px</span>
+                    </span>
+                  </div>
                 </div>
               </div>
             </section>
 
             <section className="settings-section">
               <h3 className="settings-section-title">Collection</h3>
-              <div className="setting-row">
-                <span className="setting-label" id="gradient-collection-label">
-                  Selected gradients
-                </span>
-                <div
-                  className="segmented"
-                  role="radiogroup"
-                  aria-labelledby="gradient-collection-label"
-                >
-                  {(["color-stops", "gradient-slot"] as GradientCollectionMode[]).map((mode) => (
-                    <label key={mode}>
-                      <input
-                        checked={settings.gradientCollectionMode === mode}
-                        data-testid={`gradient-collection-${mode}`}
-                        name="gradient-collection-mode"
-                        onChange={() => commitSettings({ gradientCollectionMode: mode })}
-                        type="radio"
-                      />
-                      <span>{GRADIENT_COLLECTION_LABELS[mode]}</span>
-                    </label>
-                  ))}
+              <div className="settings-group" data-testid="collection-settings-group">
+                <div className="settings-item">
+                  <span className="setting-copy">
+                    <span className="setting-title" id="gradient-collection-label">
+                      Selected gradients
+                    </span>
+                    <span className="setting-description">
+                      Save each stop as a color or keep the gradient together.
+                    </span>
+                  </span>
+                  <div
+                    className="segmented settings-item-control"
+                    role="radiogroup"
+                    aria-labelledby="gradient-collection-label"
+                  >
+                    {(["color-stops", "gradient-slot"] as GradientCollectionMode[]).map((mode) => (
+                      <label key={mode}>
+                        <input
+                          checked={settings.gradientCollectionMode === mode}
+                          data-testid={`gradient-collection-${mode}`}
+                          name="gradient-collection-mode"
+                          onChange={() => commitSettings({ gradientCollectionMode: mode })}
+                          type="radio"
+                        />
+                        <span>{GRADIENT_COLLECTION_LABELS[mode]}</span>
+                      </label>
+                    ))}
+                  </div>
                 </div>
+                <label className="settings-item settings-toggle-row">
+                  <span className="setting-copy">
+                    <span className="setting-title">Include disabled items</span>
+                    <span className="setting-description">
+                      Collect colors from disabled layers and groups.
+                    </span>
+                  </span>
+                  <span className="settings-item-control toggle-control">
+                    <input
+                      aria-label="Include disabled layers and groups"
+                      checked={settings.includeDisabledColors}
+                      data-testid="include-disabled-colors"
+                      onChange={(event) =>
+                        commitSettings({ includeDisabledColors: event.currentTarget.checked })
+                      }
+                      type="checkbox"
+                    />
+                    <span aria-hidden="true" className="toggle-track">
+                      <span className="toggle-thumb" />
+                    </span>
+                  </span>
+                </label>
               </div>
-              <label className="checkbox-setting">
-                <input
-                  checked={settings.includeDisabledColors}
-                  data-testid="include-disabled-colors"
-                  onChange={(event) =>
-                    commitSettings({ includeDisabledColors: event.currentTarget.checked })
-                  }
-                  type="checkbox"
-                />
-                <span>Include disabled layers and groups</span>
-              </label>
             </section>
 
             <section className="settings-section" data-testid="image-extraction-settings">
               <h3 className="settings-section-title">Image extraction</h3>
-              <div
-                className="segmented segmented-three"
-                role="radiogroup"
-                aria-label="Image extraction method"
-              >
-                {(["balanced", "tonal", "contrast"] as ExtractionPreset[]).map((preset) => (
-                  <label key={preset}>
-                    <input
-                      checked={settings.extractionPreset === preset}
-                      data-testid={`extraction-${preset}`}
-                      name="extraction-preset"
-                      onChange={() => selectExtractionPreset(preset)}
-                      type="radio"
-                    />
-                    <span>{EXTRACTION_PRESET_LABELS[preset]}</span>
-                  </label>
-                ))}
+              <div className="settings-group" data-testid="image-settings-group">
+                <div className="settings-item">
+                  <span className="setting-copy">
+                    <span className="setting-title" id="image-extraction-label">
+                      Extraction style
+                    </span>
+                    <span className="setting-description">
+                      Tonal merges nearby shades; Contrast favors separation.
+                    </span>
+                  </span>
+                  <div
+                    className="segmented segmented-three settings-item-control"
+                    role="radiogroup"
+                    aria-labelledby="image-extraction-label"
+                  >
+                    {(["balanced", "tonal", "contrast"] as ExtractionPreset[]).map((preset) => (
+                      <label key={preset}>
+                        <input
+                          checked={settings.extractionPreset === preset}
+                          data-testid={`extraction-${preset}`}
+                          name="extraction-preset"
+                          onChange={() => selectExtractionPreset(preset)}
+                          type="radio"
+                        />
+                        <span>{EXTRACTION_PRESET_LABELS[preset]}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
               </div>
-              <span className="settings-help">
-                Tonal merges nearby shades; Contrast favors separation.
-              </span>
             </section>
           </div>
         ) : (
           <section className="palette-manager" id="palette-settings" role="tabpanel">
             <div className="palette-picker-row">
-              <span className="palette-select-wrap">
-                <select
+              <div
+                className={`palette-select-wrap${paletteMenuOpen ? " is-open" : ""}`}
+                ref={paletteMenuRef}
+              >
+                <button
+                  aria-expanded={paletteMenuOpen}
+                  aria-haspopup="listbox"
                   aria-label="Active palette"
+                  className="palette-select-button"
                   data-testid="palette-select"
                   disabled={paletteBusy || paletteError !== null}
-                  onChange={(event) => {
-                    const paletteId = event.currentTarget.value;
-                    if (paletteId !== activePalette.id) {
-                      sendPaletteCommand({ type: "select", paletteId });
+                  onClick={() => {
+                    if (paletteMenuOpen) {
+                      closePaletteMenu();
+                    } else {
+                      openPaletteMenu();
                     }
                   }}
-                  value={activePalette.id}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape" && paletteMenuOpen) {
+                      event.preventDefault();
+                      closePaletteMenu();
+                    } else if (
+                      !paletteMenuOpen &&
+                      (event.key === "ArrowDown" || event.key === "ArrowUp")
+                    ) {
+                      event.preventDefault();
+                      openPaletteMenu();
+                    }
+                  }}
+                  ref={paletteSelectRef}
+                  type="button"
                 >
-                  {paletteDocument.palettes.map((palette) => (
-                    <option key={palette.id} value={palette.id}>
-                      {palette.name}
-                    </option>
-                  ))}
-                </select>
-              </span>
+                  <span>{activePalette.name}</span>
+                  <span aria-hidden="true" className="palette-select-arrow" />
+                </button>
+                {paletteMenuOpen ? (
+                  <div
+                    aria-label="Available palettes"
+                    className="palette-select-menu"
+                    data-testid="palette-select-menu"
+                    role="listbox"
+                  >
+                    {paletteDocument.palettes.map((palette) => (
+                      <button
+                        aria-selected={palette.id === activePalette.id}
+                        className="palette-select-option"
+                        data-palette-id={palette.id}
+                        data-palette-option="true"
+                        data-testid={`palette-option-${palette.id}`}
+                        key={palette.id}
+                        onClick={() => selectPaletteFromMenu(palette.id)}
+                        onKeyDown={(event) => handlePaletteOptionKeyDown(event, palette.id)}
+                        role="option"
+                        type="button"
+                      >
+                        {palette.name}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
               <button
                 aria-label="New palette"
                 className="icon-action"

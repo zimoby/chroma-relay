@@ -4,19 +4,22 @@ Keep changes narrow and preserve the CEP/AE ownership boundaries.
 
 ## Local checks
 
-Use the repository-pinned toolchain: Node `22.22.3` and npm `10.9.8`. Ensure `$HOME/.local/bin` precedes the obsolete system Node on `PATH`.
+Use the repository-pinned toolchain: Node `22.22.3` and npm `10.9.8`. Confirm that your active shell resolves those versions before installing dependencies.
+
+Dependency installation also requires GitHub read access to the private, immutable `zimoby/ae-native-gradient-toolkit` pin. Configure Git authentication on the development device; do not place access tokens in tracked files.
 
 ```bash
-export PATH=$HOME/.local/bin:$PATH
 node --version
 npm --version
 npm ci
-npm run build
-npm run test:domain
-npm run test:host-contract
-npm run test:native-gradient
-npm run check:cep
+npm run verify:static
+npm run package:alpha
 ```
+
+`verify:static` builds once and runs the domain, storage, host, native-gradient,
+runner, release, and CEP compatibility checks. `package:alpha` is local and unsigned;
+it reopens the ZIP and records its source commit, worktree state, identity,
+inventory, and SHA-256 in `dist/alpha/report.json`.
 
 For live CEP work, build the debug bundle and use exact Main/Settings targets on ports 8198/8199:
 

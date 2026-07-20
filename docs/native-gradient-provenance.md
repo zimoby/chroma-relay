@@ -4,9 +4,9 @@
 
 Run ID: `20260718T024931Z`
 
-This document preserves the historical acquisition facts for the four fixtures that originally lived under `tests/fixtures/native-gradient/`. Fixture files, frozen models, canonical provenance, codec implementation, templates, and CLI are now owned by the standalone private `@zimoby/ae-native-gradient` toolkit. Chroma Relay completed migration at exact toolkit commit `891eb6ba964ffdf99a382c285eef249fb24ce180` and retains no duplicate fixture assets.
+This document preserves the historical acquisition facts for the four fixtures that originally lived under `tests/fixtures/native-gradient/`. Fixture files, frozen models, canonical provenance, codec implementation, templates, and CLI are now owned by the standalone private `@zimoby/ae-native-gradient` toolkit. Chroma Relay, then using the Chroma Relay codename, completed migration at exact toolkit commit `891eb6ba964ffdf99a382c285eef249fb24ce180` and retains no duplicate fixture assets.
 
-Chroma Relay keeps only product semantics, UI, CEP bridge, and future runtime adapters. `Chroma Relay`, `Zimoby`, and `com.zimoby.chroma-relay` remain provisional product/runtime identities and do not define toolkit ownership.
+Chroma Relay keeps only product semantics, UI, CEP bridge, and future runtime adapters. `Chroma Relay` remains its legacy codename/storage identity; `Zimoby` and `com.zimoby.chroma-relay` remain provisional technical/publisher identities and do not define toolkit ownership.
 
 The four historical fixtures were created from a blank, token-owned After Effects project at:
 

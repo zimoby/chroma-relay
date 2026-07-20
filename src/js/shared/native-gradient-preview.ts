@@ -35,7 +35,7 @@ const formatPercent = (offset: number) => {
   return `${fixed}%`;
 };
 
-export const nativeGradientToCssPreview = (value: unknown): string => {
+export const nativeGradientToCssPreview = (value: unknown, angleDegrees: 90 | 180 = 90): string => {
   const gradient: NativeGradient = validateGeneratedGradient(value);
   const colorStops: Array<NumericStop<readonly [number, number, number]>> =
     gradient.colorStops.map((stop) => ({ offset: stop.offset, value: stop.rgb }));
@@ -66,5 +66,5 @@ export const nativeGradientToCssPreview = (value: unknown): string => {
     );
     return `${rgbaToCss([rgb[0], rgb[1], rgb[2], alpha] as Rgba)} ${formatPercent(offset)}`;
   });
-  return `linear-gradient(90deg, ${parts.join(", ")})`;
+  return `linear-gradient(${angleDegrees}deg, ${parts.join(", ")})`;
 };

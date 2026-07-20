@@ -15,10 +15,7 @@ import {
   isPaletteGradient,
   migratePaletteDocument,
 } from "../src/js/shared/palette-domain.ts";
-import {
-  LAYOUT_SETTINGS_SCHEMA_VERSION,
-  migrateLayoutSettings,
-} from "../src/js/shared/layout-settings-domain.ts";
+import { migrateLayoutSettings } from "../src/js/shared/layout-settings-domain.ts";
 import { nativeGradientToCssPreview } from "../src/js/shared/native-gradient-preview.ts";
 
 const EXACT_GRADIENT: NativeGradient = {
@@ -100,7 +97,6 @@ test("migrates existing layout settings to color-stop collection mode", () => {
     includeDisabledColors: true,
     extractionPreset: "tonal",
   });
-  assert.equal(LAYOUT_SETTINGS_SCHEMA_VERSION, 4);
   assert.equal(migrated?.gradientCollectionMode, "color-stops");
   assert.equal(
     migrateLayoutSettings({ ...migrated, gradientCollectionMode: "gradient-slot" })
@@ -119,4 +115,12 @@ test("renders a gradient preview with both color-only and alpha-only stop positi
   assert.match(css, / 35%/);
   assert.match(css, / 70%/);
   assert.match(css, / 100%\)$/);
+});
+
+test("rotates the gradient preview by 90 degrees for a vertical palette", () => {
+  const horizontal = nativeGradientToCssPreview(EXACT_GRADIENT, 90);
+  const vertical = nativeGradientToCssPreview(EXACT_GRADIENT, 180);
+  assert.match(horizontal, /^linear-gradient\(90deg, /);
+  assert.match(vertical, /^linear-gradient\(180deg, /);
+  assert.equal(vertical.slice(vertical.indexOf(", ")), horizontal.slice(horizontal.indexOf(", ")));
 });

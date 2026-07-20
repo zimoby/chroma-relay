@@ -24,7 +24,7 @@ const EXPORT_COLLISION_SENTINEL = "existing export must remain untouched\n";
 const LEGACY_PALETTE_SCHEMA_VERSION = 2;
 
 const pathsFor = (temporaryRoot) => {
-  const exportPath = resolve(temporaryRoot, "exported.chroma-relay.json");
+  const exportPath = resolve(temporaryRoot, `exported${contract.portable.fileExtension}`);
   const collisionBasePath = resolve(temporaryRoot, "existing-export");
   return {
     temporaryRoot,
@@ -32,7 +32,10 @@ const pathsFor = (temporaryRoot) => {
     exportPath,
     collisionBasePath,
     collisionPath: `${collisionBasePath}.json`,
-    importFixturePath: resolve(temporaryRoot, "import-fixture.chroma-relay.json"),
+    importFixturePath: resolve(
+      temporaryRoot,
+      `import-fixture${contract.portable.fileExtension}`
+    ),
   };
 };
 

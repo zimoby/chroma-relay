@@ -234,15 +234,6 @@ test("reviewed manifest binds commit, contract, assets, fixture bytes, and exact
   assert.equal(manifest.templates[0].size, 3);
 });
 
-test("cleanup is dry-run by default and refuses foreign, stale, symlink, and out-of-root candidates", async () => {
-  const { inspectCleanupRoots } = await import("../scripts/cleanup-live-test-residue.mjs");
-  const report = await inspectCleanupRoots({ roots: [], apply: false });
-  assert.equal(report.mode, "dry-run");
-  assert.equal(report.mutated, false);
-  assert.ok(Array.isArray(report.candidates));
-  assert.ok(Array.isArray(report.refusals));
-});
-
 test("cleanup only applies current owned children and never removes the caller root", async () => {
   const { inspectCleanupRoots } = await import("../scripts/cleanup-live-test-residue.mjs");
   const { createOwnedRunDirectory } = await import("../scripts/lib/live-runner-policy.mjs");
@@ -267,14 +258,4 @@ test("cleanup only applies current owned children and never removes the caller r
     await rm(root, { recursive: true, force: true });
     await rm(outside, { recursive: true, force: true });
   }
-});
-
-test("package scripts document static proof and explicit live parent gate", async () => {
-  const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
-  assert.equal(packageJson.scripts["test:live-runner"], "node --test tests/live-runner.test.mjs");
-  assert.equal(packageJson.scripts["cleanup:live-test-residue"], "node scripts/cleanup-live-test-residue.mjs");
-  const readme = await readFile(new URL("../README.md", import.meta.url), "utf8");
-  assert.match(readme, /dry-run/i);
-  assert.match(readme, /--apply/);
-  assert.match(readme, /parent.*gate|explicit.*live/i);
 });

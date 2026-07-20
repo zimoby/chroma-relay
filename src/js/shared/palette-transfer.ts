@@ -9,9 +9,9 @@ import {
 } from "./palette-domain.ts";
 import contract from "../../shared/product-contract.json" with { type: "json" };
 
-export const PALETTE_TRANSFER_FORMAT = "chroma-relay";
+export const PALETTE_TRANSFER_FORMAT = contract.compatibility.portableFormat;
 export const PALETTE_TRANSFER_VERSION = contract.schemas.portable as 2;
-export const PALETTE_TRANSFER_EXTENSION = ".chroma-relay.json";
+export const PALETTE_TRANSFER_EXTENSION = contract.portable.fileExtension;
 export const MAX_PALETTE_TRANSFER_BYTES = 1024 * 1024;
 
 export type PortablePalette = {
@@ -73,11 +73,11 @@ export const parsePortablePalette = (text: string): PortablePaletteParseResult =
     return { ok: false, error: "File is not valid JSON" };
   }
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return { ok: false, error: "File is not a Chroma Relay export" };
+    return { ok: false, error: `File is not a ${contract.product.displayName} export` };
   }
   const record = parsed as Record<string, unknown>;
   if (record.format !== PALETTE_TRANSFER_FORMAT) {
-    return { ok: false, error: "File is not a Chroma Relay export" };
+    return { ok: false, error: `File is not a ${contract.product.displayName} export` };
   }
   if (record.version !== 1 && record.version !== PALETTE_TRANSFER_VERSION) {
     return { ok: false, error: "Palette export version is not supported" };

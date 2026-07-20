@@ -100,8 +100,13 @@ const getNativeGradientPlatform = () => {
   }
 };
 
-const paletteSwatchBackground = (color: PaletteColor) =>
-  isPaletteGradient(color) ? nativeGradientToCssPreview(color.gradient) : rgbaToCss(color.rgba);
+const paletteSwatchBackground = (
+  color: PaletteColor,
+  orientation: "horizontal" | "vertical"
+) =>
+  isPaletteGradient(color)
+    ? nativeGradientToCssPreview(color.gradient, orientation === "vertical" ? 180 : 90)
+    : rgbaToCss(color.rgba);
 
 const isDebugColor = (value: unknown): value is DebugColor => {
   if (!value || typeof value !== "object") return false;
@@ -816,7 +821,7 @@ export const App = () => {
         y: event.clientY || bounds.top + bounds.height / 2,
       },
       size: { width: bounds.width, height: bounds.height },
-      css: paletteSwatchBackground(color),
+      css: paletteSwatchBackground(color, activeOrientation),
     });
     event.dataTransfer.effectAllowed = "move";
     event.dataTransfer.setData("text/plain", color.id);
@@ -1141,7 +1146,7 @@ export const App = () => {
                     onDragStart={(event) => handleDragStart(event, swatch)}
                     onDrop={(event) => handleDrop(event, swatch.id)}
                     onKeyDown={(event) => handleSwatchKeyDown(event, swatch.id, index)}
-                    style={{ background: paletteSwatchBackground(swatch) }}
+                    style={{ background: paletteSwatchBackground(swatch, activeOrientation) }}
                     type="button"
                   >
                     <span aria-hidden="true" className="drag-indicator" />

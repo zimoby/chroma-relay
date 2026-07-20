@@ -40,7 +40,18 @@ jobs:
             exit 1
           fi
           npm ci
-      - run: npm run zxp
+      - name: Verify static contract
+        run: npm run verify:static
+      - name: Build ZXP
+        shell: bash
+        env:
+          ZXP_PASSWORD: ${{ secrets.ZXP_PASSWORD }}
+        run: |
+          if [ -z "$ZXP_PASSWORD" ]; then
+            echo "::error::ZXP_PASSWORD is required to sign the release package" >&2
+            exit 1
+          fi
+          npm run zxp
 
       - name: GitHub Release
         uses: softprops/action-gh-release@v1

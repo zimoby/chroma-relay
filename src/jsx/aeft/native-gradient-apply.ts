@@ -76,6 +76,7 @@ const STROKE_MATCH_NAME = "ADBE Vector Graphic - G-Stroke";
 const PAYLOAD_MATCH_NAME = "ADBE Vector Grad Colors";
 const TOKEN_PATTERN = /^[A-F0-9]{32}$/;
 const MAX_PRESET_BYTES = 2 * 1024 * 1024;
+const MAX_NATIVE_GRADIENT_SCOPE_NODE_COUNT = 4096;
 
 const isPositiveInteger = (value: any) =>
   typeof value === "number" && isFinite(value) && value > 0 && Math.floor(value) === value;
@@ -476,7 +477,7 @@ const collectResolvedTargets = (
   for (let index = 0; index < state.visitedKeys.length; index += 1) {
     if (state.visitedKeys[index] === visitedKey) return;
   }
-  if (state.visitedKeys.length >= MAX_NATIVE_GRADIENT_TARGET_COUNT) {
+  if (state.visitedKeys.length >= MAX_NATIVE_GRADIENT_SCOPE_NODE_COUNT) {
     state.invalid = true;
     return;
   }

@@ -45,7 +45,10 @@ const cloneSettings = (settings: LayoutSettings): LayoutSettings => ({ ...settin
 const getSettingsDirectory = (temporaryRoot: string | null) => {
   if (temporaryRoot) return temporaryRoot;
   if (!window.cep) return null;
-  return path.join(csi.getSystemPath("userData"), "Chroma Relay");
+  return path.join(
+    csi.getSystemPath("userData"),
+    contract.compatibility.storageDirectory
+  );
 };
 
 export const getLayoutSettingsPaths = (temporaryRoot: string | null) => {

@@ -7,6 +7,7 @@ import {
   isPaletteDocument,
   migratePaletteDocument,
 } from "./palette-domain.ts";
+import contract from "../../shared/product-contract.json" with { type: "json" };
 
 export type PaletteRecovery = "none" | "backup" | "temp";
 
@@ -32,7 +33,10 @@ let writeCount = 0;
 const getPaletteDirectory = (temporaryRoot: string | null) => {
   if (temporaryRoot) return temporaryRoot;
   if (!window.cep) return null;
-  return path.join(csi.getSystemPath("userData"), "Chroma Relay");
+  return path.join(
+    csi.getSystemPath("userData"),
+    contract.compatibility.storageDirectory
+  );
 };
 
 export const getPalettePaths = (temporaryRoot: string | null) => {

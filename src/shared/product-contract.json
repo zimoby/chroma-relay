@@ -1,12 +1,20 @@
 {
-  "contractVersion": 1,
+  "contractVersion": 2,
   "product": {
     "extensionId": "com.zimoby.chroma-relay",
     "displayName": "Chroma Relay",
+    "slug": "chroma-relay",
     "panelIds": {
       "main": "com.zimoby.chroma-relay.main",
       "settings": "com.zimoby.chroma-relay.settings"
     }
+  },
+  "compatibility": {
+    "storageDirectory": "Chroma Relay",
+    "portableFormat": "chroma-relay"
+  },
+  "portable": {
+    "fileExtension": ".chroma-relay.json"
   },
   "cep": {
     "manifestVersion": 6,

@@ -90,7 +90,7 @@ The existing selection evidence and failed Track B evidence mean different thing
 | Architecture H1: invalid host results can delete evidence | **CONFIRMED** | `native-gradient-files.ts:1003-1040` trusts only `status`/`primaryStatus`; `{}`, truncated success, or contradictory results can become deterministic and be cleaned. Slice 2 adds a versioned decoder and unknown-completion preservation. |
 | Architecture H2: Settings can promote palette recovery | **CONFIRMED** | Settings calls `loadPalette()` at `settings.tsx:210,722`; that loader renames `.tmp`/`.bak` at `palette-storage.ts:70-84`. Slice 3 separates inspection from Main-only promotion. |
 | Architecture H3: release can publish incomplete output | **CONFIRMED** | Same root defect as Testing H6, plus no tag/version or required-runtime-file validation. Slice 6 closes the broader artifact contract. |
-| Architecture H4: publisher/signing/licensing unresolved | **POLICY_GATE** | `cep.config.ts:58-59` contains placeholder organization/password; the toolkit is `UNLICENSED`; root LICENSE names Hyper Brew. Humans must decide identity, rights, and certificate policy. No worker receives or commits secrets. |
+| Architecture H4: publisher/signing/licensing unresolved | **POLICY_GATE** | `cep.config.ts` retains placeholder organization metadata and reads the signing password only from `ZXP_PASSWORD`; the toolkit is `UNLICENSED`; root LICENSE names Hyper Brew. Humans must decide identity, rights, and certificate policy. No worker receives or commits secrets. |
 
 No audit BLOCKER/HIGH was classified as a false positive.
 

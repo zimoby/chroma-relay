@@ -5,6 +5,7 @@
 > Selected state: `both_serially`
 > Implementation order: exact collection first, active-palette application second
 > Gradient-slot amendment: 2026-07-19, approved by Denis
+> Windows runtime amendment: 2026-07-20, approved by Denis
 
 ## Decision
 
@@ -44,6 +45,7 @@ Linear alpha derivation is the approved swatch conversion policy; it does not cl
 
 Exact gradient collection requires:
 
+- CEP platform `darwin` or `win32` and an After Effects 22–26 host version;
 - a saved, clean project;
 - one or more exactly resolved static native Shape Gradient Fill/Stroke targets;
 - stable comp, layer, property-index, and match-name identity;
@@ -97,7 +99,7 @@ One successful action uses one host call and one balanced Undo group, restores l
 
 Errors are returned as concise copyable Main notices rather than alerts. Generated preset failure evidence is preserved according to the product temp-file contract before owned cleanup.
 
-The renderer resolves the live CEP host version to an explicit template family before reading templates or generating presets. AE 25.6 resolves only to `assets/native-gradient/ae25-6/`; unsupported versions return `unsupported-host-version` with no generated files and no host mutation call. CEP reports the product version without AE's `xN` build suffix, while ExtendScript includes it. The host therefore compares the normalized major/minor/patch product versions before preset validation or mutation, rejects `host-version-drift` if they differ, and preserves the exact ExtendScript `app.version` in its result.
+The renderer accepts only CEP platforms `darwin` and `win32`, then resolves the live CEP host version to an explicit template family before reading templates or generating presets: AE 22.0–25.5 use `assets/native-gradient/ae22-6/`, AE 25.6–26.2 use `assets/native-gradient/ae25-6/`, and AE 26.3–26.99 use `assets/native-gradient/ae26-3/`. Other platforms return `unsupported-platform`; host versions outside AE 22–26 return `unsupported-host-version`. Both failures produce no generated files and no host mutation call. CEP reports the product version without AE's `xN` build suffix, while ExtendScript includes it. The host therefore compares the normalized major/minor/patch product versions before preset validation or mutation, rejects `host-version-drift` if they differ, and preserves the exact ExtendScript `app.version` in its result.
 
 If the host call throws or returns `apply-unknown-completion`, both verified token-owned preset roots are atomically moved to token-bound evidence roots and their exact byte lengths and SHA-256 hashes remain in the renderer report. Successful and deterministic rejection paths remove their generated roots. The host result preserves a bounded nested `applyError` record with `name`, `message`, `line`, and `number`; it never replaces `status` or `primaryStatus`.
 
@@ -116,15 +118,16 @@ Alpha must be finite and within `[0,1]` for application.
 - Layer Style Gradient Overlay/Glow is unsupported.
 - Keyframed and expression-controlled native gradients are preserved and rejected.
 - Unsaved or dirty-project exact gradient collection is rejected; Chroma Relay never auto-saves the user's project.
+- After Effects omits an untouched default gradient's stop payload from a clean saved AEP. Exact collection rejects that omitted payload rather than inventing default stops; changing a stop once or applying a stored gradient causes AE to serialize the payload.
 - Applying a gradient slot requires exactly one selected static supported native Fill or Stroke and uses the same version/template/readback/Undo/cleanup gates as Track B.
 
 ## Implementation and release order
 
-1. **Completed:** Chroma Relay uses the private `@zimoby/ae-native-gradient` package pinned at exact commit `52b4b5c199691b4bc5e352a7d716192e061c750e`. Chroma Relay keeps only product semantics, UI, CEP bridge, and runtime adapters. `Chroma Relay`, `Zimoby`, and the `com.zimoby.chroma-relay` CEP identity remain provisional and do not define toolkit ownership.
-2. **Track A static implementation completed, live product gate pending:** one read-only host selection returns exact descriptors plus solid/gradient traversal tokens; the renderer reads one bounded stable saved AEP snapshot, resolves every descriptor exactly, and performs one atomic active-palette write.
-3. **Track A2 gradient-slot static implementation completed, live product gate pending:** schema v3/layout v4/portable v2 migration, exact collection, preview, management, round-trip transfer, direct preset generation, and click routing pass domain, native-gradient, host-contract, CEP-compatibility, TypeScript, and production-build gates.
-4. **Track B static implementation completed, exact-version live product gate pending.** Gradient-slot click reuses this application path rather than owning a second mutation path.
-5. Keep native-gradient product behavior disabled outside exact live-proven AE versions/families.
-6. Do not claim Windows support until the equivalent Windows temp-path, FFX, readback, Undo, cleanup, and gradient-slot matrix passes.
+1. **Completed:** Chroma Relay uses the private `@zimoby/ae-native-gradient` package pinned at exact commit `52b4b5c199691b4bc5e352a7d716192e061c750e`. Chroma Relay keeps only product semantics, UI, CEP bridge, and runtime adapters. `Chroma Relay` remains the legacy codename/storage identity; `Zimoby` and the `com.zimoby.chroma-relay` CEP identity remain provisional technical/publisher identities and do not define toolkit ownership.
+2. **Track A implemented:** one read-only host selection returns exact descriptors plus solid/gradient traversal tokens; the renderer reads one bounded stable saved AEP snapshot, resolves every descriptor exactly, and performs one atomic active-palette write.
+3. **Track A2 implemented:** schema v3/layout v4/portable v2 migration, exact collection, preview, management, round-trip transfer, direct preset generation, and click routing pass domain, native-gradient, host-contract, CEP-compatibility, TypeScript, and production-build gates.
+4. **Track B implemented.** Gradient-slot click reuses this application path rather than owning a second mutation path.
+5. Native-gradient runtime behavior is enabled only on `darwin` and `win32` for AE major versions 22–26 and remains fail-closed elsewhere.
+6. Windows AE `24.6.4x3` has live apply → save → exact collect proof with canonical `%TEMP%` agreement, FFX readback, one balanced Undo group, restored selection, and owned temp cleanup. Windows AE 22, 23, and 25 remain live-unverified because their interactive panels could not be opened remotely; AE 26 was not installed on the test host. Do not describe those four live gates as passed.
 
-The existing AE `26.3x87` toolkit mechanism proof covers normal-range Fill/Stroke generation at 2, 3, and 8 stops. It does not by itself enable Chroma Relay behavior or establish AE 22–99, HDR/negative, or Windows product support.
+The existing AE `26.3x87` toolkit mechanism proof covers normal-range Fill/Stroke generation at 2, 3, and 8 stops. It does not by itself establish AE 22–99, HDR/negative, or untested Windows host behavior.

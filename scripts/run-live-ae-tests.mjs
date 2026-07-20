@@ -1803,7 +1803,7 @@ const main = async () => {
     );
     realConfigRoot = resolve(
       String(userData).startsWith("file:") ? fileURLToPath(String(userData)) : String(userData),
-      "Chroma Relay"
+      contract.compatibility.storageDirectory
     );
     realStorageBefore = await snapshotStorage(realConfigRoot);
     const sourceExpected = JSON.parse(await readFile(EXPECTED_SOURCE, "utf8"));
