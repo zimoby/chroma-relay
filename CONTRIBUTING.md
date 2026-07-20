@@ -4,10 +4,10 @@ Keep changes narrow and preserve the CEP/AE ownership boundaries.
 
 ## Local checks
 
-Use the repository-pinned toolchain: Node `22.22.3` and npm `10.9.8`. Ensure `/Users/REDACTED/.local/bin` precedes the obsolete system Node on `PATH`.
+Use the repository-pinned toolchain: Node `22.22.3` and npm `10.9.8`. Ensure `$HOME/.local/bin` precedes the obsolete system Node on `PATH`.
 
 ```bash
-export PATH=/Users/REDACTED/.local/bin:$PATH
+export PATH=$HOME/.local/bin:$PATH
 node --version
 npm --version
 npm ci

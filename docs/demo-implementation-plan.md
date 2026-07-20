@@ -8,7 +8,7 @@
 
 **Tech stack:** Pinned Bolt CEP/vite-cep-plugin 2.2.3, React, TypeScript, Sass, npm/`package-lock.json`, and ES3-compatible ExtendScript for AEFT 22.0+.
 
-**Disposable target:** `/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay-demo`. Use bundle ID `com.zimoby.chroma-relay.demo`, panel IDs `com.zimoby.chroma-relay.demo.main` and `com.zimoby.chroma-relay.demo.settings`, display name `Chroma Relay Demo`, and debug ports 8298/8299 so the demo cannot replace or masquerade as the current extension.
+**Disposable target:** `$HOME/Documents/Dev_code/_Collaborations/chroma-relay-demo`. Use bundle ID `com.zimoby.chroma-relay.demo`, panel IDs `com.zimoby.chroma-relay.demo.main` and `com.zimoby.chroma-relay.demo.settings`, display name `Chroma Relay Demo`, and debug ports 8298/8299 so the demo cannot replace or masquerade as the current extension.
 
 ---
 
@@ -53,8 +53,8 @@ Reloading either panel or restarting AE restores the complete saved palette and 
 
 ## Speed rules
 
-1. Use npm and `package-lock.json`. Do not use bare Yarn on this Mac because the ancestor `/Users/REDACTED/package.json` declares pnpm and blocks project Yarn commands.
-2. Scaffold only in the disposable `chroma-relay-demo` target. Never scaffold or symlink this plan over `/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay`.
+1. Use npm and `package-lock.json`. Do not use bare Yarn on this Mac because the ancestor `$HOME/package.json` declares pnpm and blocks project Yarn commands.
+2. Scaffold only in the disposable `chroma-relay-demo` target. Never scaffold or symlink this plan over `$HOME/Documents/Dev_code/_Collaborations/chroma-relay`.
 3. Generate exactly two AEFT panels from the start: visible Main and hidden Settings.
 4. Run the untouched scaffold build before editing so generator/toolchain failures remain separate from demo failures.
 5. Keep all demo host logic in `src/jsx/aeft/aeft.ts`; do not create production abstractions.
@@ -230,7 +230,7 @@ applyDemoColor(rgba) -> {
 ## Only commands required
 
 ```bash
-cd /Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay-demo
+cd $HOME/Documents/Dev_code/_Collaborations/chroma-relay-demo
 npm ci
 npm run build
 npm run symlink

@@ -6,7 +6,7 @@
 
 **Architecture:** Chroma Relay owns the runtime candidate and fixtures. AutoTools contributes proven patterns but is not a runtime dependency. The binary writer parses big-endian RIFX with source spans, treats `GCky` as a `LIST` form containing a `Utf8` child, preserves all non-target bytes plus the trailer outside the declared RIFX boundary, and patches only the target `Utf8` payload and affected size words. Live mechanism proof runs through external AE helper scripts against one token-owned scratch gradient at a time. Generic saved-AEP target resolution and Main-panel wiring are separate post-proof tracks.
 
-**Tech stack:** TypeScript 5.8; `/Users/REDACTED/.local/bin/node` v22.22.3 and npm 10.9.8; Node built-in test runner with type stripping; CEP/ExtendScript only after the product decision; AE 26.3 mechanism proof, followed by exact-version evidence gates for every AE family enabled in production.
+**Tech stack:** TypeScript 5.8; `$HOME/.local/bin/node` v22.22.3 and npm 10.9.8; Node built-in test runner with type stripping; CEP/ExtendScript only after the product decision; AE 26.3 mechanism proof, followed by exact-version evidence gates for every AE family enabled in production.
 
 **Plan status:** Core mechanism complete. On 2026-07-18 Denis approved `PRODUCT-SEMANTICS=both_serially`: exact collection first, then active-palette application. The exact policy is recorded in [`native-gradient-product-semantics.md`](native-gradient-product-semantics.md). The package migration is complete at private toolkit commit `891eb6ba964ffdf99a382c285eef249fb24ce180`.
 
@@ -22,7 +22,7 @@ Collection and application remain separate reviewed tracks. The decision does no
 
 ### Runtime ownership
 
-The standalone `/Users/REDACTED/Documents/Dev_code/_Collaborations/ae-native-gradient-toolkit` project now owns the binary implementation, fixtures, templates, CLI, and proof harness. Chroma Relay completed its migration to the exact private `@zimoby/ae-native-gradient` commit `891eb6ba964ffdf99a382c285eef249fb24ce180`. This supersedes the original pre-extraction ownership decision in this plan.
+The standalone `$HOME/Documents/Dev_code/_Collaborations/ae-native-gradient-toolkit` project now owns the binary implementation, fixtures, templates, CLI, and proof harness. Chroma Relay completed its migration to the exact private `@zimoby/ae-native-gradient` commit `891eb6ba964ffdf99a382c285eef249fb24ce180`. This supersedes the original pre-extraction ownership decision in this plan.
 
 - Chroma Relay consumes that reproducibly pinned package and keeps only product semantics, UI, CEP bridge, and future runtime adapters.
 - `@zimoby` is the toolkit owner scope. `Chroma Relay`, `Zimoby`, and the current `com.zimoby.chroma-relay` CEP identity remain provisional and must not be used as the toolkit owner, GitHub organization, or package namespace.
@@ -48,7 +48,7 @@ The remaining implementation-plan body is retained as a historical record of the
 
 ### Product repository
 
-`/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay`
+`$HOME/Documents/Dev_code/_Collaborations/chroma-relay`
 
 Read before work:
 
@@ -76,7 +76,7 @@ Existing product seams, for post-proof integration only:
 
 ### Local reference repository
 
-`/Users/REDACTED/Documents/Dev_code/AutoTools/ae-agent-scripts`
+`$HOME/Documents/Dev_code/AutoTools/ae-agent-scripts`
 
 Required reference for the RIFX extraction:
 
@@ -107,8 +107,8 @@ Fresh test runs must not require network access or Python. One-time oracle outpu
 
 Observed on 2026-07-18:
 
-- active Hermes `node`: `/Users/REDACTED/.local/bin/node`, v22.22.3;
-- active Hermes `npm`: `/Users/REDACTED/.local/bin/npm`, 10.9.8;
+- active Hermes `node`: `$HOME/.local/bin/node`, v22.22.3;
+- active Hermes `npm`: `$HOME/.local/bin/npm`, 10.9.8;
 - `/usr/local/bin/node` is v18.12.1 and cannot run the type-stripping test scripts;
 - AE 26.3 is running;
 - Chroma Relay Main/Settings are loaded on 8198/8199;
@@ -138,7 +138,7 @@ before source edits. The authorized resolution is defined in Task 1.
 
 Proposed durable fallback root, subject to Denis's approval:
 
-`/Users/REDACTED/Documents/Dev_code/_Collaborations/.agent-baselines/chroma-relay-native-gradient/<RUN_ID>`
+`$HOME/Documents/Dev_code/_Collaborations/.agent-baselines/chroma-relay-native-gradient/<RUN_ID>`
 
 It must contain:
 
@@ -465,7 +465,7 @@ packaging remain separate approvals.
 2. Set the toolchain explicitly:
 
    ```bash
-   export PATH=/Users/REDACTED/.local/bin:$PATH
+   export PATH=$HOME/.local/bin:$PATH
    command -v node
    node --version
    command -v npm
@@ -473,8 +473,8 @@ packaging remain separate approvals.
    node --experimental-strip-types -e 'console.log("type-strip-ok")'
    ```
 
-   Expected: `/Users/REDACTED/.local/bin/node`, Node 22.x, npm 10.x, `type-strip-ok`.
-3. Record both `/Users/REDACTED/.local/bin/node` and `/usr/local/bin/node` versions to prevent PATH ambiguity.
+   Expected: `$HOME/.local/bin/node`, Node 22.x, npm 10.x, `type-strip-ok`.
+3. Record both `$HOME/.local/bin/node` and `/usr/local/bin/node` versions to prevent PATH ambiguity.
 4. Record the conflict: README/current status use npm, `CONTRIBUTING.md` and
    `yarn.lock` disagree, and `package.json` pins neither Node nor npm.
    Obtain Denis's explicit current-session approval for Task 1's npm resolution.
@@ -486,14 +486,14 @@ packaging remain separate approvals.
    ```bash
    npm run test:domain
    npm run test:host-contract
-   cd /Users/REDACTED/Documents/Dev_code/AutoTools/ae-agent-scripts/pseudo-effect-tests
+   cd $HOME/Documents/Dev_code/AutoTools/ae-agent-scripts/pseudo-effect-tests
    ./run-pseudo-node-tests.sh
    ```
 
 8. Run read-only AE checks:
 
    ```bash
-   env HOME=/Users/REDACTED zsh -lc 'source /Users/REDACTED/.ae-helpers.sh && ae_check'
+   env HOME=$HOME zsh -lc 'source $HOME/.ae-helpers.sh && ae_check'
    ```
 
 9. Record shell versions, exit codes, repo state, active AE project path/item count/selection count, CEP process version if a development panel is available, and live-mutation authorization as false by default.
@@ -806,7 +806,7 @@ before another case starts.
 Use canonical helper invocation with real HOME and the absolute helper path:
 
 ```bash
-env HOME=/Users/REDACTED zsh -lc 'source /Users/REDACTED/.ae-helpers.sh && ae_file_json /absolute/path/to/generated-dispatch.jsx'
+env HOME=$HOME zsh -lc 'source $HOME/.ae-helpers.sh && ae_file_json /absolute/path/to/generated-dispatch.jsx'
 ```
 
 Run serially. No background AE calls.
@@ -815,7 +815,7 @@ Before dispatch, runner:
 
 - acquires an atomic single-run lock via `mkdir`; refuses a live lock, records
   owner PID/run token, and removes only its own lock in `trap`;
-- uses `/Users/REDACTED/.local/bin/node` explicitly;
+- uses `$HOME/.local/bin/node` explicitly;
 - validates realpaths, hashes, project identity through read-only `ae_run`, and that no second script is running;
 - creates generated presets in token root through write-then-rename;
 - writes exact command/evidence manifest;
@@ -1009,7 +1009,7 @@ range is not a native-gradient support claim. Before enabling a product track:
 Core static:
 
 ```bash
-export PATH=/Users/REDACTED/.local/bin:$PATH
+export PATH=$HOME/.local/bin:$PATH
 npm run test:native-gradient
 npm run test:domain
 npm run test:host-contract
@@ -1100,7 +1100,7 @@ Never attempt compensating mutations in a user project.
 
 - [ ] Baseline commit approved, or immutable out-of-repo manifest/backups exist.
 - [ ] Task ledger owns exact writable paths.
-- [ ] Node/npm resolve to `/Users/REDACTED/.local/bin` and type stripping works.
+- [ ] Node/npm resolve to `$HOME/.local/bin` and type stripping works.
 - [ ] Denis authorized npm resolution; `.node-version`, packageManager, engines,
       lockfile, and CONTRIBUTING agree.
 - [ ] Clean temporary `npm ci --ignore-scripts` and static tests pass.

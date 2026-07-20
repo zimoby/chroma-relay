@@ -103,6 +103,6 @@ The final external adapter output was byte-identical under both the shallow edit
 
 Meaningful failures are preserved outside the repository at:
 
-`/Users/REDACTED/Documents/Dev_code/_Collaborations/.agent-baselines/chroma-relay-native-gradient/20260718T024931Z/evidence/TASK-3B/`
+`$HOME/Documents/Dev_code/_Collaborations/.agent-baselines/chroma-relay-native-gradient/20260718T024931Z/evidence/TASK-3B/`
 
 That evidence includes the 78,145-byte zero-`GCky` default Fill AEP and a read-only JSON summary of the hidden Miter Limit write, default Stroke preset no-op/rollback, and missing-Git-LFS checkout failure. These artifacts are intentionally excluded from shipped fixtures.

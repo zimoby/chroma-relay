@@ -38,7 +38,7 @@ New scope, planned but not yet implemented: explicit drag/drop feedback, Alt/Opt
 
 ### Approved deviations and clarifications
 
-- Repository location changed from the planned `_Extensions_dev/chroma-relay` path to `/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay`.
+- Repository location changed from the planned `_Extensions_dev/chroma-relay` path to `$HOME/Documents/Dev_code/_Collaborations/chroma-relay`.
 - Product identity is now locked as `Chroma Relay` with bundle `com.zimoby.chroma-relay`, Main `com.zimoby.chroma-relay.main`, and Settings `com.zimoby.chroma-relay.settings`.
 - The validated host floor is AE 22.0 rather than the planned AE 24.0 baseline.
 - Settings schema v3 is `{ schemaVersion, revision, layoutMode: "stretch" | "fixed", swatchSize: 24..64, includeDisabledColors, extractionPreset }`; there is no manual orientation override.
@@ -81,7 +81,7 @@ New scope, planned but not yet implemented: explicit drag/drop feedback, Alt/Opt
 ### Canonical product contract — lock before code
 
 - Product name: `Chroma Relay`.
-- Repository: `/Users/REDACTED/Documents/Dev_code/_Collaborations/chroma-relay`.
+- Repository: `$HOME/Documents/Dev_code/_Collaborations/chroma-relay`.
 - Bundle ID: `com.zimoby.chroma-relay`.
 - Main ID/port: `com.zimoby.chroma-relay.main` / 8198.
 - Settings ID/port: `com.zimoby.chroma-relay.settings` / 8199.
@@ -98,7 +98,7 @@ New scope, planned but not yet implemented: explicit drag/drop feedback, Alt/Opt
 ### Failure-prevention rules
 
 1. Create a Git baseline before bespoke feature work. Do not repeat a full implementation with no `HEAD`; obtain approval before committing, keep one chosen lockfile, and make generated-vs-custom changes reviewable.
-2. Use npm/`package-lock.json` for this project. On this Mac, bare Yarn walks up to `/Users/REDACTED/package.json`, sees its `packageManager: pnpm@...`, and aborts before running project scripts. Verify `npm --version` in the project root and use `npm ci`/`npm run ...`.
+2. Use npm/`package-lock.json` for this project. On this Mac, bare Yarn walks up to `$HOME/package.json`, sees its `packageManager: pnpm@...`, and aborts before running project scripts. Verify `npm --version` in the project root and use `npm ci`/`npm run ...`.
 3. Run the untouched pinned scaffold build before editing. If the pinned generator CLI falls into TTY prompts, call that exact package's exported generator API; do not hand-copy a template.
 4. Prove both live panel surfaces and exact runtime identity before host behavior. An extension ID, checked menu item, or open port alone is insufficient.
 5. Treat build, renderer, and product failures separately. A clean build can remove file-backed assets and terminate an open renderer while AE remains healthy.
@@ -411,12 +411,12 @@ Create a compact color-palette extension that changes between horizontal and ver
 
 ## Evidence inspected
 
-- Bolt CEP local checkout: `/Users/REDACTED/Documents/Dev_code/_Extensions_dev/bolt-cep` (local 2.2.0, reference only); npm packages `bolt-cep` and `create-bolt-cep` plus remote current version checked as 2.2.3.
+- Bolt CEP local checkout: `$HOME/Documents/Dev_code/_Extensions_dev/bolt-cep` (local 2.2.0, reference only); npm packages `bolt-cep` and `create-bolt-cep` plus remote current version checked as 2.2.3.
 - Bolt CEP README and `cep.config.ts`: supports multiple panel pages, explicit panel IDs, `requestOpenExtension`, React/TypeScript, and typed `evalTS()` host calls.
-- Motion Tools Pro palette UI: `/Users/REDACTED/Documents/Dev_code/_Extensions_dev/motion_tools_pro/motion_tools_plugin_system/src/js/common/Widgets/Palette/index.tsx`.
+- Motion Tools Pro palette UI: `$HOME/Documents/Dev_code/_Extensions_dev/motion_tools_pro/motion_tools_plugin_system/src/js/common/Widgets/Palette/index.tsx`.
 - MTP palette persistence: `.../src/js/common/store/slices/scriptsData.slice.ts:645-823`.
-- Readable MTP host implementation: `/Users/REDACTED/Documents/Dev_code/_Extensions_dev/motion_tools_pro/motion_tools_2025/src/jsx/motion_tools_basic.jsx:7570-7898`.
-- MTP multi-surface events and write suppression: `.../src/js/common/hooks/Listeners/useSyncListeners.ts` plus `/Users/REDACTED/.hermes/profiles/ae-ops-worker/skills/software-development/ae-cep-support-runtime/references/cep-multisurface-sync-validation.md` and `cep-isolated-five-surface-sync.md`.
+- Readable MTP host implementation: `$HOME/Documents/Dev_code/_Extensions_dev/motion_tools_pro/motion_tools_2025/src/jsx/motion_tools_basic.jsx:7570-7898`.
+- MTP multi-surface events and write suppression: `.../src/js/common/hooks/Listeners/useSyncListeners.ts` plus `$HOME/.hermes/profiles/ae-ops-worker/skills/software-development/ae-cep-support-runtime/references/cep-multisurface-sync-validation.md` and `cep-isolated-five-surface-sync.md`.
 - MTP color exactness support evidence: plugins KB `source-materials/notes3/business/support/cases/motion-tools-pro/mtp-color-collect-palette-preview-mismatch-2026-05-15.md`.
 
 ## Working project identity
@@ -424,7 +424,7 @@ Create a compact color-palette extension that changes between horizontal and ver
 Until Denis chooses a public name, use:
 
 - Working product name: `Chroma Relay`
-- Planned repo: `/Users/REDACTED/Documents/Dev_code/_Extensions_dev/chroma-relay`
+- Planned repo: `$HOME/Documents/Dev_code/_Extensions_dev/chroma-relay`
 - Bundle ID: `com.zimoby.chroma-relay`
 - Main extension ID: `com.zimoby.chroma-relay.main`
 - Settings extension ID: `com.zimoby.chroma-relay.settings`
