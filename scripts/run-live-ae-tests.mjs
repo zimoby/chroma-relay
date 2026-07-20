@@ -16,7 +16,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import {
@@ -24,7 +24,14 @@ import {
   parseRifx,
   resolveAepNativeGradientTarget,
 } from "@zimoby/ae-native-gradient";
-import WebSocket from "ws";
+import packageJson from "../package.json" with { type: "json" };
+import productContract from "../src/shared/product-contract.json" with { type: "json" };
+import { CDPClient } from "./lib/cdp-client.mjs";
+import {
+  createOwnedRunDirectory,
+  removeOwnedRunDirectory,
+  RunnerPolicyError,
+} from "./lib/live-runner-policy.mjs";
 
 const REPO_ROOT = fileURLToPath(new URL("../", import.meta.url));
 const FIXTURE_SOURCE = resolve(
@@ -55,134 +62,31 @@ const REVIEWED_INPUTS = Object.freeze({
     sha256: "cb1ffe6195604834203a950433a83dd7097e971f8477567fdc2c32e3c34ed9dd",
   },
 });
-if (process.argv.length !== 2) {
-  throw new Error("This safety-bounded runner accepts no command-line options");
-}
 const RUN_TOKEN = `track-b-${Date.now().toString(36)}-${randomBytes(8).toString("hex")}`;
 const EVIDENCE_ROOT = resolve(REPO_ROOT, "evidence/local/native-gradient/track-b-apply-ae25");
 const OUTPUT_DIRECTORY = resolve(EVIDENCE_ROOT, RUN_TOKEN);
-const TEMPORARY_ROOT = `/private/tmp/chroma-relay-native-gradient-apply-${RUN_TOKEN}`;
+const TEMPORARY_PARENT = "/private/tmp/chroma-relay-native-gradient-apply";
+const TEMPORARY_ROOT = resolve(TEMPORARY_PARENT, RUN_TOKEN);
 const LOCK_PATH = "/private/tmp/chroma-relay-native-gradient-apply.lock";
 const BUILD_ROOT = resolve(REPO_ROOT, "dist/cep");
 const MAIN_PAGE = resolve(BUILD_ROOT, "main/index.html");
-const NPM_PATH = "/Users/REDACTED/.local/bin/npm";
+const BUILD_PROVENANCE_PATH = resolve(BUILD_ROOT, ".chroma-relay-build-provenance.json");
 const ACTION_MENU_ID = "apply-active-palette-gradient";
+const EXPECTED_BUILD_MARKER = `${productContract.marker.current} · ${packageJson.version}`;
+const LOCK_MARKER = Object.freeze({
+  kind: productContract.runner.ownershipKind,
+  schema: productContract.runner.ownershipSchema,
+  contractVersion: productContract.contractVersion,
+  marker: productContract.marker.current,
+  markerFile: productContract.runner.markerFile,
+  token: RUN_TOKEN,
+});
 const PALETTE = [
   { id: "track-b-a", rgba: [0.125, 0.25, 0.5, 0.2] },
   { id: "track-b-b", rgba: [0.75, 0.125, 0.375, 0.6] },
   { id: "track-b-c", rgba: [0.9, 0.8, 0.1, 1] },
 ];
 const execFileAsync = promisify(execFile);
-
-class CDPClient {
-  constructor(url) {
-    this.url = url;
-    this.nextId = 1;
-    this.pending = new Map();
-    this.events = [];
-  }
-
-  async connect() {
-    this.socket = new WebSocket(this.url);
-    this.socket.addEventListener("message", ({ data }) => {
-      let message;
-      try {
-        message = JSON.parse(data);
-      } catch (error) {
-        this.rejectPending(new Error(`Malformed CDP message: ${error.message}`));
-        return;
-      }
-      if (!message.id) {
-        this.events.push(message);
-        return;
-      }
-      const pending = this.pending.get(message.id);
-      if (!pending) return;
-      this.pending.delete(message.id);
-      if (message.error) pending.reject(new Error(message.error.message || "CDP error"));
-      else pending.resolve(message.result);
-    });
-    await new Promise((resolveOpen, rejectOpen) => {
-      this.socket.addEventListener("open", resolveOpen, { once: true });
-      this.socket.addEventListener("error", rejectOpen, { once: true });
-    });
-    this.socket.addEventListener("close", () => {
-      this.rejectPending(new Error("CDP socket closed"));
-    });
-    this.socket.addEventListener("error", () => {
-      this.rejectPending(new Error("CDP socket error"));
-    });
-  }
-
-  rejectPending(error) {
-    for (const pending of this.pending.values()) pending.reject(error);
-    this.pending.clear();
-  }
-
-  send(method, params = {}) {
-    return new Promise((resolveResult, rejectResult) => {
-      const id = this.nextId++;
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        rejectResult(new Error(`${method} timed out`));
-      }, 10_000);
-      this.pending.set(id, {
-        resolve: (result) => {
-          clearTimeout(timer);
-          resolveResult(result);
-        },
-        reject: (error) => {
-          clearTimeout(timer);
-          rejectResult(error);
-        },
-      });
-      this.socket.send(JSON.stringify({ id, method, params }));
-    });
-  }
-
-  async evaluate(expression) {
-    const result = await this.send("Runtime.evaluate", {
-      expression,
-      awaitPromise: true,
-      returnByValue: true,
-    });
-    if (result.exceptionDetails) {
-      throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text);
-    }
-    return result.result?.value;
-  }
-
-  async close(timeoutMs = 5_000) {
-    this.rejectPending(new Error("CDP client closed"));
-    const socket = this.socket;
-    if (!socket || socket.readyState === WebSocket.CLOSED) return;
-    await new Promise((resolveClose, rejectClose) => {
-      const timer = setTimeout(() => {
-        cleanup();
-        rejectClose(new Error("CDP WebSocket close timed out"));
-      }, timeoutMs);
-      const cleanup = () => {
-        clearTimeout(timer);
-        socket.removeEventListener("close", onClose);
-        socket.removeEventListener("error", onError);
-      };
-      const onClose = () => {
-        cleanup();
-        resolveClose();
-      };
-      const onError = () => {
-        cleanup();
-        rejectClose(new Error("CDP WebSocket failed during close"));
-      };
-      socket.addEventListener("close", onClose, { once: true });
-      socket.addEventListener("error", onError, { once: true });
-      if (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING) {
-        socket.close();
-      }
-    });
-    requireCondition(socket.readyState === WebSocket.CLOSED, "CDP WebSocket did not close");
-  }
-}
 
 const delay = (milliseconds) => new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
 const waitUntil = async (read, timeoutMs, label) => {
@@ -215,40 +119,414 @@ const isContainedPath = (root, candidate) => {
   const fromRoot = relative(root, candidate);
   return fromRoot !== ".." && !fromRoot.startsWith(`..${sep}`) && !isAbsolute(fromRoot);
 };
-const verifyReviewedInputs = async () => {
-  const verified = {};
-  for (const [name, input] of Object.entries(REVIEWED_INPUTS)) {
-    const inputPath = await realpath(input.path);
-    const inputHash = await sha256(inputPath);
-    requireCondition(inputHash === input.sha256, `${name} hash drifted from the reviewed runner input`);
-    verified[name] = { path: inputPath, sha256: inputHash };
+const readExistingLock = async () => {
+  let stat;
+  try {
+    stat = await lstat(LOCK_PATH);
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
   }
-  return verified;
+  requireCondition(!stat.isSymbolicLink() && stat.isFile(), "Track B lock is not a regular file");
+  let marker;
+  try {
+    marker = JSON.parse(await readFile(LOCK_PATH, "utf8"));
+  } catch {
+    throw new RunnerPolicyError("Track B lock marker is malformed or stale");
+  }
+  requireCondition(
+    marker?.kind === productContract.runner.ownershipKind &&
+      marker?.schema === productContract.runner.ownershipSchema &&
+      marker?.contractVersion === productContract.contractVersion &&
+      marker?.marker === productContract.marker.current &&
+      marker?.markerFile === productContract.runner.markerFile,
+    "Track B lock marker is foreign or stale"
+  );
+  return marker;
+};
+const sha256Bytes = (bytes) => createHash("sha256").update(bytes).digest("hex");
+const describeBytes = (path, bytes) => ({
+  path,
+  size: bytes.byteLength,
+  sha256: sha256Bytes(bytes),
+});
+const describeFile = async (path) => describeBytes(path, await readFile(path));
+
+const KNOWN_HARNESS_PROPERTIES = Object.freeze([
+  "__CP_TRACK_B_RUN_TOKEN__",
+  "__CP_TRACK_B_INJECTION_OWNER__",
+  "__CP_TRACK_B_ORIGINAL_EVAL_SCRIPT__",
+  "__CP_TRACK_B_INJECTION_COUNT__",
+  "__CP_TRACK_B_PENDING_CALLBACK__",
+  "__CP_TRACK_B_RESULT_OWNER__",
+  "__CP_TRACK_B_RESULT_CSI__",
+  "__CP_TRACK_B_RESULT_HANDLER__",
+  "__CP_TRACK_B_RESULT_EVENTS__",
+  "__CP_TRACK_B_RESULT_TOKENS__",
+  "__CP_TRACK_B_PROJECT_OWNER__",
+  "injection",
+  "listener",
+  "project",
+]);
+
+const hasProperty = (value, property) =>
+  value !== null && value !== undefined &&
+  (Object.prototype.hasOwnProperty.call(Object(value), property) || property in Object(value));
+
+export const assertNoHarnessProperties = (properties = {}) => {
+  const present = KNOWN_HARNESS_PROPERTIES.filter((property) =>
+    typeof properties[property] === "boolean"
+      ? properties[property]
+      : hasProperty(properties, property)
+  );
+  if (present.length > 0) {
+    throw new RunnerPolicyError(`Foreign Track B harness properties are present: ${present.join(", ")}`);
+  }
+  return true;
+};
+
+export const validateOwnedEventTokens = (
+  events,
+  runToken,
+  expectedCount,
+  { allowNullRequestId = false } = {},
+) => {
+  if (typeof runToken !== "string" || runToken.length < 16) {
+    throw new RunnerPolicyError("Owned event validation requires a cryptographic run token");
+  }
+  if (!Array.isArray(events) || events.length !== expectedCount) {
+    throw new RunnerPolicyError(`Expected exactly ${expectedCount} owned events`);
+  }
+  const tokens = events.map((event) => {
+    const token = event && event.runToken !== undefined ? event.runToken : event?.requestId;
+    if (allowNullRequestId && token === null) return null;
+    if (token !== runToken) throw new RunnerPolicyError(`Missing or foreign event token: ${String(token)}`);
+    return token;
+  });
+  if (!allowNullRequestId && new Set(tokens).size !== tokens.length) {
+    throw new RunnerPolicyError("Duplicate owned event token");
+  }
+  return { count: tokens.length, tokens };
+};
+
+export const assertReviewedInputsUnchanged = (start, end) => {
+  if (!sameJson(start, end)) throw new RunnerPolicyError("Reviewed input manifest changed during Track B");
+  return true;
+};
+
+export const validateBuildProvenance = (provenance, expected) => {
+  if (!provenance || provenance.schemaVersion !== 1) {
+    throw new RunnerPolicyError("Build provenance is missing or has an unsupported schema");
+  }
+  if (provenance.commit !== expected.commit) {
+    throw new RunnerPolicyError("Build provenance commit is stale");
+  }
+  if (provenance.gitClean !== true) {
+    throw new RunnerPolicyError("Build provenance was produced from a dirty worktree");
+  }
+  const packageValue = provenance.package?.value || provenance.package;
+  const contractValue = provenance.productContract?.value || provenance.productContract;
+  if (!sameJson(packageValue, expected.packageJson)) {
+    throw new RunnerPolicyError("Build provenance package contract drifted");
+  }
+  if (!sameJson(contractValue, expected.productContract)) {
+    throw new RunnerPolicyError("Build provenance product contract drifted");
+  }
+  if (expected.packageFile &&
+      (provenance.package?.size !== expected.packageFile.size || provenance.package?.sha256 !== expected.packageFile.sha256)) {
+    throw new RunnerPolicyError("Build provenance package bytes drifted");
+  }
+  if (expected.contractFile &&
+      (provenance.productContract?.size !== expected.contractFile.size || provenance.productContract?.sha256 !== expected.contractFile.sha256)) {
+    throw new RunnerPolicyError("Build provenance product-contract bytes drifted");
+  }
+  const actualAssets = (provenance.assets || []).map(({ path, size, sha256 }) => ({ path, size, sha256 }));
+  const expectedAssets = (expected.assets || []).map(({ path, size, sha256 }) => ({ path, size, sha256 }));
+  if (!sameJson(actualAssets, expectedAssets)) {
+    throw new RunnerPolicyError("Build provenance asset bytes drifted");
+  }
+  return true;
+};
+
+export const runFinalizationStages = async (stages = []) => {
+  const results = [];
+  const errors = [];
+  for (const stage of stages) {
+    try {
+      results.push({ name: stage.name, value: await stage.run() });
+    } catch (error) {
+      errors.push({
+        stage: stage.name,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  return { results, errors };
+};
+
+export const publishFinalReport = async ({
+  reportPath,
+  failurePath,
+  report,
+  write,
+  writeFailure,
+  remove,
+} = {}) => {
+  const writeReport = write || ((path, value) => writeDurableJson(path, value));
+  const writeFailureReport = writeFailure || ((path, value) => writeDurableJson(path, value, { overwrite: true }));
+  const removeSuccess = remove || ((path) => rm(path, { force: false }));
+  try {
+    await writeReport(reportPath, report);
+    return { passed: report?.passed === true, errors: [] };
+  } catch (error) {
+    const errors = [{ stage: "report-publication", error: error instanceof Error ? error.message : String(error) }];
+    let successRemovalFailed = false;
+    if (error?.code !== "EEXIST") {
+      try {
+        await removeSuccess(reportPath);
+      } catch (removeError) {
+        if (removeError?.code !== "ENOENT") {
+          successRemovalFailed = true;
+          errors.push({ stage: "success-report-removal", error: removeError instanceof Error ? removeError.message : String(removeError) });
+        }
+      }
+    }
+    try {
+      await writeFailureReport(failurePath, {
+        ...report,
+        passed: false,
+        failure: "Durable success publication failed",
+        secondaryFailures: errors,
+      });
+    } catch (failureError) {
+      errors.push({ stage: "failure-report-publication", error: failureError instanceof Error ? failureError.message : String(failureError) });
+    }
+    if (successRemovalFailed) {
+      try {
+        await writeFailureReport(reportPath, {
+          ...report,
+          passed: false,
+          failure: "Durable success publication failed and removal was incomplete",
+          secondaryFailures: errors,
+        });
+      } catch (downgradeError) {
+        errors.push({ stage: "success-report-downgrade", error: downgradeError instanceof Error ? downgradeError.message : String(downgradeError) });
+      }
+    }
+    return { passed: false, errors };
+  }
+};
+
+const readGitState = async () => {
+  const { stdout: head } = await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: REPO_ROOT });
+  const { stdout: status } = await execFileAsync(
+    "git",
+    ["status", "--porcelain=v1", "--untracked-files=all"],
+    { cwd: REPO_ROOT },
+  );
+  return { head: head.trim(), clean: status.trim() === "", status: status.trim() };
+};
+
+const readBuildProvenance = async () => {
+  try {
+    return JSON.parse(await readFile(BUILD_PROVENANCE_PATH, "utf8"));
+  } catch (error) {
+    if (error?.code === "ENOENT") throw new RunnerPolicyError("Commit-bearing build provenance is missing");
+    throw error;
+  }
+};
+
+const writeAtomicallyDurableJson = async (path, value) => {
+  const temporaryPath = `${path}.${RUN_TOKEN}.tmp`;
+  const handle = await open(temporaryPath, "wx", 0o600);
+  try {
+    await handle.writeFile(`${JSON.stringify(value, null, 2)}\n`);
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  await rename(temporaryPath, path);
+  const directoryHandle = await open(dirname(path), "r");
+  try {
+    await directoryHandle.sync();
+  } finally {
+    await directoryHandle.close();
+  }
+};
+
+export const createReviewedInputManifest = async (input = {}) => {
+  if (input.assets || input.fixtures || input.templates) {
+    const describeEntries = (entries = []) => entries.map((entry) =>
+      describeBytes(entry.path, entry.bytes instanceof Uint8Array ? entry.bytes : Buffer.from(entry.bytes))
+    );
+    return {
+      schemaVersion: 1,
+      commit: input.commit,
+      package: input.packageJson || null,
+      productContract: input.productContract || null,
+      assets: describeEntries(input.assets),
+      fixtures: describeEntries(input.fixtures),
+      templates: describeEntries(input.templates),
+      ffx: describeEntries(input.templates),
+    };
+  }
+
+  const gitStart = await readGitState();
+  const build = await createBuildManifest("reviewed-production");
+  const packageFile = await describeFile(resolve(REPO_ROOT, "package.json"));
+  const contractFile = await describeFile(resolve(REPO_ROOT, "src/shared/product-contract.json"));
+  const fixtures = [];
+  for (const inputEntry of Object.values(REVIEWED_INPUTS).slice(0, 2)) fixtures.push(await describeFile(inputEntry.path));
+  const templates = [];
+  for (const inputEntry of Object.values(REVIEWED_INPUTS).slice(2)) templates.push(await describeFile(inputEntry.path));
+  for (const template of templates) {
+    const templateParts = template.path.split(sep);
+    const templateName = templateParts[templateParts.length - 1];
+    const built = build.files.find((entry) => entry.path.endsWith(`/${templateName}`));
+    requireCondition(
+      built?.size === template.size && built?.sha256 === template.sha256,
+      `Built FFX/template asset does not match the reviewed source: ${template.path}`
+    );
+  }
+  const provenance = await readBuildProvenance();
+  validateBuildProvenance(provenance, {
+    commit: gitStart.head,
+    packageJson,
+    productContract,
+    packageFile,
+    contractFile,
+    assets: build.files.map(({ relativePath, size, sha256 }) => ({ path: relativePath, size, sha256 })),
+  });
+  const gitEnd = await readGitState();
+  requireCondition(gitStart.head === gitEnd.head, "Git HEAD changed while reviewed inputs were read");
+  requireCondition(
+    gitStart.clean && gitEnd.clean && gitStart.status === gitEnd.status,
+    "Git worktree changed while reviewed inputs were read",
+  );
+  const assets = [...build.files, packageFile, contractFile];
+  return {
+    schemaVersion: 1,
+    commit: gitStart.head,
+    gitClean: gitStart.clean,
+    gitStatus: gitStart.status,
+    gitHeadBefore: gitStart.head,
+    gitHeadAfter: gitEnd.head,
+    package: { ...packageFile, version: packageJson.version },
+    productContract: { ...contractFile, value: productContract },
+    assets,
+    fixtures,
+    templates,
+    ffx: templates,
+    build,
+    buildProvenance: provenance,
+  };
+};
+
+export const validateFormalPreconditions = async ({
+  gitHead,
+  gitClean,
+  lock,
+  target,
+  reviewedInputs,
+} = {}) => {
+  const failPrecondition = (message) => {
+    throw new RunnerPolicyError(`Formal precondition rejected: ${message}`);
+  };
+  if (!gitClean || typeof gitHead !== "string" || !gitHead) failPrecondition("worktree is not clean");
+  if (lock !== null && lock !== undefined) failPrecondition("existing or stale lock");
+  if (reviewedInputs?.manifest?.commit !== gitHead) failPrecondition("reviewed commit does not match HEAD");
+  if (reviewedInputs?.manifest?.gitClean !== true) failPrecondition("reviewed inputs were built from a dirty worktree");
+  if (
+    reviewedInputs?.manifest?.gitHeadBefore !== gitHead ||
+    reviewedInputs?.manifest?.gitHeadAfter !== gitHead
+  ) {
+    failPrecondition("reviewed input HEAD was unstable");
+  }
+  if (
+    !target ||
+    target.exact !== true ||
+    target.production !== true ||
+    target.panelId !== productContract.product.panelIds.main ||
+    target.url !== "file:///repo/dist/cep/main/index.html" &&
+    target.url !== pathToFileURL(MAIN_PAGE).href
+  ) failPrecondition("target is not the exact production Main panel");
+  const owners = target.harnessOwners || {};
+  assertNoHarnessProperties(owners);
+  assertNoHarnessProperties(target.harnessProperties || {});
+  return { ok: true, readOnly: true, commit: gitHead };
+};
+
+export const inspectPreflightPaths = async ({
+  evidenceRoot = EVIDENCE_ROOT,
+  outputDirectory = OUTPUT_DIRECTORY,
+  temporaryParent = TEMPORARY_PARENT,
+  temporaryRoot = TEMPORARY_ROOT,
+  lockPath = LOCK_PATH,
+  fs = { lstat, realpath, readFile },
+} = {}) => {
+  const inspectExistingDirectory = async (path, label) => {
+    try {
+      const stat = await fs.lstat(path);
+      if (stat.isSymbolicLink?.() || !stat.isDirectory?.()) {
+        throw new RunnerPolicyError(`${label} is not a regular directory`);
+      }
+      return { exists: true, realpath: await fs.realpath(path) };
+    } catch (error) {
+      if (error?.code === "ENOENT") return { exists: false, realpath: null };
+      throw error;
+    }
+  };
+  const inspectCollision = async (path, label) => {
+    try {
+      const stat = await fs.lstat(path);
+      throw new RunnerPolicyError(`${label} collision is present (${stat.isSymbolicLink?.() ? "symlink" : "occupied"})`);
+    } catch (error) {
+      if (error?.code === "ENOENT") return false;
+      throw error;
+    }
+  };
+  const output = await inspectExistingDirectory(evidenceRoot, "Evidence root");
+  const temporary = await inspectExistingDirectory(temporaryParent, "Temporary parent");
+  await inspectCollision(outputDirectory, "Evidence run");
+  await inspectCollision(temporaryRoot, "Temporary run");
+  let lock = null;
+  try {
+    lock = JSON.parse(await fs.readFile(lockPath, "utf8"));
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw new RunnerPolicyError("Existing lock is malformed or unreadable");
+  }
+  return { evidenceRoot: output, temporaryParent: temporary, outputDirectory, temporaryRoot, lock };
+};
+
+const verifyReviewedInputs = async () => {
+  const manifest = await createReviewedInputManifest();
+  for (const [name, input] of Object.entries(REVIEWED_INPUTS)) {
+    const entry = [...manifest.fixtures, ...manifest.templates].find((candidate) => candidate.path === input.path);
+    requireCondition(entry?.sha256 === input.sha256, `${name} hash drifted from the reviewed runner input`);
+  }
+  return manifest;
 };
 const runCanonicalBuild = async (script) => {
-  const result = await execFileAsync(NPM_PATH, ["run", script], {
+  const npmCommand = process.env.npm_execpath || "npm";
+  const result = await execFileAsync(npmCommand, ["run", script], {
     cwd: REPO_ROOT,
-    env: {
-      ...process.env,
-      PATH: `/Users/REDACTED/.local/bin:${process.env.PATH || ""}`,
-    },
     maxBuffer: 20 * 1024 * 1024,
   });
   return {
-    command: `${NPM_PATH} run ${script}`,
+    command: `${npmCommand} run ${script}`,
     stdout: result.stdout,
     stderr: result.stderr,
   };
 };
-const extractMainAssetPaths = async () => {
-  const html = await readFile(MAIN_PAGE, "utf8");
+const extractHtmlAssetPaths = async (page) => {
+  const html = await readFile(page, "utf8");
   const scripts = [];
   const styles = [];
   for (const match of html.matchAll(/<script\b[^>]*\bsrc="([^"]+)"[^>]*>/gi)) {
-    scripts.push(await realpath(fileURLToPath(new URL(match[1], pathToFileURL(MAIN_PAGE)))));
+    scripts.push(await realpath(fileURLToPath(new URL(match[1], pathToFileURL(page)))));
   }
   for (const match of html.matchAll(/<link\b[^>]*\brel="stylesheet"[^>]*\bhref="([^"]+)"[^>]*>/gi)) {
-    styles.push(await realpath(fileURLToPath(new URL(match[1], pathToFileURL(MAIN_PAGE)))));
+    styles.push(await realpath(fileURLToPath(new URL(match[1], pathToFileURL(page)))));
   }
   requireCondition(scripts.length > 0 && styles.length > 0, "Built Main HTML has no executable asset set");
   return {
@@ -256,14 +534,20 @@ const extractMainAssetPaths = async () => {
     styles: [...new Set(styles)].sort(),
   };
 };
+const extractMainAssetPaths = async () => extractHtmlAssetPaths(MAIN_PAGE);
 const createBuildManifest = async (label) => {
   const buildRoot = await realpath(BUILD_ROOT);
   const page = await realpath(MAIN_PAGE);
   const runtime = await extractMainAssetPaths();
+  const settingsPage = await realpath(resolve(BUILD_ROOT, "settings/index.html"));
+  const settingsRuntime = await extractHtmlAssetPaths(settingsPage);
   const requiredPaths = [
     page,
     ...runtime.scripts,
     ...runtime.styles,
+    settingsPage,
+    ...settingsRuntime.scripts,
+    ...settingsRuntime.styles,
     await realpath(resolve(BUILD_ROOT, "jsx/index.js")),
     await realpath(resolve(BUILD_ROOT, "CSXS/manifest.xml")),
     await realpath(resolve(BUILD_ROOT, "assets/native-gradient/ae25-6/fill-template.ffx")),
@@ -272,9 +556,39 @@ const createBuildManifest = async (label) => {
   const files = [];
   for (const path of [...new Set(requiredPaths)].sort()) {
     requireCondition(isContainedPath(buildRoot, path) || path === buildRoot, `Build manifest path escaped dist: ${path}`);
-    files.push({ path, sha256: await sha256(path) });
+    const bytes = await readFile(path);
+    files.push({
+      path,
+      relativePath: relative(buildRoot, path).split(sep).join("/"),
+      size: bytes.byteLength,
+      sha256: sha256Bytes(bytes),
+    });
   }
-  return { label, buildRoot, page, runtime, files };
+  return { label, buildRoot, page, runtime, settingsPage, settingsRuntime, files };
+};
+
+export const writeBuildProvenance = async () => {
+  const gitStart = await readGitState();
+  const build = await createBuildManifest("production");
+  const packageFile = await describeFile(resolve(REPO_ROOT, "package.json"));
+  const contractFile = await describeFile(resolve(REPO_ROOT, "src/shared/product-contract.json"));
+  const gitEnd = await readGitState();
+  requireCondition(gitStart.head === gitEnd.head, "Git HEAD changed while build provenance was read");
+  const assets = build.files.map(({ relativePath, size, sha256 }) => ({
+    path: relativePath,
+    size,
+    sha256,
+  }));
+  const provenance = {
+    schemaVersion: 1,
+    commit: gitStart.head,
+    gitClean: gitStart.clean,
+    package: { value: packageJson, size: packageFile.size, sha256: packageFile.sha256 },
+    productContract: { value: productContract, size: contractFile.size, sha256: contractFile.sha256 },
+    assets,
+  };
+  await writeAtomicallyDurableJson(BUILD_PROVENANCE_PATH, provenance);
+  return provenance;
 };
 const runtimeIdentity = (client) =>
   client.evaluate(`(() => ({
@@ -314,7 +628,7 @@ const waitForRuntime = async (client, expectedUrl, expectedDebug) =>
     const identity = await runtimeIdentity(client);
     return identity.readyState === "complete" &&
       identity.url === expectedUrl &&
-      identity.extensionId === "com.zimoby.chroma-relay.main" &&
+      identity.extensionId === productContract.product.panelIds.main &&
       identity.debugApi === (expectedDebug ? "object" : "undefined")
       ? identity
       : false;
@@ -324,21 +638,41 @@ const navigateMain = async (client, url, expectedDebug) => {
   requireCondition(!navigation.errorText, `Main navigation failed: ${navigation.errorText}`);
   return waitForRuntime(client, url, expectedDebug);
 };
-const writeDurableJson = async (path, value) => {
+const writeDurableJson = async (path, value, { overwrite = false } = {}) => {
   const temporaryPath = `${path}.${RUN_TOKEN}.tmp`;
   const handle = await open(temporaryPath, "wx", 0o600);
+  let renamed = false;
   try {
     await handle.writeFile(`${JSON.stringify(value, null, 2)}\n`);
     await handle.sync();
   } finally {
     await handle.close();
   }
-  await rename(temporaryPath, path);
-  const directoryHandle = await open(OUTPUT_DIRECTORY, "r");
   try {
-    await directoryHandle.sync();
-  } finally {
-    await directoryHandle.close();
+    await lstat(path);
+    if (!overwrite) {
+      const error = new RunnerPolicyError(`Refusing to overwrite an existing evidence report: ${path}`);
+      error.code = "EEXIST";
+      throw error;
+    }
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      await rm(temporaryPath, { force: true }).catch(() => {});
+      throw error;
+    }
+  }
+  try {
+    await rename(temporaryPath, path);
+    renamed = true;
+    const directoryHandle = await open(OUTPUT_DIRECTORY, "r");
+    try {
+      await directoryHandle.sync();
+    } finally {
+      await directoryHandle.close();
+    }
+  } catch (error) {
+    if (!renamed) await rm(temporaryPath, { force: true }).catch(() => {});
+    throw error;
   }
 };
 const readOptionalFile = async (path) => {
@@ -462,7 +796,7 @@ const assertRuntimeBuild = async (identity, manifest, expectedDebug) => {
   const identityPage = await realpath(fileURLToPath(new URL(identity.url)));
   requireCondition(identityPage === manifest.page, `Runtime page is not the exact ${manifest.label} Main build`);
   requireCondition(
-    identity.extensionId === "com.zimoby.chroma-relay.main" &&
+    identity.extensionId === productContract.product.panelIds.main &&
       identity.debugApi === (expectedDebug ? "object" : "undefined"),
     `Runtime extension/debug identity drifted: ${JSON.stringify(identity)}`
   );
@@ -478,7 +812,11 @@ const assertRuntimeBuild = async (identity, manifest, expectedDebug) => {
     `Runtime asset set does not match exact ${manifest.label} HTML: ${JSON.stringify({ scripts, styles })}`
   );
   for (const file of manifest.files) {
-    requireCondition((await sha256(file.path)) === file.sha256, `${manifest.label} build file changed: ${file.path}`);
+    const bytes = await readFile(file.path);
+    requireCondition(
+      bytes.byteLength === file.size && sha256Bytes(bytes) === file.sha256,
+      `${manifest.label} build file changed: ${file.path}`
+    );
   }
   return { ...manifest, runtimeIdentity: identity };
 };
@@ -487,6 +825,27 @@ const debugCall = (callback) => `(() => {
   if (!api) throw new Error("Chroma Relay debug API unavailable");
   return (${callback})(api);
 })()`;
+
+const harnessPresenceExpression = `(() => {
+  const names = ${JSON.stringify(KNOWN_HARNESS_PROPERTIES)};
+  return Object.fromEntries(names.map((name) => [name, name in window]));
+})()`;
+const installHarnessRunToken = (client) =>
+  client.evaluate(`(() => {
+    const names = ${JSON.stringify(KNOWN_HARNESS_PROPERTIES)};
+    if (names.some((name) => name in window)) throw new Error("Track B harness property is already present");
+    window.__CP_TRACK_B_RUN_TOKEN__ = ${JSON.stringify(RUN_TOKEN)};
+    return true;
+  })()`);
+const clearHarnessRunToken = (client) =>
+  client.evaluate(`(() => {
+    if (!("__CP_TRACK_B_RUN_TOKEN__" in window)) return false;
+    if (window.__CP_TRACK_B_RUN_TOKEN__ !== ${JSON.stringify(RUN_TOKEN)}) {
+      throw new Error("Track B run token ownership drifted");
+    }
+    delete window.__CP_TRACK_B_RUN_TOKEN__;
+    return true;
+  })()`);
 
 const waitForDebug = async (client) => {
   let stable = 0;
@@ -709,7 +1068,7 @@ const projectStateSource = `(function () {
 const registerOriginalProjectSource = (originalIdentity) => `(function () {
   ${selectionHelpers}
   if (!app.project) return JSON.stringify({ ok: false, reason: "no-project" });
-  if ($.global.__CP_TRACK_B_PROJECT_OWNER__) {
+  if (Object.prototype.hasOwnProperty.call($.global, "__CP_TRACK_B_PROJECT_OWNER__")) {
     return JSON.stringify({ ok: false, reason: "project-owner-already-registered" });
   }
   var expected = ${JSON.stringify(originalIdentity)};
@@ -722,22 +1081,25 @@ const registerOriginalProjectSource = (originalIdentity) => `(function () {
 })()`;
 
 const releaseOriginalProjectRegistrationSource = `(function () {
-  var owner = $.global.__CP_TRACK_B_PROJECT_OWNER__ || null;
-  if (owner === null) {
+  var present = Object.prototype.hasOwnProperty.call($.global, "__CP_TRACK_B_PROJECT_OWNER__");
+  var owner = present ? $.global.__CP_TRACK_B_PROJECT_OWNER__ : null;
+  if (!present) {
     return JSON.stringify({ released: false, owner: null, foreign: false, reason: "confirmed-owner-missing" });
   }
   if (owner !== ${JSON.stringify(RUN_TOKEN)}) {
-    return JSON.stringify({ released: false, owner: owner, foreign: owner !== null });
+    return JSON.stringify({ released: false, owner: owner, foreign: true });
   }
   delete $.global.__CP_TRACK_B_PROJECT_OWNER__;
   return JSON.stringify({ released: true, owner: owner, foreign: false });
 })()`;
 
 const probeOriginalProjectRegistrationSource = `(function () {
-  var owner = $.global.__CP_TRACK_B_PROJECT_OWNER__ || null;
+  var present = Object.prototype.hasOwnProperty.call($.global, "__CP_TRACK_B_PROJECT_OWNER__");
+  var owner = present ? $.global.__CP_TRACK_B_PROJECT_OWNER__ : null;
   return JSON.stringify({
+    present: present,
     owner: owner,
-    foreign: owner !== null && owner !== ${JSON.stringify(RUN_TOKEN)}
+    foreign: present && owner !== ${JSON.stringify(RUN_TOKEN)}
   });
 })()`;
 
@@ -950,8 +1312,12 @@ const installUnknownCompletionInjection = (client) =>
     if (!bridge || typeof bridge.evalScript !== "function") {
       throw new Error("CEP evalScript bridge unavailable");
     }
-    if (window.__CP_TRACK_B_INJECTION_OWNER__) {
-      throw new Error("Track B injection already installed");
+    const names = ${JSON.stringify(KNOWN_HARNESS_PROPERTIES)};
+    if (names.some((name) => name in window && name !== "__CP_TRACK_B_RUN_TOKEN__")) {
+      throw new Error("Track B injection/listener property already installed");
+    }
+    if (window.__CP_TRACK_B_RUN_TOKEN__ !== ${JSON.stringify(RUN_TOKEN)}) {
+      throw new Error("Track B run token is not installed");
     }
     const original = bridge.evalScript;
     window.__CP_TRACK_B_INJECTION_OWNER__ = ${JSON.stringify(RUN_TOKEN)};
@@ -980,6 +1346,8 @@ const releaseUnknownCompletionInjection = (client, target, hostVersion) =>
     }
     window.__CP_TRACK_B_PENDING_CALLBACK__ = null;
     callback(JSON.stringify({
+      runToken: ${JSON.stringify(RUN_TOKEN)},
+      requestId: ${JSON.stringify(RUN_TOKEN)},
       status: "apply-unknown-completion",
       primaryStatus: "apply-unknown-completion",
       hostVersion: ${JSON.stringify(hostVersion)},
@@ -1008,18 +1376,21 @@ const installPaletteResultListener = (client) =>
     if (!bridge || typeof bridge.addEventListener !== "function") {
       throw new Error("CEP application event API unavailable");
     }
-    if (
-      window.__CP_TRACK_B_RESULT_OWNER__ ||
-      window.__CP_TRACK_B_RESULT_CSI__ ||
-      window.__CP_TRACK_B_RESULT_HANDLER__ ||
-      window.__CP_TRACK_B_RESULT_EVENTS__
-    ) {
+    const names = ${JSON.stringify(KNOWN_HARNESS_PROPERTIES)};
+    if (names.some((name) => name in window && name !== "__CP_TRACK_B_RUN_TOKEN__")) {
       throw new Error("Track B result listener already installed");
     }
+    if (window.__CP_TRACK_B_RUN_TOKEN__ !== ${JSON.stringify(RUN_TOKEN)}) {
+      throw new Error("Track B run token is not installed");
+    }
     const results = [];
+    const tokens = [];
     const handler = (event) => {
       try {
-        results.push(typeof event.data === "string" ? JSON.parse(event.data) : event.data);
+        const result = typeof event.data === "string" ? JSON.parse(event.data) : event.data;
+        const token = result?.runToken !== undefined ? result.runToken : result?.requestId;
+        if (token === ${JSON.stringify(RUN_TOKEN)}) tokens.push(token);
+        results.push(result);
       } catch (error) {
         results.push({ parseError: String(error) });
       }
@@ -1028,6 +1399,7 @@ const installPaletteResultListener = (client) =>
     window.__CP_TRACK_B_RESULT_CSI__ = bridge;
     window.__CP_TRACK_B_RESULT_HANDLER__ = handler;
     window.__CP_TRACK_B_RESULT_EVENTS__ = results;
+    window.__CP_TRACK_B_RESULT_TOKENS__ = tokens;
     bridge.addEventListener("com.zimoby.chroma-relay.result", handler);
     return true;
   })()`);
@@ -1047,7 +1419,8 @@ const dispatchBusyPaletteCommand = (client, baseRevision) =>
       appId: JSON.parse(bridge.getHostEnvironment()).appId,
       extensionId: bridge.getExtensionId(),
       data: JSON.stringify({
-        requestId: "track-b-lock",
+        runToken: ${JSON.stringify(RUN_TOKEN)},
+        requestId: ${JSON.stringify(RUN_TOKEN)},
         baseRevision: ${JSON.stringify(baseRevision)},
         command: { type: "create" }
       })
@@ -1057,28 +1430,36 @@ const dispatchBusyPaletteCommand = (client, baseRevision) =>
 
 const readPaletteResultEvents = (client) =>
   client.evaluate(`(() => {
-    const owner = window.__CP_TRACK_B_RESULT_OWNER__ || null;
+    const names = ${JSON.stringify(KNOWN_HARNESS_PROPERTIES)};
+    const owner = window.__CP_TRACK_B_RESULT_OWNER__;
     const csi = window.__CP_TRACK_B_RESULT_CSI__;
     const handler = window.__CP_TRACK_B_RESULT_HANDLER__;
     const results = window.__CP_TRACK_B_RESULT_EVENTS__ || [];
-    if ((owner || csi || handler || results.length > 0) && owner !== ${JSON.stringify(RUN_TOKEN)}) {
+    const tokens = window.__CP_TRACK_B_RESULT_TOKENS__ || [];
+    if (names.some((name) => name in window && name !== "__CP_TRACK_B_RUN_TOKEN__") && owner !== ${JSON.stringify(RUN_TOKEN)}) {
       throw new Error("Refusing to remove a foreign Track B result listener");
     }
-    if (csi && handler) {
-      csi.removeEventListener("com.zimoby.chroma-relay.result", handler, null);
+    if (owner !== ${JSON.stringify(RUN_TOKEN)} || !csi || typeof handler !== "function") {
+      throw new Error("Owned Track B result listener is incomplete");
     }
+    csi.removeEventListener("com.zimoby.chroma-relay.result", handler, null);
     delete window.__CP_TRACK_B_RESULT_OWNER__;
     delete window.__CP_TRACK_B_RESULT_CSI__;
     delete window.__CP_TRACK_B_RESULT_HANDLER__;
     delete window.__CP_TRACK_B_RESULT_EVENTS__;
-    return results;
+    delete window.__CP_TRACK_B_RESULT_TOKENS__;
+    return { results, tokens };
   })()`);
 
 const removeUnknownCompletionInjection = (client) =>
   client.evaluate(`(() => {
+    const names = ${JSON.stringify(KNOWN_HARNESS_PROPERTIES)};
     const owner = window.__CP_TRACK_B_INJECTION_OWNER__;
     if (owner !== ${JSON.stringify(RUN_TOKEN)}) {
-      return { installed: false, owner: owner || null, count: 0, pendingSettled: false };
+      if (names.some((name) => name in window && name !== "__CP_TRACK_B_RUN_TOKEN__")) {
+        throw new Error("Refusing to remove a foreign or incomplete Track B injection");
+      }
+      return { installed: false, owner: null, count: 0, pendingSettled: false };
     }
     const original = window.__CP_TRACK_B_ORIGINAL_EVAL_SCRIPT__;
     const count = window.__CP_TRACK_B_INJECTION_COUNT__ || 0;
@@ -1087,6 +1468,8 @@ const removeUnknownCompletionInjection = (client) =>
     if (typeof pending === "function") {
       window.__CP_TRACK_B_PENDING_CALLBACK__ = null;
       pending(JSON.stringify({
+        runToken: ${JSON.stringify(RUN_TOKEN)},
+        requestId: ${JSON.stringify(RUN_TOKEN)},
         status: "invalid-request",
         primaryStatus: "invalid-request",
         error: "Track B harness removed a pending test injection"
@@ -1098,7 +1481,7 @@ const removeUnknownCompletionInjection = (client) =>
     delete window.__CP_TRACK_B_ORIGINAL_EVAL_SCRIPT__;
     delete window.__CP_TRACK_B_INJECTION_COUNT__;
     delete window.__CP_TRACK_B_PENDING_CALLBACK__;
-    return { installed: true, owner, count, pendingSettled };
+    return { installed: true, owner, count, pendingSettled, runToken: ${JSON.stringify(RUN_TOKEN)} };
   })()`);
 
 const consoleEvidence = (events) => ({
@@ -1327,7 +1710,7 @@ const triggerGradientAction = (client) =>
       scope: "APPLICATION",
       appId: JSON.parse(bridge.getHostEnvironment()).appId,
       extensionId: bridge.getExtensionId(),
-      data: JSON.stringify({ menuId: ${JSON.stringify(ACTION_MENU_ID)} })
+      data: JSON.stringify({ menuId: ${JSON.stringify(ACTION_MENU_ID)}, runToken: ${JSON.stringify(RUN_TOKEN)} })
     });
     return true;
   })()`);
@@ -1335,6 +1718,8 @@ const triggerGradientAction = (client) =>
 const main = async () => {
   let client = null;
   let lockHandle = null;
+  let evidenceRun = null;
+  let temporaryRun = null;
   let temporaryRootCreated = false;
   let originalProject = null;
   let originalPanel = null;
@@ -1356,6 +1741,8 @@ const main = async () => {
   const ownedFixturePaths = [];
   const observedLeaseRoots = new Set();
   const observedEvidenceRoots = new Set();
+  const observedResultRequestIds = [];
+  const reloadCounts = { debug: 0, production: 0 };
   let failure = null;
   let report = null;
   let bodyPassed = false;
@@ -1368,26 +1755,20 @@ const main = async () => {
     temp: null,
     injection: null,
     lock: null,
+    harnessAbsent: null,
   };
 
   try {
-    await mkdir(EVIDENCE_ROOT, { recursive: true });
-    const evidenceRootReal = await realpath(EVIDENCE_ROOT);
-    requireCondition(isContainedPath(evidenceRootReal, OUTPUT_DIRECTORY), "Evidence output escaped its allowlisted root");
-    await mkdir(OUTPUT_DIRECTORY, { recursive: false });
-    requireCondition(
-      isContainedPath(evidenceRootReal, await realpath(OUTPUT_DIRECTORY)),
-      "Evidence output realpath escaped its allowlisted root"
-    );
-    lockHandle = await open(LOCK_PATH, "wx", 0o600);
-    await lockHandle.writeFile(`${RUN_TOKEN}\n`);
-    await mkdir(TEMPORARY_ROOT, { recursive: false });
-    temporaryRootCreated = true;
-
+    // Everything through the production snapshot is read-only. No run root, lock, temp
+    // child, fixture, build, or evidence mutation is allowed before these gates pass.
     reviewedInputsStart = await verifyReviewedInputs();
+    requireCondition(reviewedInputsStart.gitClean === true, "Formal Track B requires a clean Git worktree");
     const target = await exactMainTarget();
     const productionUrl = pathToFileURL(await realpath(MAIN_PAGE)).href;
+    requireCondition(target.type === "page", "Exact Main target is not a page");
     requireCondition(target.url === productionUrl, `Main target was not at the canonical production URL: ${target.url}`);
+    requireCondition(target.webSocketDebuggerUrl, "Exact Main target has no debugger endpoint");
+    await inspectPreflightPaths();
 
     client = new CDPClient(target.webSocketDebuggerUrl);
     await client.connect();
@@ -1400,20 +1781,16 @@ const main = async () => {
     const productionManifestBefore = await createBuildManifest("production-pre-run");
     const productionRuntimeBefore = await waitForRuntime(client, productionUrl, false);
     await assertRuntimeBuild(productionRuntimeBefore, productionManifestBefore, false);
-    const staleHarnessState = await client.evaluate(`(() => ({
-      injectionOwner: window.__CP_TRACK_B_INJECTION_OWNER__ || null,
-      resultOwner: window.__CP_TRACK_B_RESULT_OWNER__ || null,
-      resultListener: Boolean(
-        window.__CP_TRACK_B_RESULT_CSI__ ||
-        window.__CP_TRACK_B_RESULT_HANDLER__ ||
-        window.__CP_TRACK_B_RESULT_EVENTS__
-      )
-    }))()`);
     requireCondition(
-      staleHarnessState.injectionOwner === null &&
-        staleHarnessState.resultOwner === null &&
-        staleHarnessState.resultListener === false,
-      `Refusing stale Track B harness state: ${JSON.stringify(staleHarnessState)}`
+      sameJson(productionManifestBefore.files, reviewedInputsStart.build.files),
+      "Production bytes differ from the reviewed-input manifest"
+    );
+    const staleHarnessState = await client.evaluate(harnessPresenceExpression);
+    assertNoHarnessProperties(staleHarnessState);
+    const preflightProjectOwner = await evalHost(client, probeOriginalProjectRegistrationSource);
+    requireCondition(
+      preflightProjectOwner.owner === null && preflightProjectOwner.foreign === false,
+      `Refusing pre-existing foreign project ownership: ${JSON.stringify(preflightProjectOwner)}`
     );
     const userData = await client.evaluate(
       `window.__adobe_cep__.getSystemPath("userData")`
@@ -1423,26 +1800,71 @@ const main = async () => {
       "Chroma Relay"
     );
     realStorageBefore = await snapshotStorage(realConfigRoot);
+    const sourceExpected = JSON.parse(await readFile(EXPECTED_SOURCE, "utf8"));
+    const sourceHash = await sha256(FIXTURE_SOURCE);
+    requireCondition(sourceHash === sourceExpected.file.sha256, "Fixture hash does not match its reviewed expectation");
+    const fixtureStat = await lstat(FIXTURE_SOURCE);
+    requireCondition(fixtureStat.isFile() && !fixtureStat.isSymbolicLink(), "Reviewed fixture is not a regular file");
+    originalProject = await evalHost(client, projectStateSource);
+    requireCondition(
+      originalProject.dirty === false &&
+        typeof originalProject.projectPath === "string" &&
+        originalProject.projectPath.length > 0 &&
+        (!originalProject.activeItem || originalProject.activeItem.kind === "comp" || originalProject.activeItem.kind === "footage"),
+      `Refusing to replace an unsaved, dirty, or unsupported current project: ${JSON.stringify(originalProject)}`
+    );
+    requireCondition(
+      sourceExpected.afterEffectsVersion === originalProject.version,
+      `AE version mismatch: expected ${sourceExpected.afterEffectsVersion}, received ${originalProject.version}`
+    );
     productionBaseline = {
       runtime: productionRuntimeBefore,
       build: productionManifestBefore,
       storage: realStorageBefore,
     };
 
+    const existingLock = await readExistingLock();
+    await validateFormalPreconditions({
+      gitHead: reviewedInputsStart.commit,
+      gitClean: reviewedInputsStart.gitClean,
+      lock: existingLock,
+      target: {
+        exact: true,
+        production: true,
+        panelId: productContract.product.panelIds.main,
+        url: productionUrl,
+        harnessProperties: staleHarnessState,
+      },
+      reviewedInputs: { manifest: reviewedInputsStart },
+    });
+    lockHandle = await open(LOCK_PATH, "wx", 0o600);
+    await lockHandle.writeFile(`${JSON.stringify(LOCK_MARKER)}\n`);
+    evidenceRun = await createOwnedRunDirectory(EVIDENCE_ROOT, {
+      tokenFactory: () => RUN_TOKEN,
+    });
+    requireCondition(resolve(evidenceRun.path) === OUTPUT_DIRECTORY, "Evidence run path drifted from its cryptographic token");
+    temporaryRun = await createOwnedRunDirectory(TEMPORARY_PARENT, {
+      tokenFactory: () => RUN_TOKEN,
+    });
+    requireCondition(resolve(temporaryRun.path) === TEMPORARY_ROOT, "Temporary run path drifted from its cryptographic token");
+    temporaryRootCreated = true;
+
     productionRestoreRequired = true;
     buildOutputs.push(await runCanonicalBuild("build:dev"));
     const devManifest = await createBuildManifest("instrumented-dev");
     const devUrl = `${productionUrl}?track-b=${encodeURIComponent(RUN_TOKEN)}`;
     const devRuntime = await navigateMain(client, devUrl, true);
+    reloadCounts.debug += 1;
     await waitForDebug(client);
+    await installHarnessRunToken(client);
     await afterRender(client);
     devBuildEvidence = await assertRuntimeBuild(devRuntime, devManifest, true);
     const identity = await client.evaluate(debugCall("(api) => api.getIdentity()"));
     requireCondition(
-      identity.extensionId === "com.zimoby.chroma-relay.main" &&
+      identity.extensionId === productContract.product.panelIds.main &&
         identity.page === "main" &&
         identity.url === devUrl &&
-        identity.buildMarker === "Palette v2 · 0.0.1",
+        identity.buildMarker === EXPECTED_BUILD_MARKER,
       `Unexpected panel identity: ${JSON.stringify(identity)}`
     );
     originalPanel = await client.evaluate(
@@ -1460,16 +1882,6 @@ const main = async () => {
       "Instrumented Main load changed authoritative production storage"
     );
 
-    originalProject = await evalHost(client, projectStateSource);
-    requireCondition(
-      originalProject.dirty === false &&
-        typeof originalProject.projectPath === "string" &&
-        originalProject.projectPath.length > 0 &&
-        (!originalProject.activeItem ||
-          originalProject.activeItem.kind === "comp" ||
-          originalProject.activeItem.kind === "footage"),
-      `Refusing to replace an unsaved, dirty, or unsupported current project: ${JSON.stringify(originalProject)}`
-    );
     expectedProjectPredecessor = projectIdentity(originalProject);
     projectRegistrationAttempted = true;
     const projectRegistration = await evalHost(
@@ -1482,17 +1894,6 @@ const main = async () => {
       `Could not register exact original project: ${JSON.stringify(projectRegistration)}`
     );
     projectRegistrationConfirmed = true;
-
-    const sourceExpected = JSON.parse(await readFile(EXPECTED_SOURCE, "utf8"));
-    const sourceHash = await sha256(FIXTURE_SOURCE);
-    requireCondition(
-      sourceHash === sourceExpected.file.sha256,
-      "Fixture hash does not match its reviewed expectation"
-    );
-    requireCondition(
-      sourceExpected.afterEffectsVersion === originalProject.version,
-      `AE version mismatch: expected ${sourceExpected.afterEffectsVersion}, received ${originalProject.version}`
-    );
 
     await client.evaluate(debugCall("(api) => api.resetTestState()"));
     await afterRender(client);
@@ -1587,7 +1988,15 @@ const main = async () => {
       );
       const rendererReport = snapshot.state.lastHostResult;
       lastRendererReport = rendererReport;
-      const resultEvents = await readPaletteResultEvents(client);
+      const resultEventBatch = await readPaletteResultEvents(client);
+      const resultEvents = resultEventBatch.results;
+      const resultTokens = validateOwnedEventTokens(
+        resultEvents,
+        RUN_TOKEN,
+        1,
+        { allowNullRequestId: true },
+      );
+      observedResultRequestIds.push(...resultTokens.tokens);
       const afterAction = await evalHost(client, projectStateSource);
       const storageAfter = await snapshotStorage(TEMPORARY_ROOT);
       const fixtureHashAfterAction = await sha256(fixtureCopy);
@@ -1762,11 +2171,14 @@ const main = async () => {
     await dispatchBusyPaletteCommand(client, failureBaseline.state.paletteRevision);
     const busySnapshot = await waitForBusyCommandResult(client, failureBaseline);
     const busyStorage = await snapshotStorage(TEMPORARY_ROOT);
-    const busyResults = await readPaletteResultEvents(client);
+    const busyResultBatch = await readPaletteResultEvents(client);
+    const busyResults = busyResultBatch.results;
+    const busyTokens = validateOwnedEventTokens(busyResults, RUN_TOKEN, 1);
+    observedResultRequestIds.push(...busyTokens.tokens);
     requireCondition(busyResults.length === 1, `Expected one busy result, found ${busyResults.length}`);
     const busyResult = busyResults[0];
     requireCondition(
-      busyResult.requestId === "track-b-lock" &&
+      busyResult.requestId === RUN_TOKEN &&
         busyResult.ok === false &&
         busyResult.message === "Palette is busy; try again" &&
         sameJson(busyResult.document, failureStorageBefore.palette),
@@ -1805,7 +2217,15 @@ const main = async () => {
       reviewedInputs: reviewedInputsStart,
       rendererReport: failureReport,
     });
-    const failureResultEvents = await readPaletteResultEvents(client);
+    const failureResultBatch = await readPaletteResultEvents(client);
+    const failureResultEvents = failureResultBatch.results;
+    const failureTokens = validateOwnedEventTokens(
+      failureResultEvents,
+      RUN_TOKEN,
+      1,
+      { allowNullRequestId: true },
+    );
+    observedResultRequestIds.push(...failureTokens.tokens);
     const injectionCleanup = await removeUnknownCompletionInjection(client);
     injectionAttempted = false;
     cleanup.injection = injectionCleanup;
@@ -1904,6 +2324,7 @@ const main = async () => {
       runToken: RUN_TOKEN,
       action: "Apply Active Palette as Gradient",
       panelIdentity: identity,
+      reviewedCommit: reviewedInputsStart.commit,
       productionBaseline,
       devBuildEvidence,
       buildOutputs,
@@ -1936,6 +2357,22 @@ const main = async () => {
         rendererReport: failureReport,
       },
       screenshot: resolve(OUTPUT_DIRECTORY, "main-after-injected-failure.png"),
+      harnessEvidence: {
+        runToken: RUN_TOKEN,
+        commandCounts: successCases.map(({ kind, baseline, snapshot }) => ({
+          kind,
+          hostCalls: snapshot.counters.hostCalls - baseline.counters.hostCalls,
+          emittedEvents: snapshot.counters.emittedEvents - baseline.counters.emittedEvents,
+          receivedEvents: snapshot.counters.receivedEvents - baseline.counters.receivedEvents,
+          diskWrites: snapshot.counters.diskWrites - baseline.counters.diskWrites,
+        })),
+        injectionCounts: { unknownCompletion: injectionCleanup.count },
+        reloadCounts,
+        resultRequestIds: [...observedResultRequestIds],
+        APP_VERSION: sourceExpected.afterEffectsVersion,
+        panelUrls: { production: productionUrl, debug: devUrl },
+        loadedAssets: { production: productionManifestBefore, debug: devManifest },
+      },
       consoleEvidence: consoleEvidence(client.events),
     };
     bodyPassed = true;
@@ -1943,7 +2380,7 @@ const main = async () => {
     failure = error;
     let failureScreenshot = null;
     let failureScreenshotError = null;
-    if (client) {
+    if (client && evidenceRun && productionRestoreRequired) {
       try {
         const screenshot = await client.send("Page.captureScreenshot", {
           format: "png",
@@ -1961,6 +2398,7 @@ const main = async () => {
       passed: false,
       track: "B",
       runToken: RUN_TOKEN,
+      reviewedCommit: reviewedInputsStart?.commit || null,
       failure: error instanceof Error ? error.stack || error.message : String(error),
       originalProject,
       productionBaseline,
@@ -1977,8 +2415,12 @@ const main = async () => {
     if (client) {
       if (originalPanel) {
       try {
-        const orphanedResultEvents = await readPaletteResultEvents(client);
-        if (orphanedResultEvents.length > 0) cleanup.orphanedResultEvents = orphanedResultEvents;
+      const orphanedResultBatch = await readPaletteResultEvents(client);
+      if (orphanedResultBatch.results.length > 0) {
+        const orphanedTokens = validateOwnedEventTokens(orphanedResultBatch.results, RUN_TOKEN, orphanedResultBatch.results.length);
+        observedResultRequestIds.push(...orphanedTokens.tokens);
+        cleanup.orphanedResultEvents = orphanedResultBatch.results;
+      }
         cleanup.busyListener = true;
       } catch (error) {
         cleanup.busyListener = error instanceof Error ? error.message : String(error);
@@ -2114,6 +2556,7 @@ const main = async () => {
           const productionManifestAfter = await createBuildManifest("production-restored");
           const productionUrl = pathToFileURL(await realpath(MAIN_PAGE)).href;
           const productionRuntimeAfter = await navigateMain(client, productionUrl, false);
+          reloadCounts.production += 1;
           productionBuildEvidence = await assertRuntimeBuild(
             productionRuntimeAfter,
             productionManifestAfter,
@@ -2128,7 +2571,6 @@ const main = async () => {
             sameJson(realStorageAfterProduction, realStorageBefore),
             "production restoration changed palette/settings storage bytes"
           );
-          reviewedInputsEnd = await verifyReviewedInputs();
           const debugStateRestored =
             typeof debugPanelCleanup === "object" && debugPanelCleanup?.debugStateRestored === true;
           cleanup.panel = {
@@ -2149,7 +2591,6 @@ const main = async () => {
           cleanupErrors.push(`production panel restoration: ${cleanup.panel.productionError}`);
         }
       } else {
-        reviewedInputsEnd = await verifyReviewedInputs();
         cleanup.panel = {
           restored: typeof debugPanelCleanup === "object",
           productionNotChanged: true,
@@ -2167,6 +2608,34 @@ const main = async () => {
       if (projectRegistrationAttempted) {
         cleanupErrors.push("project registration cleanup: CDP unavailable");
       }
+    }
+
+    if (client) {
+      try {
+        await clearHarnessRunToken(client);
+        const finalHarnessState = await client.evaluate(harnessPresenceExpression);
+        assertNoHarnessProperties(finalHarnessState);
+        const finalProjectOwner = await evalHost(client, probeOriginalProjectRegistrationSource);
+        requireCondition(
+          finalProjectOwner.owner === null && finalProjectOwner.foreign === false,
+          `Final project harness owner remained present: ${JSON.stringify(finalProjectOwner)}`
+        );
+        cleanup.harnessAbsent = true;
+      } catch (error) {
+        cleanup.harnessAbsent = error instanceof Error ? error.message : String(error);
+        cleanupErrors.push(`final harness absence: ${cleanup.harnessAbsent}`);
+      }
+    } else {
+      cleanup.harnessAbsent = originalPanel ? "CDP client unavailable" : true;
+      if (originalPanel) cleanupErrors.push("final harness absence: CDP client unavailable");
+    }
+
+    try {
+      reviewedInputsEnd = await verifyReviewedInputs();
+      assertReviewedInputsUnchanged(reviewedInputsStart, reviewedInputsEnd);
+    } catch (error) {
+      reviewedInputsEnd = { error: error instanceof Error ? error.message : String(error) };
+      cleanupErrors.push(`reviewed input finalization: ${reviewedInputsEnd.error}`);
     }
 
     const rendererLeaseRoots = [...observedLeaseRoots].sort();
@@ -2228,22 +2697,12 @@ const main = async () => {
       cleanup.panel?.restored === true &&
       cleanup.project?.restored === true &&
       cleanup.injectionAbsent === true &&
-      cleanupErrors.length === 0
+      cleanup.harnessAbsent === true
     ) {
       try {
-        requireCondition(
-          TEMPORARY_ROOT.startsWith("/private/tmp/chroma-relay-native-gradient-apply-"),
-          "temporary root token prefix drifted"
-        );
-        const temporaryRootStat = await lstat(TEMPORARY_ROOT);
-        requireCondition(
-          temporaryRootStat.isDirectory() &&
-            !temporaryRootStat.isSymbolicLink() &&
-            (await realpath(TEMPORARY_ROOT)) === TEMPORARY_ROOT,
-          "temporary root was replaced before cleanup"
-        );
-        await rm(TEMPORARY_ROOT, { recursive: true, force: false });
-        await requireAbsent(TEMPORARY_ROOT, "temporary root");
+        requireCondition(temporaryRun, "temporary run ownership was never acquired");
+        await removeOwnedRunDirectory(temporaryRun);
+        await requireAbsent(TEMPORARY_ROOT, "temporary run directory");
         cleanup.temp = true;
       } catch (error) {
         cleanup.temp = error instanceof Error ? error.message : String(error);
@@ -2262,8 +2721,16 @@ const main = async () => {
         lockHandle = null;
         const lockStat = await lstat(LOCK_PATH);
         requireCondition(lockStat.isFile() && !lockStat.isSymbolicLink(), "run lock was replaced");
-        const lockOwner = (await readFile(LOCK_PATH, "utf8")).trim();
-        requireCondition(lockOwner === RUN_TOKEN, `lock ownership drifted to ${lockOwner}`);
+        const lockOwner = JSON.parse(await readFile(LOCK_PATH, "utf8"));
+        requireCondition(
+          lockOwner.kind === LOCK_MARKER.kind &&
+            lockOwner.schema === LOCK_MARKER.schema &&
+            lockOwner.contractVersion === LOCK_MARKER.contractVersion &&
+            lockOwner.marker === LOCK_MARKER.marker &&
+            lockOwner.markerFile === LOCK_MARKER.markerFile &&
+            lockOwner.token === RUN_TOKEN,
+          `lock ownership drifted to ${JSON.stringify(lockOwner)}`
+        );
         await rm(LOCK_PATH, { force: false });
         await requireAbsent(LOCK_PATH, "run lock");
         cleanup.lock = true;
@@ -2275,7 +2742,14 @@ const main = async () => {
       cleanup.lock = true;
     }
 
-    const passed = bodyPassed && cleanupErrors.length === 0;
+    const passed = bodyPassed &&
+      cleanupErrors.length === 0 &&
+      cleanup.client === true &&
+      cleanup.temp === true &&
+      cleanup.lock === true &&
+      cleanup.harnessAbsent === true &&
+      reviewedInputsEnd !== null &&
+      sameJson(reviewedInputsStart, reviewedInputsEnd);
     report = {
       ...report,
       passed,
@@ -2285,8 +2759,39 @@ const main = async () => {
       lastRendererReport,
       cleanup,
       cleanupErrors,
+      secondaryFailures: cleanupErrors.map((error) => ({ stage: "finalization", error })),
+      harnessEvidence: report?.harnessEvidence
+        ? {
+            ...report.harnessEvidence,
+            reloadCounts: { ...reloadCounts },
+            resultRequestIds: [...observedResultRequestIds],
+          }
+        : null,
     };
-    await writeDurableJson(resolve(OUTPUT_DIRECTORY, "report.json"), report);
+    if (evidenceRun) {
+      try {
+        const publication = await publishFinalReport({
+          reportPath: resolve(OUTPUT_DIRECTORY, "report.json"),
+          failurePath: resolve(OUTPUT_DIRECTORY, "failure-report.json"),
+          report,
+        });
+        if (publication.errors.length > 0) {
+          for (const publicationError of publication.errors) {
+            cleanupErrors.push(`finalization ${publicationError.stage}: ${publicationError.error}`);
+          }
+          report = {
+            ...report,
+            passed: false,
+            cleanupErrors,
+            secondaryFailures: cleanupErrors.map((error) => ({ stage: "finalization", error })),
+          };
+          if (!failure) failure = new Error("Track B finalization evidence publication failed");
+        }
+      } catch (error) {
+        cleanupErrors.push(`finalization publication: ${error instanceof Error ? error.message : String(error)}`);
+        if (!failure) failure = error instanceof Error ? error : new Error(String(error));
+      }
+    }
     if (!passed && !failure) failure = new Error(`Track B cleanup failed: ${cleanupErrors.join("; ")}`);
   }
 
@@ -2296,7 +2801,16 @@ const main = async () => {
   );
 };
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.stack || error.message : String(error));
-  process.exitCode = 1;
-});
+export const runFormalTrackB = main;
+const isDirectCliInvocation = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (isDirectCliInvocation) {
+  if (process.argv.length === 2) {
+    runFormalTrackB().catch((error) => {
+      console.error(error instanceof Error ? error.stack || error.message : String(error));
+      process.exitCode = 1;
+    });
+  } else {
+    console.error("This safety-bounded runner accepts no command-line options");
+    process.exitCode = 2;
+  }
+}

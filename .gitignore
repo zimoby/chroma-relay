@@ -7,3 +7,7 @@ dist
 yarn-error.log
 .media
 .env.production
+# Formal live-runner children are local evidence/residue; cleanup is explicit and ownership-checked.
+/evidence/local/native-gradient/track-b-apply-ae25/track-b-*/
+# The formal build identity is generated from frozen output bytes and is never committed.
+/dist/cep/.chroma-relay-build-provenance.json

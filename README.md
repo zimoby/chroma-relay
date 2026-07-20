@@ -33,6 +33,7 @@ Capture responsive geometry/state fixtures with `npm run cdp:design -- --output=
 ## Build and verification
 
 ```bash
+npm run test:live-runner
 npm run test:domain
 npm run test:host-contract
 npm run test:native-gradient
@@ -40,6 +41,16 @@ npm run check:cep
 npm run react:doctor -- --verbose
 npm run package:alpha
 ```
+
+The formal Track B runner is intentionally no-argument and import-safe:
+`node scripts/run-live-ae-tests.mjs`. It is a parent-owned live AE/CDP gate and
+is not run by static verification. Live execution must begin only from an
+explicit parent approval against frozen, reviewed bits.
+
+`npm run cleanup:live-test-residue` is dry-run by default and reports every
+candidate and refusal. Cleanup mutation requires the explicit
+`npm run cleanup:live-test-residue -- --apply` command and a current ownership
+marker/schema; it never removes a caller root or foreign residue.
 
 `package:alpha` creates `dist/alpha/Chroma Relay_0.0.1-unsigned.zip`. The packager fails if the artifact contains `.debug`, source maps, the runtime debug API, an unresolved manifest resource, or a missing icon.
 
