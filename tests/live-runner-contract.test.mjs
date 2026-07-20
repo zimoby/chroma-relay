@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve, sep } from "node:path";
+import { join, posix, resolve, sep, win32 } from "node:path";
 import test from "node:test";
 import { CdpClient } from "../scripts/lib/cdp-client.mjs";
 import {
@@ -9,6 +9,7 @@ import {
   createOwnedRunDirectory,
   createOwnedScratchDirectory,
   parseRunnerArgs,
+  rejectSymlinkComponentsForTest,
   removeOwnedRunDirectory,
 } from "../scripts/lib/live-runner-policy.mjs";
 
@@ -48,6 +49,45 @@ test("rejected output roots perform zero filesystem mutation", async () => {
     /traversal/
   );
   assert.deepEqual(calls, []);
+});
+
+test("absolute roots reject first-component POSIX symlinks and Windows junctions", async () => {
+  for (const { pathApi, root, redirect } of [
+    { pathApi: posix, root: "/redirect/owned", redirect: "/redirect" },
+    { pathApi: win32, root: "C:\\redirect\\owned", redirect: "C:\\redirect" },
+  ]) {
+    const fs = {
+      lstat: async (path) => {
+        if (path === redirect) return { isSymbolicLink: () => true };
+        throw Object.assign(new Error("missing"), { code: "ENOENT" });
+      },
+      realpath: async (path) => path,
+    };
+    await expectReject(
+      rejectSymlinkComponentsForTest(root, fs, pathApi),
+      /symlink/
+    );
+  }
+});
+
+test("absolute roots allow only verified macOS system temp aliases", async () => {
+  const fs = {
+    lstat: async (path) => {
+      if (path === "/tmp") return { isSymbolicLink: () => true };
+      throw Object.assign(new Error("missing"), { code: "ENOENT" });
+    },
+    realpath: async (path) => path === "/tmp" ? "/private/tmp" : path,
+  };
+  await assert.doesNotReject(
+    rejectSymlinkComponentsForTest("/tmp/chroma-relay", fs, posix)
+  );
+  await expectReject(
+    rejectSymlinkComponentsForTest("/tmp/chroma-relay", {
+      ...fs,
+      realpath: async () => "/attacker-controlled-temp",
+    }, posix),
+    /symlink/
+  );
 });
 
 test("owned run directories are exclusive and cleanup cannot remove the caller root", async () => {
@@ -377,8 +417,10 @@ test("owned runners do not recursively remove fixed scratch roots and await asyn
     assert.doesNotMatch(source, /rm\([^\n]*\{\s*recursive:\s*true/);
     assert.doesNotMatch(source, /(?<!await\s)\bclient\.close\(\)/);
     if (file === "cep-design-capture.mjs") {
-      assert.match(source, /const TEMPORARY_CONFIG_PARENT = "\/private\/tmp"/);
-      assert.match(source, /createOwnedRunDirectory\(TEMPORARY_CONFIG_PARENT/);
+      assert.match(source, /tmpdir\(\)/);
+      assert.match(source, /resolveTemporaryConfigParent/);
+      assert.match(source, /createOwnedRunDirectory\(temporaryConfigParent/);
+      assert.doesNotMatch(source, /"\/private\/tmp"/);
       assert.match(source, /chroma-relay-design-/);
       assert.doesNotMatch(source, /createOwnedScratchDirectory\(parentRun\)/);
     } else {
@@ -398,6 +440,19 @@ test("all five runners are importable without invoking their CLI", async () => {
   ]) {
     await assert.doesNotReject(import(`../scripts/${file}?s4=${Date.now()}-${file}`));
   }
+});
+
+test("design capture canonicalizes an OS-provided temporary directory", async () => {
+  const design = await import("../scripts/cep-design-capture.mjs?s4-portable-temp");
+  const windowsTemp = "C:\\Users\\runner\\AppData\\Local\\Temp";
+  const canonical = "C:\\Users\\runner\\AppData\\Local\\Temp\\canonical";
+  assert.equal(
+    await design.resolveTemporaryConfigParent({
+      temporaryDirectory: windowsTemp,
+      fs: { realpath: async (path) => path === windowsTemp ? canonical : path },
+    }),
+    canonical
+  );
 });
 
 test("design capture can target Settings without weakening the Main compositor gate", async () => {

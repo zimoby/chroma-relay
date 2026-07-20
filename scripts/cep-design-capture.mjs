@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, realpath, writeFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
+import { tmpdir } from "node:os";
 import { isAbsolute, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { pathToFileURL } from "node:url";
@@ -15,7 +16,6 @@ import contract from "../src/shared/product-contract.json" with { type: "json" }
 import packageJson from "../package.json" with { type: "json" };
 
 const EXPECTED_BUILD_MARKER = `${contract.marker.current} · ${packageJson.version}`;
-const TEMPORARY_CONFIG_PARENT = "/private/tmp";
 
 const REPO_ROOT = fileURLToPath(new URL("../", import.meta.url));
 const FIXTURES = [
@@ -25,6 +25,11 @@ const FIXTURES = [
   { width: 200, height: 200 },
 ];
 const DESIGN_STATES = ["interaction", "empty", "disabled", "error"];
+export const resolveTemporaryConfigParent = ({
+  temporaryDirectory = tmpdir(),
+  fs = { realpath },
+} = {}) => fs.realpath(temporaryDirectory);
+
 const PANELS = [
   {
     page: "main",
@@ -164,7 +169,8 @@ export const runDesignCaptureLifecycle = async ({
 const capturePanel = async (panel, outputDirectory) => {
   const panelDirectory = resolve(outputDirectory, panel.page);
   await mkdir(panelDirectory, { recursive: true });
-  const scratch = await createOwnedRunDirectory(TEMPORARY_CONFIG_PARENT, {
+  const temporaryConfigParent = await resolveTemporaryConfigParent();
+  const scratch = await createOwnedRunDirectory(temporaryConfigParent, {
     tokenFactory: () =>
       `chroma-relay-design-${panel.page}-${Date.now().toString(36)}-${randomBytes(8).toString("hex")}`,
   });

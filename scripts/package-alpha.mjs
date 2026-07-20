@@ -7,6 +7,10 @@ import { dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import packageJson from "../package.json" with { type: "json" };
 import contract from "../src/shared/product-contract.json" with { type: "json" };
+import {
+  assertCleanSourceStatus,
+  repositoryRelativePath,
+} from "./lib/alpha-package-policy.mjs";
 
 const repoRoot = fileURLToPath(new URL("../", import.meta.url));
 const sourceRoot = resolve(repoRoot, "dist/cep");
@@ -24,9 +28,11 @@ const runChecked = (command, args, options = {}) => {
 };
 
 const commit = runChecked("git", ["rev-parse", "HEAD"], { cwd: repoRoot });
-const dirty = runChecked("git", ["status", "--porcelain=v1", "-uall"], {
+const sourceStatus = runChecked("git", ["status", "--porcelain=v1", "-uall"], {
   cwd: repoRoot,
-}).length > 0;
+});
+assertCleanSourceStatus(sourceStatus);
+const dirty = false;
 const nodeVersion = process.version;
 
 const walk = async (directory) => {
@@ -137,7 +143,7 @@ const report = {
     bundleId: manifestBundleId,
     version: manifestBundleVersion,
   },
-  artifact: archivePath,
+  artifact: repositoryRelativePath(repoRoot, archivePath),
   bytes: archiveBytes.length,
   sha256: createHash("sha256").update(archiveBytes).digest("hex"),
   bundleFiles: relativeFiles.length,

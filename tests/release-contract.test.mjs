@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import {
+  assertCleanSourceStatus,
+  repositoryRelativePath,
+} from "../scripts/lib/alpha-package-policy.mjs";
 
 import {
   hostCompatibilityFailures,
@@ -49,9 +53,24 @@ test("alpha packager records source identity and reopens the archive", async () 
   assert.doesNotMatch(source, /`Chroma Relay_/);
   assert.match(source, /commit/);
   assert.match(source, /dirty/);
+  assert.match(source, /assertCleanSourceStatus/);
+  assert.match(source, /repositoryRelativePath/);
   assert.match(source, /nodeVersion/);
   assert.match(source, /archiveInventory/);
   assert.match(source, /unzip/);
+});
+
+test("alpha package policy rejects dirty sources and redacts local artifact roots", () => {
+  assert.doesNotThrow(() => assertCleanSourceStatus(""));
+  assert.throws(
+    () => assertCleanSourceStatus(" M src/main.ts\n?? local.txt\n"),
+    /clean.*source tree/i
+  );
+  assert.equal(
+    repositoryRelativePath("/repo", "/repo/dist/alpha/Chroma Relay.zip"),
+    "dist/alpha/Chroma Relay.zip"
+  );
+  assert.throws(() => repositoryRelativePath("/repo", "/outside/release.zip"), /repository/);
 });
 
 test("CEP compatibility scan includes and requires emitted renderer assets", async () => {

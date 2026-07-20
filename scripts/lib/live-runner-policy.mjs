@@ -61,16 +61,31 @@ const isDirectChild = (root, candidate) => {
   return relative(root, candidate).split(sep).length === 1;
 };
 
-const rejectSymlinkComponents = async (path, fs) => {
-  const root = parse(path).root;
-  const parts = path.slice(root.length).split(sep).filter(Boolean);
+const trustedPosixSymlinkTargets = new Map([
+  ["/tmp", "/private/tmp"],
+  ["/var", "/private/var"],
+]);
+
+const rejectSymlinkComponents = async (
+  path,
+  fs,
+  pathApi = { join, parse, resolve, sep }
+) => {
+  const root = pathApi.parse(path).root;
+  const parts = path.slice(root.length).split(pathApi.sep).filter(Boolean);
   let current = root;
-  for (let index = 0; index < parts.length; index += 1) {
-    current = join(current, parts[index]);
+  for (const part of parts) {
+    current = pathApi.join(current, part);
     try {
       const stat = await fs.lstat(current);
-      if (stat.isSymbolicLink?.() && index > 0 && current !== "/tmp" && current !== "/private/tmp") {
-        throw new RunnerPolicyError("Output root escapes through a symlink");
+      if (stat.isSymbolicLink?.()) {
+        const trustedTarget = pathApi.sep === "/"
+          ? trustedPosixSymlinkTargets.get(current)
+          : undefined;
+        const actualTarget = trustedTarget ? await fs.realpath(current) : undefined;
+        if (!trustedTarget || pathApi.resolve(actualTarget) !== pathApi.resolve(trustedTarget)) {
+          throw new RunnerPolicyError("Output root escapes through a symlink");
+        }
       }
     } catch (error) {
       if (error instanceof RunnerPolicyError) throw error;
@@ -257,3 +272,4 @@ export const removeOwnedRunDirectory = async (run, { fs = defaultFs } = {}) => {
 };
 
 export const validateOutputRootForTest = validateOutputRoot;
+export const rejectSymlinkComponentsForTest = rejectSymlinkComponents;
