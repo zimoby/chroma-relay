@@ -196,8 +196,6 @@ src/jsx/aeft/       After Effects ExtendScript host operations
 src/assets/         Product icon and native-gradient FFX templates
 scripts/            Build, packaging, compatibility, CDP, and live-host runners
 tests/              Domain, host, native-gradient, runner, and release contracts
-docs/               Design, storage, implementation, provenance, and planning docs
-evidence/           Preserved milestone passes, failures, reports, and screenshots
 ```
 
 The native-gradient path uses `@zimoby/ae-native-gradient`, pinned to an exact Git commit. Toolkit package ownership remains independent from the product runtime identity.
@@ -211,24 +209,11 @@ The source is an internal 0.0.1 alpha with static verification, bounded live mac
 - fresh-panel confirmation of the declared 128 px Main minimum width;
 - final signing, distribution, and release-policy decisions.
 
-Use the product contract for current identities and schemas, and the evidence index for preserved validation history. Do not infer release readiness from generated artifacts.
-
-## Documentation
-
-- [`CONTRIBUTING.md`](CONTRIBUTING.md) — toolchain, contribution boundaries, and local checks
-- [`src/shared/product-contract.json`](src/shared/product-contract.json) — authoritative product identity, schema, event, and runner contract
-- [`docs/design-direction.md`](docs/design-direction.md) — selected visual system and responsive behavior
-- [`docs/native-gradient-product-semantics.md`](docs/native-gradient-product-semantics.md) — exact gradient collection/application behavior
-- [`docs/native-gradient-provenance.md`](docs/native-gradient-provenance.md) — native-gradient assets and implementation provenance
-- [`docs/implementation-status.md`](docs/implementation-status.md) — historical milestone and validation ledger
-- [`docs/implementation-plan.md`](docs/implementation-plan.md) — canonical rebuild sequence and historical plan
-- [`evidence/README.md`](evidence/README.md) — authoritative evidence and preserved-failure index
+Current identities and schemas live in [`src/shared/product-contract.json`](src/shared/product-contract.json). Do not infer release readiness from generated artifacts.
 
 ## Contributing
 
 Keep changes narrow and preserve the runtime ownership boundaries. Run `npm run verify:static` and `npm run package:alpha` before proposing a distributable candidate. Live mutation tests must use exact panel identities, temporary data roots, explicit cleanup ownership, and preserved failure evidence.
-
-See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the complete local workflow.
 
 ## License and attribution
 

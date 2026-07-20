@@ -7,11 +7,7 @@ dist
 yarn-error.log
 .media
 .env.production
-# Formal live-runner children are local evidence/residue; cleanup is explicit and ownership-checked.
-/evidence/local/native-gradient/track-b-apply-ae25/track-b-*/
-/evidence/local/polish-*/
-# Keep raw local-machine smoke output private; commit only redacted summaries.
-/evidence/windows-smoke-*/**/apply/
-/evidence/windows-smoke-*/**/collect/
+# Runtime and visual evidence is local-only and never published.
+/evidence/
 # The formal build identity is generated from frozen output bytes and is never committed.
 /dist/cep/.chroma-relay-build-provenance.json

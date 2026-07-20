@@ -1,6 +1,0 @@
-I09 mutation smoke attempt 1
-Result: failed after confirmed remove passed.
-Failure: Palette mutation did not reach revision 2.
-Cause under test: CDP Input.dispatchKeyEvent for macOS Option+ArrowLeft did not reach the React onKeyDown handler.
-Product state before failure: remove confirmation wrote once and produced order a,c,d with hostCalls=0.
-Next harness change: dispatch a bubbling DOM KeyboardEvent with altKey=true for reorder; retain native CDP Tab/Space/Enter for button activation.
