@@ -1,0 +1,9 @@
+.github/workflows/main.yml text eol=lf
+.gitignore text eol=lf
+CHANGELOG.md text eol=lf
+cep.config.ts text eol=lf
+package.json text eol=lf
+src/js/main/index-react.tsx text eol=lf
+src/js/main/index.html text eol=lf
+src/js/main/main.tsx text eol=lf
+src/shared/shared.ts text eol=lf
