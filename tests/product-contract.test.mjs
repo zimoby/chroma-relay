@@ -38,7 +38,6 @@ test("runtime and config consumers derive current values from the contract", asy
       "../src/js/shared/layout-settings.ts",
       "../src/js/shared/palette-transfer.ts",
       "../src/js/shared/palette-events.ts",
-      "../scripts/package-alpha.mjs",
     ].map((path) => readFile(new URL(path, import.meta.url), "utf8"))
   );
   for (const source of sources) assert.match(source, /product-contract\.json/);
@@ -47,5 +46,4 @@ test("runtime and config consumers derive current values from the contract", asy
   assert.doesNotMatch(sources[5], /PALETTE_TRANSFER_VERSION\s*=\s*2/);
   assert.doesNotMatch(sources[4], /"Chroma Relay"/);
   assert.doesNotMatch(sources[5], /"chroma-relay"|\.chroma-relay\.json/);
-  assert.match(sources[7], /contract\.product\.displayName/);
 });

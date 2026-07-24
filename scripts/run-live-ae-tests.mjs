@@ -513,14 +513,29 @@ const verifyReviewedInputs = async () => {
   }
   return manifest;
 };
+export const npmRunInvocation = (script, {
+  nodeExecPath = process.execPath,
+  npmExecPath = process.env.npm_execpath,
+} = {}) => {
+  if (!npmExecPath) {
+    return {
+      command: "npm",
+      args: ["run", script],
+    };
+  }
+  return {
+    command: nodeExecPath,
+    args: [npmExecPath, "run", script],
+  };
+};
 const runCanonicalBuild = async (script) => {
-  const npmCommand = process.env.npm_execpath || "npm";
-  const result = await execFileAsync(npmCommand, ["run", script], {
+  const invocation = npmRunInvocation(script);
+  const result = await execFileAsync(invocation.command, invocation.args, {
     cwd: REPO_ROOT,
     maxBuffer: 20 * 1024 * 1024,
   });
   return {
-    command: `${npmCommand} run ${script}`,
+    command: [invocation.command, ...invocation.args].join(" "),
     stdout: result.stdout,
     stderr: result.stderr,
   };
@@ -600,6 +615,14 @@ export const writeBuildProvenance = async () => {
   };
   await writeAtomicallyDurableJson(BUILD_PROVENANCE_PATH, provenance);
   return provenance;
+};
+export const prepareProductionBuild = async ({
+  build = () => runCanonicalBuild("build"),
+  writeProvenance = writeBuildProvenance,
+} = {}) => {
+  const buildOutput = await build();
+  const provenance = await writeProvenance();
+  return { buildOutput, provenance };
 };
 const runtimeIdentity = (client) =>
   client.evaluate(`(() => ({
@@ -2558,7 +2581,8 @@ const main = async () => {
       const debugPanelCleanup = cleanup.panel;
       if (productionRestoreRequired) {
         try {
-          buildOutputs.push(await runCanonicalBuild("build"));
+          const productionPreparation = await prepareProductionBuild();
+          buildOutputs.push(productionPreparation.buildOutput);
           const productionManifestAfter = await createBuildManifest("production-restored");
           const productionUrl = pathToFileURL(await realpath(MAIN_PAGE)).href;
           const productionRuntimeAfter = await navigateMain(client, productionUrl, false);

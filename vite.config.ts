@@ -1,6 +1,6 @@
 import { defineConfig } from "vite";
 
-import react from "@vitejs/plugin-react"; 
+import react from "@vitejs/plugin-react";
 
 import { cep, CepOptions, runAction } from "vite-cep-plugin";
 import cepConfig from "./cep.config";
@@ -27,8 +27,6 @@ const debugReact = process.env.DEBUG_REACT === "true";
 const isProduction = process.env.NODE_ENV === "production";
 const isMetaPackage = process.env.ZIP_PACKAGE === "true";
 const isPackage = process.env.ZXP_PACKAGE === "true" || isMetaPackage;
-const isUnsignedAlpha = process.env.ALPHA_PACKAGE === "true";
-const isReleaseArtifact = isPackage || isUnsignedAlpha;
 const isServe = process.env.SERVE_PANEL === "true";
 const action = process.env.BOLT_ACTION;
 
@@ -39,7 +37,7 @@ const extendscriptBuild = extendscriptConfig(
   cepConfig,
   extensions,
   isProduction,
-  isReleaseArtifact,
+  isPackage,
 );
 
 let input: { [key: string]: string } = {};
@@ -66,7 +64,7 @@ if (action) runAction(config, action);
 const sanitizeReleaseBundle = () => ({
   name: "sanitize-chroma-relay-release",
   writeBundle() {
-    if (!isReleaseArtifact) return;
+    if (!isPackage) return;
     const debugFile = path.join(outDir, ".debug");
     if (existsSync(debugFile)) rmSync(debugFile);
   },
@@ -93,7 +91,7 @@ const waitForExtendScript = () => ({
 export default defineConfig({
   plugins: [
     waitForExtendScript(),
-    react(), 
+    react(),
     stagePackageNativeGradientTemplates(),
     sanitizeReleaseBundle(),
     cep(config),
@@ -111,7 +109,7 @@ export default defineConfig({
   },
 
   build: {
-    sourcemap: isReleaseArtifact ? false : cepConfig.build?.sourceMap,
+    sourcemap: isPackage ? false : cepConfig.build?.sourceMap,
     watch: {
       include: "src/jsx/**",
     },

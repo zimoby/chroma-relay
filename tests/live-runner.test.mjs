@@ -147,6 +147,70 @@ test("build provenance and reviewed input equality reject stale or changed bytes
   );
 });
 
+test("production preparation binds provenance to a fresh canonical build", async () => {
+  const { prepareProductionBuild } = await import("../scripts/run-live-ae-tests.mjs");
+  const order = [];
+  const result = await prepareProductionBuild({
+    build: async () => {
+      order.push("build");
+      return { command: "npm run build" };
+    },
+    writeProvenance: async () => {
+      order.push("provenance");
+      return { schemaVersion: 1, commit: "fresh" };
+    },
+  });
+
+  assert.deepEqual(order, ["build", "provenance"]);
+  assert.deepEqual(result, {
+    buildOutput: { command: "npm run build" },
+    provenance: { schemaVersion: 1, commit: "fresh" },
+  });
+});
+
+test("canonical npm builds launch npm-cli through the active Node executable", async () => {
+  const { npmRunInvocation } = await import("../scripts/run-live-ae-tests.mjs");
+  assert.deepEqual(
+    npmRunInvocation("build", {
+      nodeExecPath: "C:\\PortableNode\\node.exe",
+      npmExecPath: "C:\\PortableNode\\node_modules\\npm\\bin\\npm-cli.js",
+    }),
+    {
+      command: "C:\\PortableNode\\node.exe",
+      args: [
+        "C:\\PortableNode\\node_modules\\npm\\bin\\npm-cli.js",
+        "run",
+        "build",
+      ],
+    },
+  );
+  assert.deepEqual(
+    npmRunInvocation("build", {
+      nodeExecPath: "/opt/node/bin/node",
+      npmExecPath: "",
+    }),
+    {
+      command: "npm",
+      args: ["run", "build"],
+    },
+  );
+});
+
+test("formal Track B restores production through the provenance-bound build helper", async () => {
+  const source = await readFile(new URL("../scripts/run-live-ae-tests.mjs", import.meta.url), "utf8");
+  const restoreIndex = source.indexOf("const productionPreparation = await prepareProductionBuild();");
+  const manifestIndex = source.indexOf(
+    'const productionManifestAfter = await createBuildManifest("production-restored");',
+    restoreIndex,
+  );
+  assert.ok(restoreIndex >= 0, "Track B must restore through prepareProductionBuild");
+  assert.ok(manifestIndex > restoreIndex, "restored manifest must follow bound provenance generation");
+  assert.match(
+    source.slice(restoreIndex, manifestIndex),
+    /buildOutputs\.push\(productionPreparation\.buildOutput\)/,
+  );
+});
+
 test("preflight path rejection is read-only and performs zero mutation calls", async () => {
   const { inspectPreflightPaths } = await import("../scripts/run-live-ae-tests.mjs");
   const mutations = [];

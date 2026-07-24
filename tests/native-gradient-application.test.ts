@@ -1934,7 +1934,7 @@ test("Track B runner proves production identity before owned debug navigation an
   const devBuildIndex = startupSource.indexOf('runCanonicalBuild("build:dev")');
   const navigateIndex = startupSource.indexOf("navigateMain(client, devUrl, true)");
   const waitIndex = startupSource.indexOf("await waitForDebug(client)");
-  const productionRestoreIndex = startupSource.indexOf('runCanonicalBuild("build")');
+  const productionRestoreIndex = startupSource.indexOf("prepareProductionBuild()");
 
   assert.ok(targetIndex >= 0, "runner does not select the exact realpath Main target");
   assert.ok(enableIndex >= 0, "runner does not enable the CDP Page domain");

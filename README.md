@@ -113,12 +113,14 @@ Use `npm run delsymlink` to remove the local CEP link.
 
 | Command | Purpose |
 |---|---|
-| `npm run build` | Clean and build the production CEP bundle, then write build provenance. |
+| `npm run build` | Clean and build the production CEP bundle through Bolt/Vite. |
 | `npm run build:dev` | Build a development bundle with the guarded debug contract enabled. |
 | `npm run watch` | Rebuild TypeScript and watch the Vite bundle. |
+| `npm run cdp:native-gradient:prepare` | Run the normal Bolt build and bind its bytes to live-test provenance. |
 | `npm run verify:static` | Run the production build plus domain, storage, host, native-gradient, runner, release, and CEP compatibility checks. |
 | `npm run react:doctor -- --verbose` | Run the bounded React Doctor review. |
-| `npm run package:alpha` | Build and verify the unsigned internal-alpha ZIP. |
+| `npm run zxp` | Build the signed ZXP through Bolt CEP package mode. |
+| `npm run zip` | Build Bolt CEP's signed ZXP meta-package ZIP. |
 | `npm run cleanup:live-test-residue` | Report owned live-test residue; dry-run unless `--apply` is supplied explicitly. |
 
 ### Live CEP validation
@@ -141,10 +143,11 @@ These commands require the exact running Main/Settings surfaces. Some commands i
 The formal native-gradient Track B runner is intentionally separate from static verification:
 
 ```bash
-node scripts/run-live-ae-tests.mjs
+npm run cdp:native-gradient:prepare
+npm run cdp:native-gradient:apply
 ```
 
-It is a parent-owned live AE/CDP gate and must run only against frozen, reviewed bits with explicit approval.
+The preparation command runs the same normal Bolt/Vite build and immediately records its provenance for the live runner; it does not use another compiler or package the extension. The runner is a parent-owned live AE/CDP gate and must run only against frozen, reviewed bits with explicit approval.
 
 ## Verification and packaging
 
@@ -154,19 +157,15 @@ Run the canonical static gate:
 npm run verify:static
 ```
 
-Build the unsigned alpha artifact separately:
+Build distributable artifacts through Bolt CEP's package modes:
 
 ```bash
-npm run package:alpha
+npm run zxp
+# Use only when an outer meta-package ZIP is required:
+npm run zip
 ```
 
-The packager creates:
-
-```text
-dist/alpha/Chroma Relay_0.0.1-unsigned.zip
-```
-
-It reopens the archive and rejects missing manifest resources or icons, debug endpoints, source maps, unresolved runtime assets, and unexpected files. Package provenance, inventory, worktree state, and SHA-256 are written to `dist/alpha/report.json`.
+Both commands use the repository's `vite-cep-plugin` configuration. Bolt signs the ZXP in both modes; `zip` additionally wraps it in a meta-package ZIP. Development and internal testing should load `dist/cep` through the Bolt symlink instead of creating a custom unsigned archive.
 
 Generated `dist/` output is not durable source evidence and should not be committed.
 
@@ -219,7 +218,7 @@ Current identities and schemas live in [`src/shared/product-contract.json`](src/
 
 ## Contributing
 
-Keep changes narrow and preserve the runtime ownership boundaries. Run `npm run verify:static` and `npm run package:alpha` before proposing a distributable candidate. Live mutation tests must use exact panel identities, temporary data roots, explicit cleanup ownership, and preserved failure evidence.
+Keep changes narrow and preserve the runtime ownership boundaries. Run `npm run verify:static` before proposing a distributable candidate, then use the required Bolt package command. Live mutation tests must use exact panel identities, temporary data roots, explicit cleanup ownership, and preserved failure evidence.
 
 ## License and attribution
 
