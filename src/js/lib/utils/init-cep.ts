@@ -1,5 +1,4 @@
-import { company, displayName, version } from "../../../shared/shared";
-import { keyRegisterOverride, dropDisable } from "./cep";
+import { dropDisable } from "./cep";
 import {
   MAIN_EXTENSION_ID,
   SETTINGS_EXTENSION_ID,
@@ -11,11 +10,6 @@ export const APPLY_ACTIVE_PALETTE_GRADIENT_EVENT =
 const buildFlyoutMenu = () => {
   const isMainPanel = window.__adobe_cep__.getExtensionId() === MAIN_EXTENSION_ID;
   const menu = `<Menu>
-  <MenuItem Id="info" Label="${displayName} ${version}" Enabled="false" Checked="false"/>
-  <MenuItem Id="website" Label="by ${company}" Enabled="false" Checked="false"/>
-  <MenuItem Label="---" />
-  ${isMainPanel ? '<MenuItem Id="apply-active-palette-gradient" Label="Apply Active Palette as Gradient" Enabled="true" Checked="false"/>' : ""}
-  ${isMainPanel ? '<MenuItem Label="---" />' : ""}
   ${isMainPanel ? '<MenuItem Id="settings" Label="Settings…" Enabled="true" Checked="false"/>' : ""}
   <MenuItem Id="refresh" Label="Refresh" Enabled="true" Checked="false"/>
   </Menu>`;
@@ -45,10 +39,6 @@ const buildFlyoutMenu = () => {
       window.dispatchEvent(new Event(APPLY_ACTIVE_PALETTE_GRADIENT_EVENT));
     } else if (menuId === "settings" && isMainPanel) {
       window.__adobe_cep__.requestOpenExtension(SETTINGS_EXTENSION_ID, "");
-    } else if (menuId === "website") {
-      // openLinkInBrowser(homePage);
-    } else if (menuId === "info") {
-      // openLinkInBrowser(productPage);
     } else if (menuId === "refresh") {
       location.reload();
     }
@@ -65,13 +55,13 @@ const buildContextMenu = () => {
   const menuObj = {
     menu: [
       {
-        label: "Reload",
+        label: "Settings",
         enabled: true,
         checked: false,
         checkable: false,
         id: "c-0",
         callback: () => {
-          location.reload();
+          window.__adobe_cep__.requestOpenExtension(SETTINGS_EXTENSION_ID, "");
         },
       },
     ],
@@ -88,6 +78,5 @@ const buildContextMenu = () => {
 export const initializeCEP = () => {
   buildFlyoutMenu();
   buildContextMenu();
-  // keyRegisterOverride(); // Capture all Key Events Possible (many limitations on MacOS)
   dropDisable(); // to prevent drop files on panel and taking over
 };

@@ -1989,11 +1989,11 @@ test("Main and Settings expose the requested compact interaction contracts", asy
   assert.match(main, /hostActionRef\.current \|\| paletteMutationRef\.current/);
   assert.match(main, /paletteMutationRef\.current = true/);
   assert.match(main, /const baseDocument = paletteDocumentRef\.current/);
-  assert.match(main, /addPaletteCollectionItems\(baseDocument, sourceItems\)/);
+  assert.match(main, /addPaletteCollectionItems\(collectionBaseDocument, sourceItems\)/);
   assert.match(main, /paletteMutationRef\.current = false/);
   assert.match(main, /extractPaletteFromImageFile/);
   assert.match(main, /Choose selected colors or one image, not both/);
-  assert.match(mainStyles, /\[data-layout-mode="fixed"\] \.palette-add/);
+  assert.match(mainStyles, /\[data-layout-mode="fixed"\] \.palette-actions/);
   assert.match(mainStyles, /width:\s*var\(--cp-swatch-size\)/);
   assert.match(layoutSettings, /migrateLayoutSettings/);
   assert.match(layoutDomain, /includeDisabledColors:\s*boolean/);
@@ -2005,4 +2005,76 @@ test("Main and Settings expose the requested compact interaction contracts", asy
   assert.match(imageDomain, /rgbquant/);
   assert.match(imageDomain, /fallbackUsed/);
   assert.match(packageJson, /"image-q": "4\.0\.0"/);
+});
+
+test("Main splits Add and Palettes actions and swaps the color strip for inline palette selection", async () => {
+  const [main, styles] = await Promise.all([
+    read("src/js/main/main.tsx"),
+    read("src/js/main/main.scss"),
+  ]);
+
+  assert.match(main, /const \[palettePickerOpen, setPalettePickerOpen\] = useState\(false\)/);
+  assert.match(main, /className="palette-actions"/);
+  assert.match(main, /palettePickerOpen[\s\S]*Create a palette from the current selection or create an empty palette/);
+  assert.match(main, /const createPaletteMode = palettePickerOpen/);
+  assert.match(main, /createPaletteMode \? createPalette\(baseDocument\) : baseDocument/);
+  assert.match(main, /createPaletteMode[\s\S]*sourceItems = \[\]/);
+  assert.match(main, /aria-label="Show palettes"/);
+  assert.match(main, /aria-pressed=\{palettePickerOpen\}/);
+  assert.match(main, /palettePickerOpen \? \([\s\S]*?className="palette-list"/);
+  assert.match(main, /paletteDocument\.palettes\.map\(\(palette\) =>/);
+  assert.match(main, /data-testid=\{`palette-select-\$\{palette\.id\}`\}/);
+  assert.match(main, /aria-label=\{`\$\{removeMode \? "Remove" : "Select"\} \$\{palette\.name\}`\}/);
+  assert.match(main, /event\.altKey \|\| removeMode[\s\S]*handleRemovePalette\(palette\.id\)/);
+  assert.match(main, /removePalette\(current, paletteId\)/);
+  assert.match(main, /className="palette-select-colors"/);
+  assert.match(main, /palette\.colors\.map\(\(color\) =>/);
+  assert.doesNotMatch(main, /palette-select-name/);
+  assert.doesNotMatch(main, /palette\.colors\.slice/);
+  assert.match(main, /const current = paletteDocumentRef\.current;[\s\S]*selectPalette\(current, paletteId\)/);
+  assert.match(main, /setPalettePickerOpen\(false\)/);
+  assert.match(styles, /\.palette-actions\s*\{/);
+  assert.match(styles, /\.palette-select\s*\{/);
+  assert.match(styles, /\.palette-select \+ \.palette-select/);
+  assert.match(styles, /\.palette-select-colors > span/);
+  assert.match(styles, /\.palette-glyph\s*\{[\s\S]*top:\s*50%[\s\S]*left:\s*50%[\s\S]*translate\(-50%, -50%\)/);
+  assert.match(styles, /\[data-remove-mode="true"\] \.palette-select:not\(:disabled\)/);
+  assert.match(styles, /\[data-orientation="vertical"\] \.palette-actions/);
+});
+
+test("CEP menus expose only Settings and Refresh and route context-click to Settings", async () => {
+  const initCep = await read("src/js/lib/utils/init-cep.ts");
+
+  assert.doesNotMatch(initCep, /Id="info"|Id="website"/);
+  assert.doesNotMatch(initCep, /Label="Apply Active Palette as Gradient"/);
+  assert.match(initCep, /Id="settings" Label="Settings…"/);
+  assert.match(initCep, /Id="refresh" Label="Refresh"/);
+  assert.match(initCep, /label:\s*"Settings"/);
+  assert.match(initCep, /requestOpenExtension\(SETTINGS_EXTENSION_ID, ""\)/);
+  assert.doesNotMatch(initCep, /label:\s*"Reload"/);
+});
+
+test("Main and Settings show status notifications only for negative outcomes", async () => {
+  const [main, settings] = await Promise.all([
+    read("src/js/main/main.tsx"),
+    read("src/js/settings/settings.tsx"),
+  ]);
+
+  assert.doesNotMatch(main, /setLastResult\("Reading selection…"\)/);
+  assert.doesNotMatch(main, /setLastResult\(`Extracting .* image palette…`\)/);
+  assert.doesNotMatch(main, /setLastResult\("Applying selected color…"\)/);
+  assert.doesNotMatch(main, /setLastResult\(paletteCommandMessage\(request\.command, true\)\)/);
+  assert.doesNotMatch(main, /setLastResult\("Palette saved"\)/);
+  assert.match(
+    main,
+    /setLastResult\(nativeGradientReportNeedsAttention\(report\) \? message : null\)/
+  );
+  assert.match(main, /setLastResult\(skipped > 0 \? `Skipped \$\{skipped\} unsupported` : null\)/);
+
+  assert.match(settings, /setStatus\(result\.ok \? null : result\.message\)/);
+  assert.match(settings, /setStatus\(loaded\.error\)/);
+  assert.doesNotMatch(settings, /setStatus\("Saving palette…"\)/);
+  assert.doesNotMatch(settings, /setStatus\("Confirm to delete this palette"\)/);
+  assert.doesNotMatch(settings, /setStatus\(`Exported \$\{activePalette\.name\}`\)/);
+  assert.doesNotMatch(settings, /setStatus\(`\$\{activePalette\.name\} is active`\)/);
 });

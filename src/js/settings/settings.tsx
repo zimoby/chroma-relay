@@ -206,12 +206,7 @@ export const App = () => {
     const loaded = loadLayoutSettings(configRoot);
     setSettings(loaded.settings);
     setDraftSize(loaded.settings.swatchSize);
-    setStatus(
-      loaded.error ||
-        (loaded.settings.layoutMode === "stretch"
-          ? "Stretch layout is active"
-          : `Fixed layout · ${loaded.settings.swatchSize} px`)
-    );
+    setStatus(loaded.error);
   }, [configRoot]);
 
   useEffect(() => {
@@ -279,7 +274,7 @@ export const App = () => {
               }
             }
           }
-          setStatus(result.message);
+          setStatus(result.ok ? null : result.message);
         }
       }),
     []
@@ -336,21 +331,7 @@ export const App = () => {
       countersRef.current.emittedEvents += 1;
       setSettings(next);
       setDraftSize(next.swatchSize);
-      setStatus(
-        patch.extractionPreset !== undefined
-          ? `${EXTRACTION_PRESET_LABELS[next.extractionPreset]} image extraction saved`
-          : patch.smartApply !== undefined
-          ? next.smartApply
-            ? "Smart Apply enabled"
-            : "Smart Apply disabled"
-          : patch.includeDisabledColors !== undefined
-          ? next.includeDisabledColors
-            ? "Disabled colors included"
-            : "Disabled colors skipped"
-          : next.layoutMode === "stretch"
-          ? "Stretch layout saved"
-          : `Fixed layout saved · ${next.swatchSize} px`
-      );
+      setStatus(null);
     } catch {
       setStatus("Setting could not be saved");
     }
@@ -375,7 +356,7 @@ export const App = () => {
     );
     if (!started) return false;
     setArmedDeleteId(null);
-    setStatus("Saving palette…");
+    setStatus(null);
     countersRef.current.emittedEvents += 1;
     return true;
   };
@@ -470,7 +451,7 @@ export const App = () => {
       return;
     }
     setArmedDeleteId(activePalette.id);
-    setStatus("Confirm to delete this palette");
+    setStatus(null);
   };
 
   const confirmDeletePalette = () => {
@@ -582,7 +563,7 @@ export const App = () => {
       setStatus("Could not write the palette file");
       return;
     }
-    setStatus(`Exported ${activePalette.name}`);
+    setStatus(null);
   };
 
   const toggleColorEditor = (colorId: string) => {
@@ -853,7 +834,7 @@ export const App = () => {
         setEditorInvalid({});
         setEditorError(null);
         setColorDrag(null);
-        setStatus("Stretch layout is active");
+        setStatus(null);
         countersRef.current = {
           diskWrites: 0,
           emittedEvents: 0,
@@ -1003,7 +984,7 @@ export const App = () => {
           data-testid="settings-tab-palettes"
           onClick={() => {
             setActiveTab("palettes");
-            setStatus(`${activePalette.name} is active`);
+            setStatus(null);
           }}
           role="tab"
           type="button"

@@ -1905,11 +1905,11 @@ test("B3 result messages use exact B2 status literals and preserve cleanup evide
   );
 });
 
-test("B3 Main exposes only the explicit flyout gradient action and preserves normal swatch apply", () => {
+test("B3 Main removes the flyout gradient action while preserving automation and swatch apply", () => {
   const initSource = readFileSync(join(REPO_ROOT, "src/js/lib/utils/init-cep.ts"), "utf8");
   const mainSource = readFileSync(join(REPO_ROOT, "src/js/main/main.tsx"), "utf8");
-  assert.match(initSource, /Id="apply-active-palette-gradient"/);
-  assert.match(initSource, /Label="Apply Active Palette as Gradient"/);
+  assert.doesNotMatch(initSource, /Id="apply-active-palette-gradient"/);
+  assert.doesNotMatch(initSource, /Label="Apply Active Palette as Gradient"/);
   assert.match(initSource, /APPLY_ACTIVE_PALETTE_GRADIENT_EVENT/);
   assert.match(mainSource, /applyActivePaletteNativeGradient/);
   assert.match(mainSource, /applyNativeGradientPresetToSelectedTarget/);

@@ -126,6 +126,38 @@ const debugCssToRgba = (css: string): [number, number, number, number] => [
   1,
 ];
 
+const nativeGradientReportNeedsAttention = (
+  report: Awaited<ReturnType<typeof applyActivePaletteNativeGradient>>
+) => {
+  if (report.status !== "ok" || report.primaryStatus !== "ok") return true;
+  const hostResult =
+    report.hostResult && typeof report.hostResult === "object"
+      ? (report.hostResult as {
+          skippedDisabledBranchCount?: unknown;
+          skippedDisabledCount?: unknown;
+          preservedPropertyCount?: unknown;
+          preservedStateCount?: unknown;
+        })
+      : null;
+  const skippedDisabled =
+    typeof hostResult?.skippedDisabledBranchCount === "number"
+      ? hostResult.skippedDisabledBranchCount
+      : typeof hostResult?.skippedDisabledCount === "number"
+        ? hostResult.skippedDisabledCount
+        : 0;
+  const preserved =
+    typeof hostResult?.preservedPropertyCount === "number"
+      ? hostResult.preservedPropertyCount
+      : typeof hostResult?.preservedStateCount === "number"
+        ? hostResult.preservedStateCount
+        : 0;
+  return (
+    skippedDisabled > 0 ||
+    preserved > 0 ||
+    report.cleanup.some((entry) => entry.preserved || entry.error !== null)
+  );
+};
+
 type PaletteDragState = {
   sourceId: string;
   targetId: string | null;
@@ -222,6 +254,7 @@ export const App = () => {
   const [pendingPaletteMutation, setPendingPaletteMutation] = useState(false);
   const [dragState, setDragState] = useState<PaletteDragState | null>(null);
   const [removeMode, setRemoveMode] = useState(false);
+  const [palettePickerOpen, setPalettePickerOpen] = useState(false);
   const [designState, setDesignState] = useState<DesignPreviewState>("default");
   const [activeOrientation, setActiveOrientation] = useState<"horizontal" | "vertical">(
     "horizontal"
@@ -323,9 +356,9 @@ export const App = () => {
     paletteErrorRef.current = loaded.error;
     setPaletteDocument(loaded.document);
     setPaletteError(loaded.error);
-    if (loaded.recovery !== "none") {
-      setLastResult(`Recovered palette from ${loaded.recovery}`);
-    }
+    setLastResult(
+      loaded.recovery === "none" ? null : `Recovered palette from ${loaded.recovery}`
+    );
   }, [configRoot]);
 
   useEffect(
@@ -374,7 +407,7 @@ export const App = () => {
             paletteErrorRef.current = null;
             setPaletteDocument(next);
             setPaletteError(null);
-            setLastResult(paletteCommandMessage(request.command, true));
+            setLastResult(null);
             respond(true, paletteCommandMessage(request.command, true), next);
           })
           .catch(() => {
@@ -394,6 +427,19 @@ export const App = () => {
     return () => window.clearTimeout(timeout);
   }, [lastResult]);
 
+  useEffect(() => {
+    const syncAltMode = (event: KeyboardEvent) => setRemoveMode(event.altKey);
+    const clearAltMode = () => setRemoveMode(false);
+    window.addEventListener("keydown", syncAltMode);
+    window.addEventListener("keyup", syncAltMode);
+    window.addEventListener("blur", clearAltMode);
+    return () => {
+      window.removeEventListener("keydown", syncAltMode);
+      window.removeEventListener("keyup", syncAltMode);
+      window.removeEventListener("blur", clearAltMode);
+    };
+  }, []);
+
   const handleAddSelectedColors = async () => {
     if (paletteWriteProtected || paletteErrorRef.current) {
       setLastResult("Resolve the saved palette error before adding colors");
@@ -403,13 +449,18 @@ export const App = () => {
       setLastResult("Palette is busy; try again");
       return;
     }
+    const createPaletteMode = palettePickerOpen;
+    const baseDocument = paletteDocumentRef.current;
+    const collectionBaseDocument = createPaletteMode ? createPalette(baseDocument) : baseDocument;
+    if (createPaletteMode && collectionBaseDocument === baseDocument) {
+      setLastResult("Palette limit reached");
+      return;
+    }
     hostActionRef.current = true;
     paletteMutationRef.current = true;
     setPendingPaletteMutation(true);
-    const baseDocument = paletteDocumentRef.current;
-    const baseActiveColors = getActivePalette(baseDocument).colors;
     setPendingHostAction("collect");
-    setLastResult("Reading selection…");
+    setLastResult(null);
     countersRef.current.hostCalls += 1;
     let phase: "selection" | "image" | "gradient" = "selection";
     try {
@@ -425,7 +476,7 @@ export const App = () => {
         return;
       }
 
-      let sourceItems: PaletteCollectionItem[];
+      let sourceItems: PaletteCollectionItem[] = [];
       let collectedDocument: PaletteDocument | null = null;
       let collectionPaletteWritten = false;
       let sourceName: string | null = null;
@@ -433,7 +484,6 @@ export const App = () => {
       if (selection.image.status === "ok" && selection.image.path) {
         phase = "image";
         setPendingHostAction("extract");
-        setLastResult(`Extracting ${layoutSettings.extractionPreset} image palette…`);
         const extraction = await extractPaletteFromImageFile(
           selection.image.path,
           layoutSettings.extractionPreset
@@ -465,7 +515,7 @@ export const App = () => {
           entries: selection.colors.entries,
           colors: selection.colors.colors,
           descriptors: selection.nativeGradients.descriptors,
-          baseDocument,
+          baseDocument: collectionBaseDocument,
         }, {
           nativeParser: collectNativeGradientsFromProject,
           solidItem: (rgba) => ({
@@ -481,7 +531,7 @@ export const App = () => {
                   rgba,
                   preserveDuplicate: true,
                 })),
-          buildDocument: (items) => addPaletteCollectionItems(baseDocument, items),
+          buildDocument: (items) => addPaletteCollectionItems(collectionBaseDocument, items),
           writePalette: (document) => savePalette(document, configRootRef.current),
         });
         if (!collection.allowed) {
@@ -524,26 +574,19 @@ export const App = () => {
           setLastResult("Could not read the selection exactly");
           return;
         }
-        setLastResult(messages[colorStatus]);
-        return;
+        if (createPaletteMode) {
+          sourceItems = [];
+        } else {
+          setLastResult(messages[colorStatus]);
+          return;
+        }
       }
 
-      const next = collectedDocument ?? addPaletteCollectionItems(baseDocument, sourceItems);
-      const nextActiveColors = getActivePalette(next).colors;
-      const addedCount = nextActiveColors.length - baseActiveColors.length;
-      const addedGradientCount =
-        nextActiveColors.filter(isPaletteGradient).length -
-        baseActiveColors.filter(isPaletteGradient).length;
-      const addedColorCount = addedCount - addedGradientCount;
-      const addedParts = [
-        addedColorCount > 0
-          ? `${addedColorCount} color${addedColorCount === 1 ? "" : "s"}`
-          : null,
-        addedGradientCount > 0
-          ? `${addedGradientCount} gradient${addedGradientCount === 1 ? "" : "s"}`
-          : null,
-      ].filter((part): part is string => part !== null);
-      const addedSummary = addedParts.join(" and ");
+      const next =
+        collectedDocument ??
+        (sourceItems.length > 0
+          ? addPaletteCollectionItems(collectionBaseDocument, sourceItems)
+          : collectionBaseDocument);
       if (next === baseDocument) {
         setLastResult(
           sourceName
@@ -568,13 +611,7 @@ export const App = () => {
         document: next,
       });
       countersRef.current.emittedEvents += 1;
-      setLastResult(
-        sourceName
-          ? `Added ${addedSummary} from ${sourceName}`
-          : skipped > 0
-          ? `Added ${addedSummary}; skipped ${skipped} unsupported`
-          : `Added ${addedSummary}`
-      );
+      setLastResult(skipped > 0 ? `Skipped ${skipped} unsupported` : null);
     } catch (_error) {
       setLastResult(
         phase === "image"
@@ -595,8 +632,7 @@ export const App = () => {
     input:
       | { palette: readonly PaletteColor["rgba"][] }
       | { gradient: NonNullable<PaletteColor["gradient"]> },
-    stopCount: number,
-    pendingMessage: string
+    stopCount: number
   ) => {
     if (hostActionRef.current || paletteMutationRef.current) return;
     if (paletteErrorRef.current) {
@@ -608,7 +644,7 @@ export const App = () => {
     paletteMutationRef.current = true;
     setPendingHostAction("gradient");
     setPendingPaletteMutation(true);
-    setLastResult(pendingMessage);
+    setLastResult(null);
     try {
       const document = paletteDocumentRef.current;
       const extensionRoot = csi.getSystemPath("extension");
@@ -631,7 +667,7 @@ export const App = () => {
       );
       const message = nativeGradientResultMessage(report, stopCount);
       lastHostResultRef.current = report;
-      setLastResult(message);
+      setLastResult(nativeGradientReportNeedsAttention(report) ? message : null);
       dispatchPaletteResult({
         requestId: null,
         ok: report.status === "ok",
@@ -659,16 +695,14 @@ export const App = () => {
     }
     await handleApplyNativeGradient(
       { palette: colors },
-      colors.length,
-      "Applying active palette as gradient…"
+      colors.length
     );
   }, [handleApplyNativeGradient]);
 
   const handleApplyStoredGradient = (gradient: NonNullable<PaletteColor["gradient"]>) =>
     handleApplyNativeGradient(
       { gradient },
-      gradient.colorStops.length,
-      "Applying saved gradient…"
+      gradient.colorStops.length
     );
 
   useEffect(() => {
@@ -684,7 +718,7 @@ export const App = () => {
     if (hostActionRef.current) return;
     hostActionRef.current = true;
     setPendingHostAction("apply");
-    setLastResult("Applying selected color…");
+    setLastResult(null);
     countersRef.current.hostCalls += 1;
     try {
       const result = await evalTS(
@@ -712,12 +746,7 @@ export const App = () => {
         result.preservedStateCount +
         result.skippedDisabledCount +
         result.failedCount;
-      const propertyLabel = result.appliedCount === 1 ? "property" : "properties";
-      setLastResult(
-        skipped > 0
-          ? `Applied to ${result.appliedCount} ${propertyLabel}; skipped ${skipped}`
-          : `Applied to ${result.appliedCount} ${propertyLabel}`
-      );
+      setLastResult(skipped > 0 ? `Skipped ${skipped} unsupported` : null);
     } catch (_error) {
       setLastResult("Could not apply the selected color");
     } finally {
@@ -732,6 +761,7 @@ export const App = () => {
       return false;
     }
     if (next === paletteDocument || paletteMutationRef.current) return false;
+    setLastResult(null);
     paletteMutationRef.current = true;
     setPendingPaletteMutation(true);
     try {
@@ -740,7 +770,6 @@ export const App = () => {
       paletteErrorRef.current = null;
       setPaletteDocument(next);
       setPaletteError(null);
-      setLastResult(message);
       dispatchPaletteResult({ requestId: null, ok: true, message, document: next });
       countersRef.current.emittedEvents += 1;
       return true;
@@ -751,6 +780,33 @@ export const App = () => {
       paletteMutationRef.current = false;
       setPendingPaletteMutation(false);
     }
+  };
+
+  const handleSelectPalette = async (paletteId: string) => {
+    if (hostActionRef.current || paletteMutationRef.current) return;
+    const current = paletteDocumentRef.current;
+    if (current.activePaletteId === paletteId) {
+      setPalettePickerOpen(false);
+      return;
+    }
+    const next = selectPalette(current, paletteId);
+    const selectedPalette = next.palettes.find((palette) => palette.id === paletteId);
+    const saved = await commitPaletteMutation(
+      next,
+      selectedPalette ? `Selected ${selectedPalette.name}` : "Palette selected"
+    );
+    if (saved) setPalettePickerOpen(false);
+  };
+
+  const handleRemovePalette = async (paletteId: string) => {
+    if (hostActionRef.current || paletteMutationRef.current) return;
+    const current = paletteDocumentRef.current;
+    if (current.palettes.length === 1) {
+      setLastResult("Keep at least one palette");
+      return;
+    }
+    const next = removePalette(current, paletteId);
+    await commitPaletteMutation(next, "Palette removed");
   };
 
   const handleRemoveColor = async (colorId: string) => {
@@ -921,6 +977,7 @@ export const App = () => {
             }
           : null,
         removeMode,
+        palettePickerOpen,
         lastHostResult: lastHostResultRef.current,
         lastResult,
         fixtureViewport: fixture,
@@ -959,7 +1016,7 @@ export const App = () => {
         paletteErrorRef.current = null;
         setPaletteDocument(next);
         setPaletteError(null);
-        setLastResult("Palette saved");
+        setLastResult(null);
         dispatchPaletteResult({
           requestId: null,
           ok: true,
@@ -976,9 +1033,7 @@ export const App = () => {
         setPaletteDocument(loaded.document);
         setPaletteError(loaded.error);
         setLastResult(
-          loaded.recovery === "none"
-            ? "Palette reloaded"
-            : `Recovered palette from ${loaded.recovery}`
+          loaded.recovery === "none" ? null : `Recovered palette from ${loaded.recovery}`
         );
         return loaded;
       },
@@ -1020,6 +1075,7 @@ export const App = () => {
         setPendingPaletteMutation(false);
         setDragState(null);
         setRemoveMode(false);
+        setPalettePickerOpen(false);
         hostActionRef.current = false;
         lastHostResultRef.current = null;
         paletteMutationRef.current = false;
@@ -1047,6 +1103,7 @@ export const App = () => {
     paletteError,
     pendingHostAction,
     pendingPaletteMutation,
+    palettePickerOpen,
     removeMode,
     settingsError,
   ]);
@@ -1094,7 +1151,60 @@ export const App = () => {
       <span className="visually-hidden">Chroma Relay · {BUILD_MARKER}</span>
 
       <section className="palette-stage" aria-label="Color palette">
-        <div className="palette-strip" data-testid="palette-strip">
+        {palettePickerOpen ? (
+          <div
+            aria-label="Palettes"
+            className="palette-list"
+            data-testid="palette-list"
+            role="listbox"
+          >
+            {paletteDocument.palettes.map((palette) => (
+              <button
+                aria-keyshortcuts="Alt+Enter Alt+Space"
+                aria-label={`${removeMode ? "Remove" : "Select"} ${palette.name}`}
+                aria-selected={palette.id === activePalette.id}
+                className="palette-select"
+                data-testid={`palette-select-${palette.id}`}
+                disabled={
+                  paletteWriteProtected ||
+                  pendingHostAction !== null ||
+                  pendingPaletteMutation
+                }
+                key={palette.id}
+                onClick={(event) => {
+                  if (event.altKey || removeMode) {
+                    void handleRemovePalette(palette.id);
+                    return;
+                  }
+                  void handleSelectPalette(palette.id);
+                }}
+                onKeyDown={(event) => {
+                  if (event.altKey && (event.key === "Enter" || event.key === " ")) {
+                    event.preventDefault();
+                    void handleRemovePalette(palette.id);
+                  }
+                }}
+                role="option"
+                title={removeMode ? `Remove ${palette.name}` : palette.name}
+                type="button"
+              >
+                <span aria-hidden="true" className="palette-select-colors">
+                  {palette.colors.length ? (
+                    palette.colors.map((color) => (
+                      <span
+                        key={color.id}
+                        style={{ background: paletteSwatchBackground(color, activeOrientation) }}
+                      />
+                    ))
+                  ) : (
+                    <span className="is-empty" />
+                  )}
+                </span>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="palette-strip" data-testid="palette-strip">
           {visibleSwatches.length ? (
             visibleSwatches.map((swatch, index) => {
               const previewClass =
@@ -1159,22 +1269,45 @@ export const App = () => {
           ) : (
             <span className="palette-empty">Add a color or gradient</span>
           )}
+          </div>
+        )}
+        <div className="palette-actions">
+          <button
+            aria-label={
+              palettePickerOpen
+                ? "Create a palette from the current selection or create an empty palette"
+                : "Add selected colors or extract a selected image"
+            }
+            className="palette-action palette-add"
+            data-testid="palette-add"
+            disabled={
+              paletteWriteProtected ||
+              designState === "disabled" ||
+              pendingHostAction !== null ||
+              pendingPaletteMutation
+            }
+            onClick={handleAddSelectedColors}
+            type="button"
+          >
+            <span aria-hidden="true" className="add-glyph" />
+          </button>
+          <button
+            aria-label="Show palettes"
+            aria-pressed={palettePickerOpen}
+            className="palette-action palette-picker-toggle"
+            data-testid="palette-picker-toggle"
+            disabled={
+              paletteWriteProtected ||
+              designState === "disabled" ||
+              pendingHostAction !== null ||
+              pendingPaletteMutation
+            }
+            onClick={() => setPalettePickerOpen((open) => !open)}
+            type="button"
+          >
+            <span aria-hidden="true" className="palette-glyph" />
+          </button>
         </div>
-        <button
-          aria-label="Add selected colors or extract a selected image"
-          className="palette-add"
-          data-testid="palette-add"
-          disabled={
-            paletteWriteProtected ||
-            designState === "disabled" ||
-            pendingHostAction !== null ||
-            pendingPaletteMutation
-          }
-          onClick={handleAddSelectedColors}
-          type="button"
-        >
-          <span aria-hidden="true" className="add-glyph" />
-        </button>
       </section>
 
       {dragState ? (

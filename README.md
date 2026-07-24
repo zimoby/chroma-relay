@@ -21,6 +21,8 @@ Chroma Relay is a two-surface CEP extension for After Effects:
 
 The interface stays intentionally small: the swatches are the product, not content inside a dashboard. Main automatically becomes horizontal when its width is at least its height and vertical otherwise.
 
+Status notifications are failure-only: clean saves, applies, exports, and palette changes stay silent, while blocked, partial, recovery, and error outcomes remain visible.
+
 > Chroma Relay is currently an unsigned internal-alpha candidate, not a public release. macOS runtime paths and Windows AE 2024 native gradients have live validation; the remaining Windows-version and final publication gates remain open.
 
 ## Features
@@ -42,20 +44,23 @@ Disabled layers and groups are skipped by default and can be included from Setti
 
 - Click a color swatch to apply its exact RGBA value to selected writable color properties.
 - Click a gradient slot to apply the stored native gradient to supported targets.
-- Use **Panel flyout → Apply Active Palette as Gradient** to generate a gradient from an active palette containing 2–8 color slots.
 - **Smart Apply**, enabled by default in Settings, expands a target-free property or group to the nearest parent group containing matching colors or gradients. Direct matches remain exact, and the fallback never expands to the whole layer.
 - Color and gradient operations share the scoped host transaction and one balanced Undo group.
 
-Collecting an exact native gradient from project properties requires a clean saved project and stable descriptor identity. Applying an already stored or generated gradient also fails closed on ambiguous targets, but supports dirty or unsaved projects when the selected targets are static, unlocked, and exactly resolvable.
+Collecting an exact native gradient from project properties requires a clean saved project and stable descriptor identity. Applying an already stored gradient also fails closed on ambiguous targets, but supports dirty or unsaved projects when the selected targets are static, unlocked, and exactly resolvable.
 
 ### Organize
 
+- Use the split **Add / Palettes** control in Main to replace the swatch rail with full-bleed palette previews; selecting a palette returns immediately to its colors.
+- In palette-preview mode, **+** creates an empty palette when nothing is selected or creates a populated palette from the current color, gradient, or image selection.
 - Drag swatches to reorder them.
 - Alt/Option-click a swatch to remove it immediately.
+- Alt/Option-click a palette preview to remove the whole palette while keeping at least one palette.
 - Use the compact **×** control for explicit pointer or keyboard remove mode.
 - Create, select, rename, import, export, and two-step-delete named palettes in Settings.
 - Edit color entries as Hex, RGB, CMYK, and alpha without replacing exact HDR/out-of-range values with rounded previews.
 - Choose Stretch sizing or fixed 24–64 px swatches.
+- The panel flyout exposes only **Settings…** and **Refresh**; right-click opens **Settings**.
 
 A document supports up to 32 palettes and 64 color or gradient entries per palette.
 
