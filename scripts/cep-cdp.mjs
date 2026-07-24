@@ -544,7 +544,7 @@ const runSettingsSmoke = async (outputDirectory, parentRun) => {
       throw new Error("Main did not receive Fixed exactly once without writing");
     }
     if (
-      fixed.swatches.length !== 3 ||
+      fixed.swatches.length !== 5 ||
       fixed.swatches.some((rect) => rect.width !== 32 || rect.height !== 32) ||
       fixed.add.width !== 32 ||
       fixed.add.height !== 32 ||
@@ -760,7 +760,7 @@ const runSettingsSmoke = async (outputDirectory, parentRun) => {
       throw new Error("Main did not receive Stretch exactly once without writing");
     }
     if (
-      stretch.swatches.length !== 3 ||
+      stretch.swatches.length !== 5 ||
       new Set(stretch.swatches.map((rect) => rect.width)).size !== 1 ||
       stretch.swatches.every((rect) => rect.width === rect.height)
     ) {

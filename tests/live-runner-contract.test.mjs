@@ -455,6 +455,27 @@ test("design capture canonicalizes an OS-provided temporary directory", async ()
   );
 });
 
+test("debug config roots accept direct children of canonical macOS temp only", async () => {
+  const { normalizeTemporaryConfigRoot } = await import("../src/js/shared/debug-api.ts");
+  const root = "/private/var/folders/qj/session-hash/T/chroma-relay-design-main-run";
+  assert.equal(normalizeTemporaryConfigRoot(root), root);
+  assert.throws(
+    () => normalizeTemporaryConfigRoot(
+      "/private/var/folders/qj/session-hash/T/nested/chroma-relay-design-main-run",
+    ),
+    /supported macOS or Windows temp directory/,
+  );
+  for (const traversal of [
+    "/private/var/folders/../../T/chroma-relay-design-main-run",
+    "/private/var/folders/qj/./T/chroma-relay-design-main-run",
+  ]) {
+    assert.throws(
+      () => normalizeTemporaryConfigRoot(traversal),
+      /supported macOS or Windows temp directory/,
+    );
+  }
+});
+
 test("design capture can target Settings without weakening the Main compositor gate", async () => {
   const source = await readFile(
     new URL("../scripts/cep-design-capture.mjs", import.meta.url),

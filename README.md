@@ -4,222 +4,106 @@
 
 <h1 align="center">Chroma Relay</h1>
 
-<p align="center">
-  A compact After Effects palette for collecting, organizing, and applying exact colors and native gradients.
-</p>
+<p align="center">A compact After Effects palette for exact colors and native gradients.</p>
 
-<p align="center">
-  <strong>Internal alpha · v0.0.1 · After Effects 2022+</strong>
-</p>
+<p align="center"><strong>v0.0.1 · After Effects 2022+</strong></p>
 
-## Overview
+## Capabilities
 
-Chroma Relay is a two-surface CEP extension for After Effects:
+- **Default palette:** five balanced brand colors ordered coral, amber, leaf, sky, and violet.
+- **Collect:** exact RGBA values, supported group/layer properties, native gradient stops or reusable slots, and up to five colors from a selected JPEG or PNG.
+- **Apply:** click stored colors or gradients to update exactly resolved writable targets in one balanced Undo group.
+- **Smart Apply:** when a direct scope has no target, search only the nearest matching parent group—never the whole layer.
+- **Organize:** create and switch palettes, drag to reorder, remove entries, and import/export portable palettes.
+- **Edit:** use Hex, RGB, CMYK, and alpha while preserving exact HDR and out-of-range values.
 
-- **Main** is a responsive color rail. It collects colors, gradients, or a palette from one selected image, then applies stored entries to supported AE properties.
-- **Settings** controls swatch layout, collection behavior, image extraction, and named palette management.
+Collection is read-only, deterministic across multiple selected layers, and skips disabled layers/groups by default. A document supports 32 palettes with 64 entries each.
 
-The interface stays intentionally small: the swatches are the product, not content inside a dashboard. Main automatically becomes horizontal when its width is at least its height and vertical otherwise.
-
-Status notifications are failure-only: clean saves, applies, exports, and palette changes stay silent, while blocked, partial, recovery, and error outcomes remain visible.
-
-> Chroma Relay is currently an unsigned internal-alpha candidate, not a public release. macOS runtime paths and Windows AE 2024 native gradients have live validation; the remaining Windows-version and final publication gates remain open.
-
-## Features
-
-### Collect
-
-Use Main's **+** control to collect from the current After Effects selection:
-
-- exact RGBA values from supported color properties;
-- supported properties inside selected groups;
-- supported properties across whole selected layers when no properties are selected;
-- multiple selected layers in deterministic layer/property-path order;
-- native gradients as individual color stops or exact reusable gradient slots;
-- up to five colors from one selected JPEG or PNG using Balanced, Tonal, or Contrast extraction.
-
-Disabled layers and groups are skipped by default and can be included from Settings. Collection is read-only and deduplicates entries without rounding stored values.
-
-### Apply
-
-- Click a color swatch to apply its exact RGBA value to selected writable color properties.
-- Click a gradient slot to apply the stored native gradient to supported targets.
-- **Smart Apply**, enabled by default in Settings, expands a target-free property or group to the nearest parent group containing matching colors or gradients. Direct matches remain exact, and the fallback never expands to the whole layer.
-- Color and gradient operations share the scoped host transaction and one balanced Undo group.
-
-Collecting an exact native gradient from project properties requires a clean saved project and stable descriptor identity. Applying an already stored gradient also fails closed on ambiguous targets, but supports dirty or unsaved projects when the selected targets are static, unlocked, and exactly resolvable.
-
-### Organize
-
-- Use the split **Add / Palettes** control in Main to replace the swatch rail with full-bleed palette previews; selecting a palette returns immediately to its colors.
-- In palette-preview mode, **+** creates an empty palette when nothing is selected or creates a populated palette from the current color, gradient, or image selection.
-- Drag swatches to reorder them.
-- Alt/Option-click a swatch to remove it immediately.
-- Alt/Option-click a palette preview to remove the whole palette while keeping at least one palette.
-- Use the compact **×** control for explicit pointer or keyboard remove mode.
-- Create, select, rename, import, export, and two-step-delete named palettes in Settings.
-- Edit color entries as Hex, RGB, CMYK, and alpha without replacing exact HDR/out-of-range values with rounded previews.
-- Choose Stretch sizing or fixed 24–64 px swatches.
-- The panel flyout exposes only **Settings…** and **Refresh**; right-click opens **Settings**.
-
-A document supports up to 32 palettes and 64 color or gradient entries per palette.
+Collecting an exact native gradient requires a clean saved project and stable descriptor identity. Applying a stored gradient fails closed on ambiguity, but supports dirty or unsaved projects when targets are static, unlocked, and exactly resolvable.
 
 ## Requirements
 
-### Extension runtime
+- After Effects 2022 / AEFT 22.0 or later
+- CEP 9 or later with Chrome 74-compatible output
+- Node.js 22.x and npm 10.x for development
+- Local After Effects for runtime testing
+- GitHub access to the private, immutable `@zimoby/ae-native-gradient` dependency
 
-- Adobe After Effects 2022 / AEFT 22.0 or later
-- CEP runtime 9 or later
-- Chrome 74-compatible browser output
+Native gradients are enabled on macOS and Windows for AE 22–26. Live Windows evidence currently covers AE 2024 only; static routing does not prove the other versions.
 
-The manifest targets AE 22.0+. Native gradients are enabled on macOS and Windows for AE 22–26. Current Windows live evidence covers AE 2024; do not infer that the remaining Windows versions have passed live validation from the manifest or static routing alone.
+## Setup
 
-### Development
-
-- Node.js 22.x — the repository is currently pinned to Node 22.22.3
-- npm 10.x — `package.json` declares npm 10.9.8
-- A local After Effects installation for CEP/runtime validation
-- GitHub read access to the private `zimoby/ae-native-gradient-toolkit` dependency, with Git authentication configured on the development device
-
-## Local setup
-
-The native-gradient dependency is pinned to an immutable commit in a private repository. Authenticate GitHub access before running `npm ci`; never copy access tokens into this repository or a tracked npm configuration file.
+Authenticate Git before installing the private dependency. Never store access tokens in the repository or tracked npm configuration.
 
 ```bash
-node --version
-npm --version
 npm ci
 npm run build
 npm run symlink
 ```
 
-The local CEP link points to:
+The link targets:
 
 ```text
 ~/Library/Application Support/Adobe/CEP/extensions/com.zimoby.chroma-relay
 ```
 
-Restart or refresh After Effects, then open:
+Restart or refresh After Effects, then open **Window → Extensions → Chroma Relay**. Use `npm run delsymlink` to remove the link.
 
-```text
-Window → Extensions → Chroma Relay
-```
-
-Open Settings from Main's panel flyout with **Settings…**. The development CDP targets use ports 8198 for Main and 8199 for Settings.
-
-Use `npm run delsymlink` to remove the local CEP link.
-
-## Development commands
+## Commands
 
 | Command | Purpose |
 |---|---|
-| `npm run build` | Clean and build the production CEP bundle through Bolt/Vite. |
-| `npm run build:dev` | Build a development bundle with the guarded debug contract enabled. |
-| `npm run watch` | Rebuild TypeScript and watch the Vite bundle. |
-| `npm run cdp:native-gradient:prepare` | Run the normal Bolt build and bind its bytes to live-test provenance. |
-| `npm run verify:static` | Run the production build plus domain, storage, host, native-gradient, runner, release, and CEP compatibility checks. |
-| `npm run react:doctor -- --verbose` | Run the bounded React Doctor review. |
-| `npm run zxp` | Build the signed ZXP through Bolt CEP package mode. |
-| `npm run zip` | Build Bolt CEP's signed ZXP meta-package ZIP. |
-| `npm run cleanup:live-test-residue` | Report owned live-test residue; dry-run unless `--apply` is supplied explicitly. |
+| `npm run build` | Clean production build through Bolt/Vite. |
+| `npm run build:dev` / `npm run watch` | Debug build or watch mode. |
+| `npm run verify:static` | Canonical build, tests, contracts, and CEP scan. |
+| `npm run zxp` | Build the signed ZXP through Bolt CEP. |
+| `npm run zip` | Build Bolt's signed ZXP meta-package ZIP. |
 
-### Live CEP validation
+Development loads `dist/cep` through the Bolt symlink. Generated `dist/` output is not durable evidence and must not be committed.
 
-Build the debug bundle before using the live runners:
+## Live validation
+
+Build the guarded debug bundle before bounded CDP runners:
 
 ```bash
 npm run build:dev
 npm run cdp:self-test
-npm run cdp:inspect -- --output=evidence/local/inspect
-npm run cdp:settings -- --output=evidence/local/settings-smoke
-npm run cdp:persistence -- --output=evidence/local/persistence-smoke
-npm run cdp:palette-management
-npm run cdp:collect -- --output=evidence/local/host-smoke
-npm run cdp:apply -- --output=evidence/local/apply-smoke
 ```
 
-These commands require the exact running Main/Settings surfaces. Some commands inspect or mutate live AE state; run host mutation only through the documented approval and cleanup flow. Persistence and palette-management runners must use temporary storage roots rather than the user's real palette.
+Additional inspection and mutation runners are listed in `package.json`. They require the exact Main/Settings surfaces; mutation needs explicit approval and cleanup, while persistence tests must use temporary storage rather than user data.
 
-The formal native-gradient Track B runner is intentionally separate from static verification:
+Formal native-gradient Track B is separate from static verification:
 
 ```bash
 npm run cdp:native-gradient:prepare
 npm run cdp:native-gradient:apply
 ```
 
-The preparation command runs the same normal Bolt/Vite build and immediately records its provenance for the live runner; it does not use another compiler or package the extension. The runner is a parent-owned live AE/CDP gate and must run only against frozen, reviewed bits with explicit approval.
+Preparation runs the normal Bolt build and binds its bytes to provenance. Run Track B only against frozen, reviewed bits with explicit approval.
 
-## Verification and packaging
+## Identity and data
 
-Run the canonical static gate:
+| Contract | Value |
+|---|---|
+| Extension | `com.zimoby.chroma-relay` |
+| Main / Settings | `com.zimoby.chroma-relay.main` / `com.zimoby.chroma-relay.settings` |
+| Storage | `Chroma Relay/` |
+| Portable format | `chroma-relay` / `.chroma-relay.json` |
 
-```bash
-npm run verify:static
-```
-
-Build distributable artifacts through Bolt CEP's package modes:
-
-```bash
-npm run zxp
-# Use only when an outer meta-package ZIP is required:
-npm run zip
-```
-
-Both commands use the repository's `vite-cep-plugin` configuration. Bolt signs the ZXP in both modes; `zip` additionally wraps it in a meta-package ZIP. Development and internal testing should load `dist/cep` through the Bolt symlink instead of creating a custom unsigned archive.
-
-Generated `dist/` output is not durable source evidence and should not be committed.
-
-## Data and identity contract
-
-User data is stored under the CEP user-data directory named `Chroma Relay/`.
-
-| Document | Current schema | Writer |
+| Document | Schema | Writer |
 |---|---:|---|
-| `palette.json` | 3 | Main only |
-| `settings.json` | 4 | Settings only |
-| `.chroma-relay.json` transfer | 2 | Settings import/export flow |
+| `palette.json` | 3 | Main |
+| `settings.json` | 5 | Settings |
+| Portable palette | 2 | Settings import/export |
 
-Main owns all palette persistence and AE host calls. Settings reads palette state and sends revisioned mutation commands to Main; it owns only `settings.json` plus explicitly confirmed external palette exports.
+Main owns palette persistence and AE calls. Settings owns settings and sends revisioned palette commands to Main. Writes are serialized, verified, recovery-aware, and preserve malformed primary data instead of overwriting it.
 
-Palette writes are serialized and verified, recover interrupted replacement from owned temporary/backup files, and preserve malformed primary data rather than overwriting it. Finite RGBA values are stored exactly, including HDR and negative channels; CSS previews never become canonical data.
+## Status
 
-The product has one canonical identity:
+Static verification, bounded macOS evidence, and Windows AE 2024 native-gradient proof exist. Remaining validation work covers Windows AE 22, 23, 25, and 26, restart persistence, the 128 px minimum width, and final signing/distribution.
 
-- extension ID: `com.zimoby.chroma-relay`
-- Main panel: `com.zimoby.chroma-relay.main`
-- Settings panel: `com.zimoby.chroma-relay.settings`
-- storage directory: `Chroma Relay`
-- portable format marker: `chroma-relay`
+Canonical identities and schemas live in [`src/shared/product-contract.json`](src/shared/product-contract.json). Do not infer release readiness from generated artifacts.
 
-## Architecture
+## License
 
-```text
-src/js/main/        Main palette UI, collection/application orchestration, palette writer
-src/js/settings/    Settings UI, settings writer, revisioned palette commands
-src/js/shared/      Pure domains, storage, transfer, event, and runtime contracts
-src/jsx/aeft/       After Effects ExtendScript host operations
-src/assets/         Product icon and native-gradient FFX templates
-scripts/            Build, packaging, compatibility, CDP, and live-host runners
-tests/              Domain, host, native-gradient, runner, and release contracts
-```
-
-The native-gradient path uses `@zimoby/ae-native-gradient`, pinned to an exact Git commit. Toolkit package ownership remains independent from the product runtime identity.
-
-## Project status
-
-The source is an internal 0.0.1 alpha with static verification, bounded live macOS evidence, and Windows AE 2024 native-gradient proof. Remaining public-release gates include:
-
-- live Windows AE 22, 23, 25, and 26 native-gradient validation;
-- full-restart persistence proof;
-- fresh-panel confirmation of the declared 128 px Main minimum width;
-- final signing, distribution, and release-policy decisions.
-
-Current identities and schemas live in [`src/shared/product-contract.json`](src/shared/product-contract.json). Do not infer release readiness from generated artifacts.
-
-## Contributing
-
-Keep changes narrow and preserve the runtime ownership boundaries. Run `npm run verify:static` before proposing a distributable candidate, then use the required Bolt package command. Live mutation tests must use exact panel identities, temporary data roots, explicit cleanup ownership, and preserved failure evidence.
-
-## License and attribution
-
-See [`LICENSE`](LICENSE). The repository retains the MIT license and Hyper Brew LLC attribution inherited from the Bolt CEP scaffold.
+See [`LICENSE`](LICENSE). MIT license with Hyper Brew LLC attribution inherited from Bolt CEP.

@@ -264,9 +264,13 @@ const capturePanel = async (panel, outputDirectory) => {
         ) {
           throw new Error(`${key} did not keep the Add control visible`);
         }
-        const swatchRects = ["swatch-coral", "swatch-leaf", "swatch-sky"].map(
-          (testId) => geometry.controls[testId]
-        );
+        const swatchRects = [
+          "swatch-coral",
+          "swatch-amber",
+          "swatch-leaf",
+          "swatch-sky",
+          "swatch-violet",
+        ].map((testId) => geometry.controls[testId]);
         if (swatchRects.some((rect) => !rect)) {
           throw new Error(`${key} is missing swatch geometry`);
         }
@@ -307,7 +311,7 @@ const capturePanel = async (panel, outputDirectory) => {
           state === "interaction" &&
           (stateEvidence.previewHoverCount !== 1 ||
             stateEvidence.previewFocusCount !== 1 ||
-            stateEvidence.previewSelectedCount < 1)
+            stateEvidence.previewSelectedCount !== 1)
         ) {
           throw new Error("Interaction preview is incomplete");
         }

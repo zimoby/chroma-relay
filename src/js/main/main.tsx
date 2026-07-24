@@ -1117,6 +1117,12 @@ export const App = () => {
     "--cp-swatch-size": `${layoutSettings.swatchSize}px`,
   } as CSSProperties;
   const visibleSwatches = designState === "empty" ? [] : activeColors;
+  const addActionDescription = palettePickerOpen
+    ? "Create a palette from the current selection, or create an empty palette"
+    : "Add colors or gradients from the current selection, or extract colors from one selected image";
+  const paletteToggleDescription = palettePickerOpen
+    ? "Show active palette colors"
+    : "Show palettes";
   const statusMessage =
     designState === "error"
       ? "No supported colors selected"
@@ -1213,7 +1219,9 @@ export const App = () => {
                     ? " is-preview-hover"
                     : index === 1
                       ? " is-preview-focus"
-                      : " is-preview-selected"
+                      : index === 2
+                        ? " is-preview-selected"
+                        : ""
                   : "";
               const dragClass =
                 dragState?.sourceId === swatch.id
@@ -1273,11 +1281,7 @@ export const App = () => {
         )}
         <div className="palette-actions">
           <button
-            aria-label={
-              palettePickerOpen
-                ? "Create a palette from the current selection or create an empty palette"
-                : "Add selected colors or extract a selected image"
-            }
+            aria-label={addActionDescription}
             className="palette-action palette-add"
             data-testid="palette-add"
             disabled={
@@ -1287,12 +1291,13 @@ export const App = () => {
               pendingPaletteMutation
             }
             onClick={handleAddSelectedColors}
+            title={addActionDescription}
             type="button"
           >
             <span aria-hidden="true" className="add-glyph" />
           </button>
           <button
-            aria-label="Show palettes"
+            aria-label={paletteToggleDescription}
             aria-pressed={palettePickerOpen}
             className="palette-action palette-picker-toggle"
             data-testid="palette-picker-toggle"
@@ -1303,6 +1308,7 @@ export const App = () => {
               pendingPaletteMutation
             }
             onClick={() => setPalettePickerOpen((open) => !open)}
+            title={paletteToggleDescription}
             type="button"
           >
             <span aria-hidden="true" className="palette-glyph" />

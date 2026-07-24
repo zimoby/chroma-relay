@@ -2186,19 +2186,33 @@ test("Main and Settings expose the requested compact interaction contracts", asy
 });
 
 test("Main splits Add and Palettes actions and swaps the color strip for inline palette selection", async () => {
-  const [main, styles] = await Promise.all([
+  const [main, styles, designCapture] = await Promise.all([
     read("src/js/main/main.tsx"),
     read("src/js/main/main.scss"),
+    read("scripts/cep-design-capture.mjs"),
   ]);
 
   assert.match(main, /const \[palettePickerOpen, setPalettePickerOpen\] = useState\(false\)/);
   assert.match(main, /className="palette-actions"/);
-  assert.match(main, /palettePickerOpen[\s\S]*Create a palette from the current selection or create an empty palette/);
+  assert.match(
+    main,
+    /const addActionDescription = palettePickerOpen[\s\S]*Create a palette from the current selection, or create an empty palette[\s\S]*Add colors or gradients from the current selection, or extract colors from one selected image/,
+  );
+  assert.match(
+    main,
+    /const paletteToggleDescription = palettePickerOpen[\s\S]*Show active palette colors[\s\S]*Show palettes/,
+  );
+  assert.match(main, /aria-label=\{addActionDescription\}[\s\S]*title=\{addActionDescription\}/);
+  assert.match(
+    main,
+    /aria-label=\{paletteToggleDescription\}[\s\S]*title=\{paletteToggleDescription\}/,
+  );
   assert.match(main, /const createPaletteMode = palettePickerOpen/);
   assert.match(main, /createPaletteMode \? createPalette\(baseDocument\) : baseDocument/);
   assert.match(main, /createPaletteMode[\s\S]*sourceItems = \[\]/);
-  assert.match(main, /aria-label="Show palettes"/);
   assert.match(main, /aria-pressed=\{palettePickerOpen\}/);
+  assert.match(main, /index === 2[\s\S]*?" is-preview-selected"[\s\S]*?: ""/);
+  assert.match(designCapture, /stateEvidence\.previewSelectedCount !== 1/);
   assert.match(main, /palettePickerOpen \? \([\s\S]*?className="palette-list"/);
   assert.match(main, /paletteDocument\.palettes\.map\(\(palette\) =>/);
   assert.match(main, /data-testid=\{`palette-select-\$\{palette\.id\}`\}/);

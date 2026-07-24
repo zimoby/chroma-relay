@@ -31,6 +31,20 @@ import {
 const colorIds = (document: PaletteDocument) =>
   getActivePalette(document).colors.map((color) => color.id);
 
+test("default palette uses the branded five-color spectrum", () => {
+  assert.deepEqual(colorIds(DEFAULT_PALETTE), ["coral", "amber", "leaf", "sky", "violet"]);
+  assert.deepEqual(
+    getActivePalette(DEFAULT_PALETTE).colors.map((color) => color.rgba),
+    [
+      [224 / 255, 90 / 255, 79 / 255, 1],
+      [229 / 255, 185 / 255, 76 / 255, 1],
+      [85 / 255, 168 / 255, 111 / 255, 1],
+      [86 / 255, 143 / 255, 209 / 255, 1],
+      [155 / 255, 108 / 255, 203 / 255, 1],
+    ],
+  );
+});
+
 test("adds an independent default black color and permits another black", () => {
   const empty = createPalette(DEFAULT_PALETTE);
   const paletteId = getActivePalette(empty).id;
@@ -192,20 +206,20 @@ test("creates, selects, renames, and removes palettes deterministically", () => 
 
 test("active-palette remove and reorder are stable, revisioned, and edge-exact", () => {
   const removed = removePaletteColor(DEFAULT_PALETTE, "leaf");
-  assert.deepEqual(colorIds(removed), ["coral", "sky"]);
+  assert.deepEqual(colorIds(removed), ["coral", "amber", "sky", "violet"]);
   assert.equal(removed.revision, 1);
   assert.equal(removePaletteColor(removed, "missing"), removed);
 
   const reordered = reorderPaletteColor(DEFAULT_PALETTE, "sky", "coral");
-  assert.deepEqual(colorIds(reordered), ["sky", "coral", "leaf"]);
+  assert.deepEqual(colorIds(reordered), ["sky", "coral", "amber", "leaf", "violet"]);
   assert.equal(reordered.revision, 1);
   assert.equal(reorderPaletteColor(reordered, "sky", "sky"), reordered);
 
   const after = reorderPaletteColor(DEFAULT_PALETTE, "coral", "sky", "after");
-  assert.deepEqual(colorIds(after), ["leaf", "sky", "coral"]);
+  assert.deepEqual(colorIds(after), ["amber", "leaf", "sky", "coral", "violet"]);
   const before = reorderPaletteColor(DEFAULT_PALETTE, "sky", "coral", "before");
-  assert.deepEqual(colorIds(before), ["sky", "coral", "leaf"]);
-  assert.equal(reorderPaletteColor(DEFAULT_PALETTE, "coral", "leaf", "before"), DEFAULT_PALETTE);
+  assert.deepEqual(colorIds(before), ["sky", "coral", "amber", "leaf", "violet"]);
+  assert.equal(reorderPaletteColor(DEFAULT_PALETTE, "coral", "amber", "before"), DEFAULT_PALETTE);
 });
 
 test("update-color replaces one color exactly, preserving ID, order, and neighbors", () => {
@@ -214,11 +228,13 @@ test("update-color replaces one color exactly, preserving ID, order, and neighbo
   assert.notEqual(updated, DEFAULT_PALETTE);
   assert.equal(updated.revision, 1);
   const colors = getActivePalette(updated).colors;
-  assert.deepEqual(colors.map((color) => color.id), ["coral", "leaf", "sky"]);
-  assert.deepEqual(colors[1].rgba, rgba);
-  assert.notEqual(colors[1].rgba, rgba);
+  assert.deepEqual(colors.map((color) => color.id), ["coral", "amber", "leaf", "sky", "violet"]);
+  assert.deepEqual(colors[2].rgba, rgba);
+  assert.notEqual(colors[2].rgba, rgba);
   assert.deepEqual(colors[0].rgba, DEFAULT_PALETTE.palettes[0].colors[0].rgba);
-  assert.deepEqual(colors[2].rgba, DEFAULT_PALETTE.palettes[0].colors[2].rgba);
+  assert.deepEqual(colors[1].rgba, DEFAULT_PALETTE.palettes[0].colors[1].rgba);
+  assert.deepEqual(colors[3].rgba, DEFAULT_PALETTE.palettes[0].colors[3].rgba);
+  assert.deepEqual(colors[4].rgba, DEFAULT_PALETTE.palettes[0].colors[4].rgba);
   assert.notEqual(updated.palettes, DEFAULT_PALETTE.palettes);
   assert.equal(DEFAULT_PALETTE.revision, 0);
 
@@ -230,11 +246,11 @@ test("update-color replaces one color exactly, preserving ID, order, and neighbo
     coral[3],
   ]);
   assert.equal(duplicated.revision, 1, "duplicates are allowed without dedupe");
-  assert.deepEqual(getActivePalette(duplicated).colors[1].rgba, coral);
+  assert.deepEqual(getActivePalette(duplicated).colors[2].rgba, coral);
 
   const hdr: Rgba = [1.25, -0.1, 0.5000004, 2];
   const hdrUpdated = updatePaletteColor(DEFAULT_PALETTE, "leaf", hdr);
-  assert.deepEqual(getActivePalette(hdrUpdated).colors[1].rgba, hdr);
+  assert.deepEqual(getActivePalette(hdrUpdated).colors[2].rgba, hdr);
 });
 
 test("update-color returns the same document for missing, invalid, or exact no-op input", () => {
@@ -256,7 +272,7 @@ test("update-color returns the same document for missing, invalid, or exact no-o
     DEFAULT_PALETTE
   );
 
-  const exact = DEFAULT_PALETTE.palettes[0].colors[1].rgba;
+  const exact = DEFAULT_PALETTE.palettes[0].colors[2].rgba;
   assert.equal(
     updatePaletteColor(DEFAULT_PALETTE, "leaf", [exact[0], exact[1], exact[2], exact[3]]),
     DEFAULT_PALETTE

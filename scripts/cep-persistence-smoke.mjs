@@ -149,7 +149,7 @@ const run = async (outputDirectory, parentRun) => {
 
     await resetRoot();
     cases.missing = await main.evaluate(debugCall("(api) => api.reloadPalette()"));
-    if (cases.missing.error || activeColors(cases.missing.document).length !== 3) {
+    if (cases.missing.error || activeColors(cases.missing.document).length !== 5) {
       throw new Error("Missing palette did not load the non-destructive default");
     }
 

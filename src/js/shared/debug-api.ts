@@ -1,7 +1,7 @@
-import { version } from "../../../package.json";
+import packageJson from "../../../package.json" with { type: "json" };
 import contract from "../../shared/product-contract.json" with { type: "json" };
 
-export const BUILD_MARKER = `${contract.marker.current} · ${version}`;
+export const BUILD_MARKER = `${contract.marker.current} · ${packageJson.version}`;
 
 export type PanelPage = "main" | "settings";
 
@@ -80,7 +80,7 @@ const FIXTURE_VIEWPORTS = new Set([
   "200x200",
 ]);
 const POSIX_TEMPORARY_CONFIG_ROOT =
-  /^\/(?:private\/)?tmp\/chroma-relay-[a-zA-Z0-9._-]+$/;
+  /^\/(?:private\/)?(?:tmp|var\/folders\/[^/]+\/[^/]+\/T)\/chroma-relay-[a-zA-Z0-9._-]+$/;
 const WINDOWS_TEMPORARY_CONFIG_ROOT =
   /^[a-zA-Z]:[\\/]Users[\\/][^\\/]+[\\/]AppData[\\/]Local[\\/]Temp[\\/]chroma-relay-[a-zA-Z0-9._-]+$/i;
 
@@ -101,9 +101,14 @@ export const isFixtureViewport = (width: number, height: number) =>
 export const normalizeTemporaryConfigRoot = (root: string | null) => {
   if (root === null) return null;
   const normalized = root.replace(/[\\/]+$/, "");
+  const hasTraversalSegment = normalized
+    .replace(/\\/g, "/")
+    .split("/")
+    .some((segment) => segment === "." || segment === "..");
   if (
-    !POSIX_TEMPORARY_CONFIG_ROOT.test(normalized) &&
-    !WINDOWS_TEMPORARY_CONFIG_ROOT.test(normalized)
+    hasTraversalSegment ||
+    (!POSIX_TEMPORARY_CONFIG_ROOT.test(normalized) &&
+      !WINDOWS_TEMPORARY_CONFIG_ROOT.test(normalized))
   ) {
     throw new Error(
       "Debug config roots must be a chroma-relay-* child of the supported macOS or Windows temp directory"
@@ -118,7 +123,7 @@ export const getPanelIdentity = (
 ): DebugIdentity => ({
   extensionId: window.__adobe_cep__.getExtensionId(),
   page,
-  version,
+  version: packageJson.version,
   buildMarker: BUILD_MARKER,
   url: window.location.href,
   configRoot,

@@ -64,7 +64,10 @@ test("stores exact gradients as ordered slots and deep-clones their stop data", 
   ]);
   assert.notEqual(gradients[0].gradient, EXACT_GRADIENT);
   assert.notEqual(gradients[0].gradient.colorStops, EXACT_GRADIENT.colorStops);
-  assert.equal(getPaletteSolidColors(getActivePalette(next)).length, 3);
+  assert.equal(
+    getPaletteSolidColors(getActivePalette(next)).length,
+    getActivePalette(DEFAULT_PALETTE).colors.length,
+  );
   assert.equal(isPaletteDocument(next), true);
 
   const clone = clonePaletteDocument(next);
