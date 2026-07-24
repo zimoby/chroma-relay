@@ -4,16 +4,22 @@ import {
   isExactNativeGradientPayload,
 } from "./native-gradient-target";
 import {
-  buildSelectionPropertyPath,
+  addSelectionKey,
+  buildSelectionTraversalRoot,
   compareSelectionPropertyPaths,
-  isMaterialOptionsBranch,
-  isSelectionBranchDisabled,
+  createSelectionKeySet,
+  hasSelectionKey,
+  isMaterialOptionsProperty,
+  isSelectionPropertyDisabled,
+  isSelectionTraversalChildSlot,
   resolveParentScopeRoot,
   resolveSelectionPropertyPath,
   resolveSelectedScopeRoots,
-  selectionScopeKey,
+  selectionTraversalContainsProperty,
   selectionTargetKey,
+  selectionTargetKeyFromPath,
 } from "./selection-scope";
+import type { SelectionKeySet } from "./selection-scope";
 
 type ColorApplyTarget = {
   layerId: number;
@@ -40,13 +46,6 @@ export type ColorApplyResult = {
   skippedDisabledCount: number;
   failedCount: number;
   undoGroupOpened: boolean;
-};
-
-const includesKey = (keys: string[], candidate: string) => {
-  for (let index = 0; index < keys.length; index += 1) {
-    if (keys[index] === candidate) return true;
-  }
-  return false;
 };
 
 const resolveLayerByIdentity = (activeItem: any, target: ColorApplyTarget) => {
@@ -79,27 +78,31 @@ const collectWritableColorProperties = (
   property: any,
   layer: any,
   targets: ColorApplyTarget[],
-  targetKeys: string[],
-  gradientKeys: string[],
+  targetKeys: SelectionKeySet,
+  gradientKeys: SelectionKeySet,
   result: ColorApplyResult,
-  visitedKeys: string[],
+  visitedKeys: SelectionKeySet,
+  matchedKeys: SelectionKeySet,
   includeDisabledColors: boolean,
+  ancestorProperties: any[],
+  propertyIndexPath: number[],
+  matchNamePath: string[],
+  visitedKey: string,
+  branchDisabled: boolean,
+  materialOptions: boolean,
   bypassDisabledFilter = false
-) => {
-  if (!property) return;
-  if (!bypassDisabledFilter && !includeDisabledColors && isSelectionBranchDisabled(property)) {
+): boolean => {
+  if (!property) return false;
+  if (!bypassDisabledFilter && !includeDisabledColors && branchDisabled) {
     result.skippedDisabledCount += 1;
-    return;
+    return true;
   }
-  if (isMaterialOptionsBranch(property)) return;
-  const visitedKey = selectionScopeKey(layer, property);
-  if (!visitedKey) {
-    result.failedCount += 1;
-    return;
+  if (materialOptions) return false;
+  if (!addSelectionKey(visitedKeys, visitedKey)) {
+    return hasSelectionKey(matchedKeys, visitedKey);
   }
-  if (includesKey(visitedKeys, visitedKey)) return;
-  visitedKeys.push(visitedKey);
 
+  let matched = false;
   try {
     const nativeGradientParent = exactNativeGradientParent(property);
     if (nativeGradientParent) {
@@ -107,58 +110,97 @@ const collectWritableColorProperties = (
       const gradientKey = payload ? selectionTargetKey(layer, payload) : null;
       if (!gradientKey) {
         result.failedCount += 1;
-        return;
+        return false;
       }
-      if (includesKey(gradientKeys, gradientKey)) return;
-      gradientKeys.push(gradientKey);
+      matched = true;
+      addSelectionKey(matchedKeys, visitedKey);
+      if (!addSelectionKey(gradientKeys, gradientKey)) return true;
       result.selectedPropertyCount += 1;
       result.unsupportedGradientCount += 1;
-      return;
+      return true;
     }
 
     if (property.propertyType !== PropertyType.PROPERTY) {
-      for (let index = 1; index <= property.numProperties; index += 1) {
-        collectWritableColorProperties(
-          property.property(index),
-          layer,
-          targets,
-          targetKeys,
-          gradientKeys,
-          result,
-          visitedKeys,
-          includeDisabledColors,
-          false
-        );
+      const childCount = property.numProperties;
+      for (let index = 1; index <= childCount; index += 1) {
+        const child = property.property(index);
+        if (!child) continue;
+        if (
+          !isSelectionTraversalChildSlot(layer, property, child, index, propertyIndexPath.length) ||
+          selectionTraversalContainsProperty(ancestorProperties, child)
+        ) {
+          result.failedCount += 1;
+          continue;
+        }
+        propertyIndexPath.push(index);
+        matchNamePath.push(child.matchName);
+        ancestorProperties.push(child);
+        const childKey = selectionTargetKeyFromPath(layer, {
+          propertyIndexPath,
+          matchNamePath,
+        });
+        if (!childKey) {
+          propertyIndexPath.pop();
+          matchNamePath.pop();
+          ancestorProperties.pop();
+          result.failedCount += 1;
+          continue;
+        }
+        try {
+          if (collectWritableColorProperties(
+            child,
+            layer,
+            targets,
+            targetKeys,
+            gradientKeys,
+            result,
+            visitedKeys,
+            matchedKeys,
+            includeDisabledColors,
+            ancestorProperties,
+            propertyIndexPath,
+            matchNamePath,
+            childKey,
+            branchDisabled || isSelectionPropertyDisabled(child),
+            materialOptions || isMaterialOptionsProperty(child),
+            false
+          )) {
+            matched = true;
+          }
+        } finally {
+          propertyIndexPath.pop();
+          matchNamePath.pop();
+          ancestorProperties.pop();
+        }
       }
-      return;
+      if (matched) addSelectionKey(matchedKeys, visitedKey);
+      return matched;
     }
 
     result.selectedPropertyCount += 1;
     if (property.propertyValueType === PropertyValueType.TEXT_DOCUMENT) {
       result.unsupportedTextCount += 1;
-      return;
+      return false;
     }
-    if (property.propertyValueType !== PropertyValueType.COLOR) return;
-    const path = buildSelectionPropertyPath(layer, property);
-    const targetKey = selectionTargetKey(layer, property);
-    if (!path || !targetKey) {
-      result.failedCount += 1;
-      return;
-    }
-    if (includesKey(targetKeys, targetKey)) return;
-    targetKeys.push(targetKey);
+    if (property.propertyValueType !== PropertyValueType.COLOR) return false;
+    matched = true;
+    addSelectionKey(matchedKeys, visitedKey);
+    if (!addSelectionKey(targetKeys, visitedKey)) return true;
     if (property.expressionEnabled || property.numKeys > 0) {
       result.preservedStateCount += 1;
-      return;
+      return true;
     }
     targets.push({
       layerId: layer.id,
       layerIndex: layer.index,
-      propertyIndexPath: path.propertyIndexPath,
-      matchNamePath: path.matchNamePath,
+      propertyIndexPath: propertyIndexPath.slice(),
+      matchNamePath: matchNamePath.slice(),
     });
+    return true;
   } catch (_error) {
     result.failedCount += 1;
+    if (matched) addSelectionKey(matchedKeys, visitedKey);
+    return matched;
   }
 };
 
@@ -220,9 +262,10 @@ export const applyColorToSelectedProperties = (
   }
 
   const targets: ColorApplyTarget[] = [];
-  const targetKeys: string[] = [];
-  const gradientKeys: string[] = [];
-  const visitedKeys: string[] = [];
+  const targetKeys = createSelectionKeySet();
+  const gradientKeys = createSelectionKeySet();
+  const visitedKeys = createSelectionKeySet();
+  const matchedKeys = createSelectionKeySet();
   const scopes = resolveSelectedScopeRoots(activeItem, isExactColorSelection);
   if (scopes.invalid) {
     result.failedCount += 1;
@@ -231,43 +274,59 @@ export const applyColorToSelectedProperties = (
   }
   for (let rootIndex = 0; rootIndex < scopes.roots.length; rootIndex += 1) {
     const root = scopes.roots[rootIndex];
-    const directMatchCount =
-      targetKeys.length + gradientKeys.length + result.skippedDisabledCount;
-    collectWritableColorProperties(
-      root.property,
-      root.layer,
-      targets,
-      targetKeys,
-      gradientKeys,
-      result,
-      visitedKeys,
-      includeDisabledColors,
-      root.exact
-    );
-    let parentRoot =
-      smartApply &&
-      targetKeys.length + gradientKeys.length + result.skippedDisabledCount === directMatchCount
-        ? resolveParentScopeRoot(root)
-        : null;
-    while (
-      parentRoot &&
-      targetKeys.length + gradientKeys.length + result.skippedDisabledCount === directMatchCount
-    ) {
-      collectWritableColorProperties(
-        parentRoot.property,
-        parentRoot.layer,
+    let matched = false;
+    const traversal = buildSelectionTraversalRoot(root);
+    if (!traversal) {
+      result.failedCount += 1;
+    } else {
+      matched = collectWritableColorProperties(
+        root.property,
+        root.layer,
         targets,
         targetKeys,
         gradientKeys,
         result,
         visitedKeys,
+        matchedKeys,
         includeDisabledColors,
-        false
+        [root.property],
+        traversal.propertyIndexPath,
+        traversal.matchNamePath,
+        traversal.key,
+        traversal.disabled,
+        traversal.materialOptions,
+        root.exact
       );
-      parentRoot =
-        targetKeys.length + gradientKeys.length + result.skippedDisabledCount === directMatchCount
-          ? resolveParentScopeRoot(parentRoot)
-          : null;
+    }
+    let parentRoot =
+      smartApply && !matched
+        ? resolveParentScopeRoot(root)
+        : null;
+    while (parentRoot && !matched) {
+      const parentTraversal = buildSelectionTraversalRoot(parentRoot);
+      if (!parentTraversal) {
+        result.failedCount += 1;
+      } else {
+        matched = collectWritableColorProperties(
+          parentRoot.property,
+          parentRoot.layer,
+          targets,
+          targetKeys,
+          gradientKeys,
+          result,
+          visitedKeys,
+          matchedKeys,
+          includeDisabledColors,
+          [parentRoot.property],
+          parentTraversal.propertyIndexPath,
+          parentTraversal.matchNamePath,
+          parentTraversal.key,
+          parentTraversal.disabled,
+          parentTraversal.materialOptions,
+          false
+        );
+      }
+      parentRoot = !matched ? resolveParentScopeRoot(parentRoot) : null;
     }
   }
 

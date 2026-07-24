@@ -1,10 +1,16 @@
 import {
+  addSelectionKey,
+  buildSelectionTraversalRoot,
   compareSelectionPropertyPaths,
-  isSelectionBranchDisabled,
+  createSelectionKeySet,
+  isSelectionPropertyDisabled,
+  isSelectionTraversalChildSlot,
   resolveSelectedScopeRoots,
-  selectionScopeKey,
+  selectionTraversalContainsProperty,
   selectionTargetKey,
+  selectionTargetKeyFromPath,
 } from "./selection-scope";
+import type { SelectionKeySet } from "./selection-scope";
 
 export type NativeGradientKind = "fill" | "stroke";
 
@@ -130,8 +136,8 @@ type NativeGradientCollectorState = {
   projectPath: string;
   compId: number;
   descriptors: NativeGradientTargetDescriptor[];
-  keys: string[];
-  visitedKeys: string[];
+  keys: SelectionKeySet;
+  visitedKeys: SelectionKeySet;
 };
 
 export const buildNativeGradientTargetKey = (
@@ -244,10 +250,7 @@ const appendNativeGradientTarget = (
       state.invalid = true;
       return;
     }
-    for (let index = 0; index < state.keys.length; index += 1) {
-      if (state.keys[index] === key) return;
-    }
-    state.keys.push(key);
+    if (!addSelectionKey(state.keys, key)) return;
     state.descriptors.push({
       targetKey: key,
       projectPath: state.projectPath,
@@ -270,6 +273,11 @@ const collectNativeGradientTargets = (
   activeItem: any,
   state: NativeGradientCollectorState,
   includeDisabledGradients: boolean,
+  ancestorProperties: any[],
+  propertyIndexPath: number[],
+  matchNamePath: string[],
+  visitedKey: string,
+  branchDisabled: boolean,
   bypassDisabledFilter = false
 ) => {
   if (state.invalid) return;
@@ -280,19 +288,11 @@ const collectNativeGradientTargets = (
   if (
     !bypassDisabledFilter &&
     !includeDisabledGradients &&
-    isSelectionBranchDisabled(property)
+    branchDisabled
   ) {
     return;
   }
-  const visitedKey = selectionScopeKey(layer, property);
-  if (!visitedKey) {
-    state.invalid = true;
-    return;
-  }
-  for (let index = 0; index < state.visitedKeys.length; index += 1) {
-    if (state.visitedKeys[index] === visitedKey) return;
-  }
-  state.visitedKeys.push(visitedKey);
+  if (!addSelectionKey(state.visitedKeys, visitedKey)) return;
 
   try {
     const kind = nativeGradientKind(property);
@@ -333,15 +333,49 @@ const collectNativeGradientTargets = (
       state.invalid = true;
       return;
     }
-    for (let index = 1; index <= property.numProperties; index += 1) {
-      collectNativeGradientTargets(
-        property.property(index),
-        layer,
-        activeItem,
-        state,
-        includeDisabledGradients,
-        false
-      );
+    const childCount = property.numProperties;
+    for (let index = 1; index <= childCount; index += 1) {
+      const child = property.property(index);
+      if (
+        !isSelectionTraversalChildSlot(layer, property, child, index, propertyIndexPath.length) ||
+        selectionTraversalContainsProperty(ancestorProperties, child)
+      ) {
+        state.invalid = true;
+        return;
+      }
+      propertyIndexPath.push(index);
+      matchNamePath.push(child.matchName);
+      ancestorProperties.push(child);
+      const childKey = selectionTargetKeyFromPath(layer, {
+        propertyIndexPath,
+        matchNamePath,
+      });
+      if (!childKey) {
+        propertyIndexPath.pop();
+        matchNamePath.pop();
+        ancestorProperties.pop();
+        state.invalid = true;
+        return;
+      }
+      try {
+        collectNativeGradientTargets(
+          child,
+          layer,
+          activeItem,
+          state,
+          includeDisabledGradients,
+          ancestorProperties,
+          propertyIndexPath,
+          matchNamePath,
+          childKey,
+          branchDisabled || isSelectionPropertyDisabled(child),
+          false
+        );
+      } finally {
+        propertyIndexPath.pop();
+        matchNamePath.pop();
+        ancestorProperties.pop();
+      }
       if (state.invalid) return;
     }
   } catch (_error) {
@@ -387,20 +421,27 @@ export const collectSelectedNativeGradientTargets = (
       projectPath: projectFile.fsName,
       compId: activeItem.id,
       descriptors: [],
-      keys: [],
-      visitedKeys: [],
+      keys: createSelectionKeySet(),
+      visitedKeys: createSelectionKeySet(),
     };
 
     const scopes = resolveSelectedScopeRoots(activeItem, isExactNativeGradientSelection);
     if (scopes.invalid) return [];
     for (let rootIndex = 0; rootIndex < scopes.roots.length; rootIndex += 1) {
       const root = scopes.roots[rootIndex];
+      const traversal = buildSelectionTraversalRoot(root);
+      if (!traversal) return [];
       collectNativeGradientTargets(
         root.property,
         root.layer,
         activeItem,
         state,
         includeDisabledGradients,
+        [root.property],
+        traversal.propertyIndexPath,
+        traversal.matchNamePath,
+        traversal.key,
+        traversal.disabled,
         root.exact
       );
       if (state.invalid) return [];

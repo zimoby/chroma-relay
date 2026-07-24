@@ -8,12 +8,16 @@ import {
 } from "./native-gradient-target";
 import type { NativeGradientKind } from "./native-gradient-target";
 import {
+  addSelectionKey,
   compareSelectionPropertyPaths,
+  createSelectionKeySet,
+  hasSelectionKey,
   isSelectionBranchDisabled,
   resolveParentScopeRoot,
   resolveSelectedScopeRoots,
   selectionScopeKey,
 } from "./selection-scope";
+import type { SelectionKeySet } from "./selection-scope";
 import {
   MAX_NATIVE_GRADIENT_DESCRIPTOR_PATH_DEPTH,
   MAX_NATIVE_GRADIENT_DIAGNOSTIC_LENGTH,
@@ -349,8 +353,9 @@ const isNativeGradientEvidence = (property: any) => {
 type ResolvedTargetState = {
   invalid: boolean;
   targets: ResolvedTarget[];
-  keys: string[];
-  visitedKeys: string[];
+  keys: SelectionKeySet;
+  visitedKeys: SelectionKeySet;
+  matchedKeys: SelectionKeySet;
   skippedDisabledCount: number;
   preservedStateCount: number;
 };
@@ -398,14 +403,11 @@ const appendResolvedTarget = (
       state.invalid = true;
       return;
     }
-    for (let keyIndex = 0; keyIndex < state.keys.length; keyIndex += 1) {
-      if (state.keys[keyIndex] === key) return;
-    }
-    if (state.keys.length >= MAX_NATIVE_GRADIENT_TARGET_COUNT) {
+    if (!addSelectionKey(state.keys, key)) return;
+    if (state.keys.size > MAX_NATIVE_GRADIENT_TARGET_COUNT) {
       state.invalid = true;
       return;
     }
-    state.keys.push(key);
 
     if (
       layer.locked !== false ||
@@ -453,11 +455,11 @@ const collectResolvedTargets = (
   state: ResolvedTargetState,
   includeDisabledTargets: boolean,
   bypassDisabledFilter = false
-) => {
-  if (state.invalid) return;
+): boolean => {
+  if (state.invalid) return false;
   if (!property) {
     state.invalid = true;
-    return;
+    return false;
   }
   if (
     !bypassDisabledFilter &&
@@ -466,38 +468,39 @@ const collectResolvedTargets = (
   ) {
     if (state.skippedDisabledCount >= MAX_NATIVE_GRADIENT_TARGET_COUNT) {
       state.invalid = true;
-      return;
+      return false;
     }
     state.skippedDisabledCount += 1;
-    return;
+    return true;
   }
 
   const visitedKey = selectionScopeKey(layer, property);
   if (!visitedKey) {
     state.invalid = true;
-    return;
+    return false;
   }
-  for (let index = 0; index < state.visitedKeys.length; index += 1) {
-    if (state.visitedKeys[index] === visitedKey) return;
+  if (!addSelectionKey(state.visitedKeys, visitedKey)) {
+    return hasSelectionKey(state.matchedKeys, visitedKey);
   }
-  if (state.visitedKeys.length >= MAX_NATIVE_GRADIENT_SCOPE_NODE_COUNT) {
+  if (state.visitedKeys.size > MAX_NATIVE_GRADIENT_SCOPE_NODE_COUNT) {
     state.invalid = true;
-    return;
+    return false;
   }
-  state.visitedKeys.push(visitedKey);
 
   try {
     const parent = exactNativeGradientParent(property);
     if (parent) {
       const payload = findExactNativeGradientPayload(parent);
       appendResolvedTarget(parent, payload, layer, activeItem, state);
-      return;
+      if (state.invalid) return false;
+      addSelectionKey(state.matchedKeys, visitedKey);
+      return true;
     }
     if (isNativeGradientEvidence(property)) {
       state.invalid = true;
-      return;
+      return false;
     }
-    if (property.propertyType === PropertyType.PROPERTY) return;
+    if (property.propertyType === PropertyType.PROPERTY) return false;
     if (
       typeof property.numProperties !== "number" ||
       !isFinite(property.numProperties) ||
@@ -505,21 +508,29 @@ const collectResolvedTargets = (
       Math.floor(property.numProperties) !== property.numProperties
     ) {
       state.invalid = true;
-      return;
+      return false;
     }
+    let matched = false;
     for (let index = 1; index <= property.numProperties; index += 1) {
-      collectResolvedTargets(
-        property.property(index),
-        layer,
-        activeItem,
-        state,
-        includeDisabledTargets,
-        false
-      );
-      if (state.invalid) return;
+      if (
+        collectResolvedTargets(
+          property.property(index),
+          layer,
+          activeItem,
+          state,
+          includeDisabledTargets,
+          false
+        )
+      ) {
+        matched = true;
+      }
+      if (state.invalid) return false;
     }
+    if (matched) addSelectionKey(state.matchedKeys, visitedKey);
+    return matched;
   } catch (_error) {
     state.invalid = true;
+    return false;
   }
 };
 
@@ -534,8 +545,9 @@ const resolveSelectedTargets = (
   const state: ResolvedTargetState = {
     invalid: false,
     targets: [],
-    keys: [],
-    visitedKeys: [],
+    keys: createSelectionKeySet(),
+    visitedKeys: createSelectionKeySet(),
+    matchedKeys: createSelectionKeySet(),
     skippedDisabledCount: 0,
     preservedStateCount: 0,
   };
@@ -546,9 +558,7 @@ const resolveSelectedTargets = (
   }
   for (let rootIndex = 0; rootIndex < scopes.roots.length; rootIndex += 1) {
     const root = scopes.roots[rootIndex];
-    const directMatchCount =
-      state.targets.length + state.preservedStateCount + state.skippedDisabledCount;
-    collectResolvedTargets(
+    let matched = collectResolvedTargets(
       root.property,
       root.layer,
       activeItem,
@@ -558,17 +568,11 @@ const resolveSelectedTargets = (
     );
     if (state.invalid) return state;
     let parentRoot =
-      smartApply &&
-      state.targets.length + state.preservedStateCount + state.skippedDisabledCount ===
-        directMatchCount
+      smartApply && !matched
         ? resolveParentScopeRoot(root)
         : null;
-    while (
-      parentRoot &&
-      state.targets.length + state.preservedStateCount + state.skippedDisabledCount ===
-        directMatchCount
-    ) {
-      collectResolvedTargets(
+    while (parentRoot && !matched) {
+      matched = collectResolvedTargets(
         parentRoot.property,
         parentRoot.layer,
         activeItem,
@@ -577,11 +581,7 @@ const resolveSelectedTargets = (
         false
       );
       if (state.invalid) return state;
-      parentRoot =
-        state.targets.length + state.preservedStateCount + state.skippedDisabledCount ===
-        directMatchCount
-          ? resolveParentScopeRoot(parentRoot)
-          : null;
+      parentRoot = !matched ? resolveParentScopeRoot(parentRoot) : null;
     }
   }
   state.targets.sort((left, right) => {

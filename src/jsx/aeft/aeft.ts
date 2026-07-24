@@ -8,13 +8,18 @@ import {
 } from "./native-gradient-target";
 import type { NativeGradientTargetDescriptor } from "./native-gradient-target";
 import {
-  buildSelectionPropertyPath,
+  addSelectionKey,
+  buildSelectionTraversalRoot,
   compareSelectionPropertyPaths,
-  isMaterialOptionsBranch,
-  isSelectionBranchDisabled,
+  createSelectionKeySet,
+  isMaterialOptionsProperty,
+  isSelectionPropertyDisabled,
+  isSelectionTraversalChildSlot,
   resolveSelectedScopeRoots,
-  selectionScopeKey,
+  selectionTraversalContainsProperty,
+  selectionTargetKeyFromPath,
 } from "./selection-scope";
+import type { SelectionKeySet } from "./selection-scope";
 
 export { applyColorToSelectedProperties } from "./color-apply";
 export { applyNativeGradientPresetToSelectedTarget } from "./native-gradient-apply";
@@ -86,13 +91,6 @@ const emptyCollection = (status: ColorCollectionStatus): ColorCollectionResult =
   readErrorCount: 0,
 });
 
-const includesKey = (keys: string[], candidate: string) => {
-  for (let index = 0; index < keys.length; index += 1) {
-    if (keys[index] === candidate) return true;
-  }
-  return false;
-};
-
 const isSameColor = (left: HostRgba, right: HostRgba) => {
   for (let index = 0; index < 4; index += 1) {
     if (Math.abs(left[index] - right[index]) > 0.000001) return false;
@@ -111,26 +109,26 @@ const appendUniqueColor = (colors: HostRgba[], rgba: HostRgba) => {
 const readColorProperty = (
   property: any,
   result: ColorCollectionResult,
-  visitedKeys: string[],
-  gradientKeys: string[],
+  visitedKeys: SelectionKeySet,
+  gradientKeys: SelectionKeySet,
   orderedEntries: OrderedColorCollectionEntry[],
   compId: number,
   layer: any,
   includeDisabledColors: boolean,
+  ancestorProperties: any[],
+  propertyIndexPath: number[],
+  matchNamePath: string[],
+  visitedKey: string,
+  branchDisabled: boolean,
+  materialOptions: boolean,
   bypassDisabledFilter = false
 ) => {
   if (!property) return;
-  if (!bypassDisabledFilter && !includeDisabledColors && isSelectionBranchDisabled(property)) return;
-  if (isMaterialOptionsBranch(property)) return;
+  if (!bypassDisabledFilter && !includeDisabledColors && branchDisabled) return;
+  if (materialOptions) return;
 
   try {
-    const visitedKey = selectionScopeKey(layer, property);
-    if (!visitedKey) {
-      result.readErrorCount += 1;
-      return;
-    }
-    if (includesKey(visitedKeys, visitedKey)) return;
-    visitedKeys.push(visitedKey);
+    if (!addSelectionKey(visitedKeys, visitedKey)) return;
 
     const nativeGradientParent = exactNativeGradientParent(property);
     if (nativeGradientParent) {
@@ -141,8 +139,7 @@ const readColorProperty = (
         result.readErrorCount += 1;
         return;
       }
-      if (includesKey(gradientKeys, gradientKey)) return;
-      gradientKeys.push(gradientKey);
+      if (!addSelectionKey(gradientKeys, gradientKey)) return;
       result.selectedPropertyCount += 1;
       orderedEntries.push({
         entry: {
@@ -159,18 +156,54 @@ const readColorProperty = (
     }
 
     if (property.propertyType !== PropertyType.PROPERTY) {
-      for (let index = 1; index <= property.numProperties; index += 1) {
-        readColorProperty(
-          property.property(index),
-          result,
-          visitedKeys,
-          gradientKeys,
-          orderedEntries,
-          compId,
-          layer,
-          includeDisabledColors,
-          false
-        );
+      const childCount = property.numProperties;
+      for (let index = 1; index <= childCount; index += 1) {
+        const child = property.property(index);
+        if (!child) continue;
+        if (
+          !isSelectionTraversalChildSlot(layer, property, child, index, propertyIndexPath.length) ||
+          selectionTraversalContainsProperty(ancestorProperties, child)
+        ) {
+          result.readErrorCount += 1;
+          continue;
+        }
+        propertyIndexPath.push(index);
+        matchNamePath.push(child.matchName);
+        ancestorProperties.push(child);
+        const childKey = selectionTargetKeyFromPath(layer, {
+          propertyIndexPath,
+          matchNamePath,
+        });
+        if (!childKey) {
+          propertyIndexPath.pop();
+          matchNamePath.pop();
+          ancestorProperties.pop();
+          result.readErrorCount += 1;
+          continue;
+        }
+        try {
+          readColorProperty(
+            child,
+            result,
+            visitedKeys,
+            gradientKeys,
+            orderedEntries,
+            compId,
+            layer,
+            includeDisabledColors,
+            ancestorProperties,
+            propertyIndexPath,
+            matchNamePath,
+            childKey,
+            branchDisabled || isSelectionPropertyDisabled(child),
+            materialOptions || isMaterialOptionsProperty(child),
+            false
+          );
+        } finally {
+          propertyIndexPath.pop();
+          matchNamePath.pop();
+          ancestorProperties.pop();
+        }
       }
       return;
     }
@@ -194,18 +227,13 @@ const readColorProperty = (
         return;
       }
     }
-    const path = buildSelectionPropertyPath(layer, property);
-    if (!path) {
-      result.readErrorCount += 1;
-      return;
-    }
     const colorIndex = appendUniqueColor(result.colors, rgba);
     if (colorIndex >= 0) {
       orderedEntries.push({
         entry: { type: "solid", colorIndex },
         layerIndex: layer.index,
-        propertyIndexPath: path.propertyIndexPath,
-        matchNamePath: path.matchNamePath,
+        propertyIndexPath: propertyIndexPath.slice(),
+        matchNamePath: matchNamePath.slice(),
       });
     }
   } catch (_error) {
@@ -255,8 +283,8 @@ export const collectSelectedColors = (
   }
 
   const result = emptyCollection("no-supported-colors");
-  const visitedKeys: string[] = [];
-  const gradientKeys: string[] = [];
+  const visitedKeys = createSelectionKeySet();
+  const gradientKeys = createSelectionKeySet();
   const orderedEntries: OrderedColorCollectionEntry[] = [];
   const scopes = resolveSelectedScopeRoots(activeItem, isExactColorSelection);
   if (scopes.invalid) {
@@ -272,6 +300,11 @@ export const collectSelectedColors = (
     ) {
       continue;
     }
+    const traversal = buildSelectionTraversalRoot(root);
+    if (!traversal) {
+      result.readErrorCount += 1;
+      continue;
+    }
     readColorProperty(
       root.property,
       result,
@@ -281,6 +314,12 @@ export const collectSelectedColors = (
       activeItem.id,
       root.layer,
       includeDisabledColors,
+      [root.property],
+      traversal.propertyIndexPath,
+      traversal.matchNamePath,
+      traversal.key,
+      traversal.disabled,
+      traversal.materialOptions,
       root.exact
     );
   }

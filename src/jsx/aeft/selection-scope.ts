@@ -16,6 +16,42 @@ export type SelectedScopeResolution = {
   roots: SelectedScopeRoot[];
 };
 
+export type SelectionKeySet = {
+  size: number;
+  values: { [bucket: string]: boolean };
+};
+
+export type SelectionTraversalRoot = {
+  key: string;
+  propertyIndexPath: number[];
+  matchNamePath: string[];
+  disabled: boolean;
+  materialOptions: boolean;
+};
+
+export const createSelectionKeySet = (): SelectionKeySet => ({ size: 0, values: {} });
+
+export const hasSelectionKey = (keys: SelectionKeySet, candidate: string) =>
+  keys.values["key:" + candidate] === true;
+
+export const addSelectionKey = (keys: SelectionKeySet, candidate: string) => {
+  const bucket = "key:" + candidate;
+  if (keys.values[bucket] === true) return false;
+  keys.values[bucket] = true;
+  keys.size += 1;
+  return true;
+};
+
+export const selectionTraversalContainsProperty = (
+  ancestors: any[],
+  property: any
+) => {
+  for (let index = 0; index < ancestors.length; index += 1) {
+    if (ancestors[index] === property) return true;
+  }
+  return false;
+};
+
 const isPositiveInteger = (value: any) =>
   typeof value === "number" && isFinite(value) && value > 0 && Math.floor(value) === value;
 
@@ -151,9 +187,8 @@ export const resolveSelectionPropertyPath = (
   }
 };
 
-export const selectionTargetKey = (layer: any, property: any) => {
+export const selectionTargetKeyFromPath = (layer: any, path: SelectionPropertyPath) => {
   try {
-    const path = buildSelectionPropertyPath(layer, property);
     if (!path || !isPositiveInteger(layer.id) || !isPositiveInteger(layer.index)) return null;
     return (
       layer.id +
@@ -167,6 +202,11 @@ export const selectionTargetKey = (layer: any, property: any) => {
   } catch (_error) {
     return null;
   }
+};
+
+export const selectionTargetKey = (layer: any, property: any) => {
+  const path = buildSelectionPropertyPath(layer, property);
+  return path ? selectionTargetKeyFromPath(layer, path) : null;
 };
 
 export const selectionScopeKey = (layer: any, property: any) => {
@@ -189,26 +229,30 @@ export const selectionScopeKey = (layer: any, property: any) => {
   return null;
 };
 
+export const isSelectionPropertyDisabled = (property: any) => {
+  try {
+    const isLayer =
+      property.parentProperty == null &&
+      typeof property.index === "number" &&
+      typeof property.property === "function" &&
+      typeof property.propertyType === "undefined";
+    const isPropertyGroup =
+      typeof property.propertyType === "number" &&
+      typeof property.numProperties === "number" &&
+      typeof property.property === "function";
+    return (
+      property.enabled === false &&
+      (property.canSetEnabled === true || isLayer || isPropertyGroup)
+    );
+  } catch (_error) {
+    return false;
+  }
+};
+
 export const isSelectionBranchDisabled = (property: any) => {
   let current = property;
   while (current) {
-    try {
-      const isLayer =
-        current.parentProperty == null &&
-        typeof current.index === "number" &&
-        typeof current.property === "function" &&
-        typeof current.propertyType === "undefined";
-      const isPropertyGroup =
-        typeof current.propertyType === "number" &&
-        typeof current.numProperties === "number" &&
-        typeof current.property === "function";
-      if (
-        current.enabled === false &&
-        (current.canSetEnabled === true || isLayer || isPropertyGroup)
-      ) {
-        return true;
-      }
-    } catch (_error) {}
+    if (isSelectionPropertyDisabled(current)) return true;
     try {
       current = current.parentProperty;
     } catch (_error) {
@@ -218,17 +262,21 @@ export const isSelectionBranchDisabled = (property: any) => {
   return false;
 };
 
+export const isMaterialOptionsProperty = (property: any) => {
+  try {
+    return (
+      property.matchName === "ADBE Vector Materials Group" ||
+      property.matchName === "ADBE Material Options Group"
+    );
+  } catch (_error) {
+    return false;
+  }
+};
+
 export const isMaterialOptionsBranch = (property: any) => {
   let current = property;
   while (current) {
-    try {
-      if (
-        current.matchName === "ADBE Vector Materials Group" ||
-        current.matchName === "ADBE Material Options Group"
-      ) {
-        return true;
-      }
-    } catch (_error) {}
+    if (isMaterialOptionsProperty(current)) return true;
     try {
       current = current.parentProperty;
     } catch (_error) {
@@ -236,6 +284,72 @@ export const isMaterialOptionsBranch = (property: any) => {
     }
   }
   return false;
+};
+
+export const buildSelectionTraversalRoot = (
+  root: SelectedScopeRoot
+): SelectionTraversalRoot | null => {
+  try {
+    let path: SelectionPropertyPath | null = null;
+    if (root.path) {
+      if (root.wholeLayer) return null;
+      path = buildSelectionPropertyPath(root.layer, root.property);
+      if (!path || !pathsEqual(path, root.path)) return null;
+    } else if (
+      !root.wholeLayer ||
+      root.exact ||
+      !isSameLayerSlot(root.property, root.layer)
+    ) {
+      return null;
+    }
+    const propertyIndexPath = path ? path.propertyIndexPath.slice() : [];
+    const matchNamePath = path ? path.matchNamePath.slice() : [];
+    const key = path
+      ? selectionTargetKeyFromPath(root.layer, path)
+      : selectionScopeKey(root.layer, root.property);
+    if (!key) return null;
+    return {
+      key,
+      propertyIndexPath,
+      matchNamePath,
+      disabled: isSelectionBranchDisabled(root.property),
+      materialOptions: isMaterialOptionsBranch(root.property),
+    };
+  } catch (_error) {
+    return null;
+  }
+};
+
+export const isSelectionTraversalChildSlot = (
+  layer: any,
+  parent: any,
+  child: any,
+  expectedIndex: number,
+  parentDepth: number
+) => {
+  if (
+    parentDepth >= 128 ||
+    !isPositiveInteger(expectedIndex)
+  ) {
+    return false;
+  }
+  try {
+    if (
+      !child ||
+      child.propertyIndex !== expectedIndex ||
+      typeof child.matchName !== "string" ||
+      child.matchName.length === 0
+    ) {
+      return false;
+    }
+    const backlink = child.parentProperty;
+    if (isSameLayerSlot(parent, layer)) {
+      return backlink == null || isSameLayerSlot(backlink, layer);
+    }
+    return !!backlink && isSamePropertySlot(backlink, parent);
+  } catch (_error) {
+    return false;
+  }
 };
 
 export const resolveSelectedScopeRoots = (

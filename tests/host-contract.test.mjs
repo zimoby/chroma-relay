@@ -45,6 +45,136 @@ const createHostModuleLoader = (sandboxGlobals) => {
   return load;
 };
 
+test("selection key set deduplicates arbitrary stable path keys safely", () => {
+  const selectionScope = createHostModuleLoader({})("./selection-scope");
+  const keys = selectionScope.createSelectionKeySet();
+  const candidates = ["normal", "__proto__", "constructor", "toString", "$already-prefixed"];
+
+  for (const candidate of candidates) {
+    assert.equal(selectionScope.addSelectionKey(keys, candidate), true, candidate);
+    assert.equal(selectionScope.addSelectionKey(keys, candidate), false, candidate);
+  }
+  assert.equal(keys.size, candidates.length);
+});
+
+test("selection traversal root carries copied stable path and filter state", () => {
+  const selectionScope = createHostModuleLoader({})("./selection-scope");
+  const layer = {
+    id: 2001,
+    index: 3,
+    property(index) {
+      return index === 1 ? group : null;
+    },
+  };
+  const property = {
+    propertyIndex: 2,
+    enabled: false,
+    canSetEnabled: true,
+    matchName: "ADBE Vector Materials Group",
+    parentProperty: null,
+  };
+  const group = {
+    propertyIndex: 1,
+    matchName: "ADBE Vector Group",
+    parentProperty: null,
+    property(index) {
+      return index === 2 ? property : null;
+    },
+  };
+  property.parentProperty = group;
+  const path = {
+    propertyIndexPath: [1, 2],
+    matchNamePath: ["ADBE Vector Group", "ADBE Vector Materials Group"],
+  };
+  const state = selectionScope.buildSelectionTraversalRoot({
+    layer,
+    property,
+    path,
+    exact: false,
+    wholeLayer: false,
+  });
+
+  assert.deepEqual(JSON.parse(JSON.stringify(state)), {
+    key: "2001:3:1.2:ADBE Vector Group/ADBE Vector Materials Group",
+    propertyIndexPath: [1, 2],
+    matchNamePath: ["ADBE Vector Group", "ADBE Vector Materials Group"],
+    disabled: true,
+    materialOptions: true,
+  });
+  path.propertyIndexPath.push(9);
+  path.matchNamePath.push("drift");
+  assert.deepEqual(Array.from(state.propertyIndexPath), [1, 2]);
+  assert.deepEqual(Array.from(state.matchNamePath), [
+    "ADBE Vector Group",
+    "ADBE Vector Materials Group",
+  ]);
+  assert.equal(
+    selectionScope.buildSelectionTraversalRoot({
+      layer,
+      property,
+      path: {
+        propertyIndexPath: [1, 9],
+        matchNamePath: ["ADBE Vector Group", "ADBE Vector Materials Group"],
+      },
+      exact: false,
+      wholeLayer: false,
+    }),
+    null
+  );
+  assert.equal(selectionScope.isSelectionTraversalChildSlot(layer, group, property, 2, 1), true);
+  property.parentProperty = {
+    propertyIndex: 1,
+    matchName: "ADBE Vector Group",
+  };
+  assert.equal(selectionScope.isSelectionTraversalChildSlot(layer, group, property, 2, 1), true);
+  property.parentProperty = {
+    propertyIndex: 9,
+    matchName: "ADBE Vector Group",
+  };
+  assert.equal(selectionScope.isSelectionTraversalChildSlot(layer, group, property, 2, 1), false);
+  property.parentProperty = group;
+  assert.equal(selectionScope.isSelectionTraversalChildSlot(layer, group, property, 2, 128), false);
+  const wholeLayerState = selectionScope.buildSelectionTraversalRoot({
+    layer,
+    property: layer,
+    path: null,
+    exact: false,
+    wholeLayer: true,
+  });
+  assert.equal(wholeLayerState.key, "layer:2001:3");
+  assert.deepEqual(Array.from(wholeLayerState.propertyIndexPath), []);
+  assert.deepEqual(Array.from(wholeLayerState.matchNamePath), []);
+  assert.equal(
+    selectionScope.buildSelectionTraversalRoot({
+      layer,
+      property: layer,
+      path: null,
+      exact: true,
+      wholeLayer: true,
+    }),
+    null
+  );
+  const throwingRoot = { layer, property, exact: false, wholeLayer: false };
+  Object.defineProperty(throwingRoot, "path", {
+    get() {
+      throw new Error("path getter failed");
+    },
+  });
+  assert.equal(selectionScope.buildSelectionTraversalRoot(throwingRoot), null);
+  const throwingChild = {};
+  Object.defineProperty(throwingChild, "propertyIndex", {
+    get() {
+      throw new Error("propertyIndex getter failed");
+    },
+  });
+  assert.equal(
+    selectionScope.isSelectionTraversalChildSlot(layer, group, throwingChild, 2, 1),
+    false
+  );
+  assert.equal(selectionScope.selectionTraversalContainsProperty([group, property], property), true);
+  assert.equal(selectionScope.selectionTraversalContainsProperty([group, property], layer), false);
+});
+
 const loadAeftHost = async () => {
   class CompItem {}
   class FootageItem {}
@@ -689,6 +819,23 @@ nativeGradientBehaviorTest(
       ]
     );
     assert.equal(twoSelectedGroups.applyCalls.length, 2);
+
+    const sharedParent = loadNativeGradientApplyHost({
+      selection: "path",
+      illustratorHierarchy: true,
+    });
+    sharedParent.otherLayer.selected = false;
+    sharedParent.otherProperty.selected = false;
+    sharedParent.pathGroup.selected = false;
+    sharedParent.nestedVectorGroup.property(1).property(1).selected = true;
+    sharedParent.events.length = 0;
+    sharedParent.request.smartApply = true;
+    const sharedParentResult = plainHostValue(sharedParent.invoke());
+    assert.equal(sharedParentResult.status, "ok");
+    assert.equal(sharedParentResult.selectedTargetCount, 1);
+    assert.equal(sharedParentResult.appliedTargetCount, 1);
+    assert.deepEqual(sharedParentResult.targets[0].propertyIndexPath, [1, 1, 1, 4, 1]);
+    assert.equal(sharedParent.applyCalls.length, 1);
   }
 );
 
@@ -1220,6 +1367,28 @@ test("collector keeps renamed and effect colors while counting one exact native 
   ]);
 });
 
+test("solid collection and apply preserve null-child ignore policy", async () => {
+  const { host, values, leaf, group, makeLayer, makeComp, setProject } = await loadAeftHost();
+  const hiddenColor = leaf("ADBE Vector Fill Color", values.COLOR, [0.2, 0.3, 0.4, 1]);
+  const malformedGroup = group("ADBE Vectors Group", [hiddenColor], "Contents");
+  malformedGroup.property = () => null;
+  const layer = makeLayer([malformedGroup], 4951, 1);
+  setProject(makeComp([layer], 4950));
+
+  const collected = JSON.parse(JSON.stringify(host.collectSelectedColors(false)));
+  assert.equal(collected.status, "no-supported-colors");
+  assert.equal(collected.selectedPropertyCount, 0);
+  assert.equal(collected.readErrorCount, 0);
+  assert.deepEqual(collected.colors, []);
+
+  const applied = JSON.parse(
+    JSON.stringify(host.applyColorToSelectedProperties([0.8, 0.7, 0.6, 1], false, false))
+  );
+  assert.equal(applied.status, "no-supported-colors");
+  assert.equal(applied.failedCount, 0);
+  assert.equal(applied.appliedCount, 0);
+});
+
 test("collector excludes material defaults and a disabled Stroke beside a native gradient", async () => {
   const { host, values, leaf, group, makeLayer, makeComp, setProject } = await loadAeftHost();
   const payload = leaf("ADBE Vector Grad Colors", values.CUSTOM_VALUE, null, "Colors");
@@ -1695,6 +1864,15 @@ test("Smart Apply uses the nearest parent scope only when direct color scope is 
   assert.equal(enabled.status, "ok");
   assert.equal(enabled.appliedCount, 1);
   assert.deepEqual(JSON.parse(JSON.stringify(fill.value)), [0.8, 0.1, 0.2, 1]);
+  assert.deepEqual(JSON.parse(JSON.stringify(siblingColor.value)), [0.4, 0.5, 0.6, 1]);
+
+  layer.selectedProperties = [path, nestedPath];
+  const sharedParent = JSON.parse(
+    JSON.stringify(host.applyColorToSelectedProperties([0.1, 0.7, 0.9, 1], false, true))
+  );
+  assert.equal(sharedParent.status, "ok");
+  assert.equal(sharedParent.appliedCount, 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(fill.value)), [0.1, 0.7, 0.9, 1]);
   assert.deepEqual(JSON.parse(JSON.stringify(siblingColor.value)), [0.4, 0.5, 0.6, 1]);
 });
 
