@@ -8,6 +8,11 @@
 
 <p align="center"><strong>v0.0.1 · After Effects 2022+</strong></p>
 
+<p align="center">
+  <a href="docs/images/chroma-relay-main.png"><img src="docs/images/chroma-relay-main.png" width="540" alt="Chroma Relay Main panel with the five-color default palette"></a>
+  <a href="docs/images/chroma-relay-settings.png"><img src="docs/images/chroma-relay-settings.png" width="200" alt="Chroma Relay Settings panel on the Palettes tab"></a>
+</p>
+
 ## Capabilities
 
 - **Default palette:** five balanced brand colors ordered coral, amber, leaf, sky, and violet.
