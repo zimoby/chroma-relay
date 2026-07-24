@@ -8,6 +8,7 @@ import {
   compareSelectionPropertyPaths,
   isMaterialOptionsBranch,
   isSelectionBranchDisabled,
+  resolveParentScopeRoot,
   resolveSelectionPropertyPath,
   resolveSelectedScopeRoots,
   selectionScopeKey,
@@ -175,7 +176,8 @@ const isExactColorSelection = (property: any) => {
 
 export const applyColorToSelectedProperties = (
   rgba: ApplyRgba,
-  includeDisabledColors = false
+  includeDisabledColors = false,
+  smartApply = true
 ): ColorApplyResult => {
   const result: ColorApplyResult = {
     status: "no-project",
@@ -229,6 +231,8 @@ export const applyColorToSelectedProperties = (
   }
   for (let rootIndex = 0; rootIndex < scopes.roots.length; rootIndex += 1) {
     const root = scopes.roots[rootIndex];
+    const directMatchCount =
+      targetKeys.length + gradientKeys.length + result.skippedDisabledCount;
     collectWritableColorProperties(
       root.property,
       root.layer,
@@ -240,6 +244,31 @@ export const applyColorToSelectedProperties = (
       includeDisabledColors,
       root.exact
     );
+    let parentRoot =
+      smartApply &&
+      targetKeys.length + gradientKeys.length + result.skippedDisabledCount === directMatchCount
+        ? resolveParentScopeRoot(root)
+        : null;
+    while (
+      parentRoot &&
+      targetKeys.length + gradientKeys.length + result.skippedDisabledCount === directMatchCount
+    ) {
+      collectWritableColorProperties(
+        parentRoot.property,
+        parentRoot.layer,
+        targets,
+        targetKeys,
+        gradientKeys,
+        result,
+        visitedKeys,
+        includeDisabledColors,
+        false
+      );
+      parentRoot =
+        targetKeys.length + gradientKeys.length + result.skippedDisabledCount === directMatchCount
+          ? resolveParentScopeRoot(parentRoot)
+          : null;
+    }
   }
 
   targets.sort((left, right) => {

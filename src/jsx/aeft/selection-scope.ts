@@ -106,6 +106,22 @@ const pathsEqual = (left: SelectionPropertyPath, right: SelectionPropertyPath) =
   return true;
 };
 
+const isStrictDescendantPath = (
+  candidate: SelectionPropertyPath,
+  ancestor: SelectionPropertyPath
+) => {
+  if (candidate.propertyIndexPath.length <= ancestor.propertyIndexPath.length) return false;
+  for (let index = 0; index < ancestor.propertyIndexPath.length; index += 1) {
+    if (
+      candidate.propertyIndexPath[index] !== ancestor.propertyIndexPath[index] ||
+      candidate.matchNamePath[index] !== ancestor.matchNamePath[index]
+    ) {
+      return false;
+    }
+  }
+  return true;
+};
+
 export const compareSelectionPropertyPaths = (
   left: SelectionPropertyPath,
   right: SelectionPropertyPath
@@ -297,11 +313,48 @@ export const resolveSelectedScopeRoots = (
         compareSelectionPropertyPaths(left.path!, right.path!)
       );
       for (let candidateIndex = 0; candidateIndex < candidates.length; candidateIndex += 1) {
-        roots.push(candidates[candidateIndex]);
+        const candidate = candidates[candidateIndex];
+        let redundantNonExactDescendant = false;
+        if (!candidate.exact) {
+          for (let ancestorIndex = 0; ancestorIndex < candidates.length; ancestorIndex += 1) {
+            const ancestor = candidates[ancestorIndex];
+            if (
+              ancestorIndex !== candidateIndex &&
+              ancestor.path &&
+              candidate.path &&
+              isStrictDescendantPath(candidate.path, ancestor.path)
+            ) {
+              redundantNonExactDescendant = true;
+              break;
+            }
+          }
+        }
+        if (!redundantNonExactDescendant) roots.push(candidate);
       }
     }
     return { invalid: false, roots };
   } catch (_error) {
     return { invalid: true, roots: [] };
+  }
+};
+
+export const resolveParentScopeRoot = (
+  root: SelectedScopeRoot
+): SelectedScopeRoot | null => {
+  if (root.exact || root.wholeLayer) return null;
+  try {
+    const parent = root.property?.parentProperty;
+    if (!parent || isSameLayerSlot(parent, root.layer)) return null;
+    const path = buildSelectionPropertyPath(root.layer, parent);
+    if (!path) return null;
+    return {
+      layer: root.layer,
+      property: parent,
+      path,
+      exact: false,
+      wholeLayer: false,
+    };
+  } catch (_error) {
+    return null;
   }
 };

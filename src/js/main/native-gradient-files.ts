@@ -807,6 +807,7 @@ export type NativeGradientHostApplyRequest = Readonly<{
   expectedHostVersion: string;
   stopCount: number;
   includeDisabledTargets: boolean;
+  smartApply: boolean;
   presets: Readonly<Record<GradientFfxKind, NativeGradientHostPresetRecord>>;
 }>;
 
@@ -1382,6 +1383,7 @@ export const applyActivePaletteNativeGradient = async (
     hostVersion: string;
     platform?: string;
     includeDisabledTargets: boolean;
+    smartApply: boolean;
   }>,
   invokeHost: (request: NativeGradientHostApplyRequest) => Promise<unknown>,
 ): Promise<NativeGradientRendererReport> => {
@@ -1444,6 +1446,7 @@ export const applyActivePaletteNativeGradient = async (
       expectedHostVersion: options.hostVersion,
       stopCount: gradient.colorStops.length,
       includeDisabledTargets: options.includeDisabledTargets,
+      smartApply: options.smartApply,
       presets: {
         fill: hostPresetRecord(generated[0]),
         stroke: hostPresetRecord(generated[1]),

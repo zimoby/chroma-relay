@@ -6,7 +6,7 @@ import {
   migrateLayoutSettings,
 } from "../src/js/shared/layout-settings-domain.ts";
 
-test("migrates v1 and v2 settings to schema v4 without losing existing choices", () => {
+test("migrates older settings to schema v5 with Smart Apply enabled", () => {
   assert.deepEqual(
     migrateLayoutSettings({
       schemaVersion: 1,
@@ -15,13 +15,14 @@ test("migrates v1 and v2 settings to schema v4 without losing existing choices",
       swatchSize: 44,
     }),
     {
-      schemaVersion: 4,
+      schemaVersion: 5,
       revision: 7,
       layoutMode: "fixed",
       swatchSize: 44,
       includeDisabledColors: false,
       extractionPreset: "balanced",
       gradientCollectionMode: "color-stops",
+      smartApply: true,
     }
   );
   assert.deepEqual(
@@ -33,21 +34,44 @@ test("migrates v1 and v2 settings to schema v4 without losing existing choices",
       includeDisabledColors: true,
     }),
     {
-      schemaVersion: 4,
+      schemaVersion: 5,
       revision: 9,
       layoutMode: "stretch",
       swatchSize: 32,
       includeDisabledColors: true,
       extractionPreset: "balanced",
       gradientCollectionMode: "color-stops",
+      smartApply: true,
+    }
+  );
+  assert.deepEqual(
+    migrateLayoutSettings({
+      schemaVersion: 4,
+      revision: 11,
+      layoutMode: "fixed",
+      swatchSize: 36,
+      includeDisabledColors: false,
+      extractionPreset: "contrast",
+      gradientCollectionMode: "gradient-slot",
+    }),
+    {
+      schemaVersion: 5,
+      revision: 11,
+      layoutMode: "fixed",
+      swatchSize: 36,
+      includeDisabledColors: false,
+      extractionPreset: "contrast",
+      gradientCollectionMode: "gradient-slot",
+      smartApply: true,
     }
   );
 });
 
-test("accepts valid schema v4 presets and rejects invalid saved values", () => {
-  assert.equal(LAYOUT_SETTINGS_SCHEMA_VERSION, 4);
+test("accepts valid schema v5 settings and rejects invalid Smart Apply values", () => {
+  assert.equal(LAYOUT_SETTINGS_SCHEMA_VERSION, 5);
   assert.equal(DEFAULT_LAYOUT_SETTINGS.extractionPreset, "balanced");
   assert.equal(DEFAULT_LAYOUT_SETTINGS.gradientCollectionMode, "color-stops");
+  assert.equal(DEFAULT_LAYOUT_SETTINGS.smartApply, true);
   assert.equal(
     migrateLayoutSettings({ ...DEFAULT_LAYOUT_SETTINGS, extractionPreset: "tonal" })
       ?.extractionPreset,
@@ -70,4 +94,5 @@ test("accepts valid schema v4 presets and rejects invalid saved values", () => {
     migrateLayoutSettings({ ...DEFAULT_LAYOUT_SETTINGS, gradientCollectionMode: "unknown" }),
     null
   );
+  assert.equal(migrateLayoutSettings({ ...DEFAULT_LAYOUT_SETTINGS, smartApply: "yes" }), null);
 });

@@ -622,6 +622,7 @@ export const App = () => {
           hostVersion,
           platform,
           includeDisabledTargets: layoutSettings.includeDisabledColors,
+          smartApply: layoutSettings.smartApply,
         },
         async (request) => {
           countersRef.current.hostCalls += 1;
@@ -646,7 +647,7 @@ export const App = () => {
       setPendingHostAction(null);
       setPendingPaletteMutation(false);
     }
-  }, [layoutSettings.includeDisabledColors]);
+  }, [layoutSettings.includeDisabledColors, layoutSettings.smartApply]);
 
   const handleApplyActivePaletteGradient = useCallback(async () => {
     const colors = getPaletteSolidColors(getActivePalette(paletteDocumentRef.current)).map(
@@ -689,7 +690,8 @@ export const App = () => {
       const result = await evalTS(
         "applyColorToSelectedProperties",
         rgba,
-        layoutSettings.includeDisabledColors
+        layoutSettings.includeDisabledColors,
+        layoutSettings.smartApply
       );
       lastHostResultRef.current = result;
       if (result.status !== "ok") {

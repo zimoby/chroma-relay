@@ -150,7 +150,11 @@ const canonicalHostPath = (input) => {
   return `/${output.join("/")}`;
 };
 
-const loadNativeGradientApplyHost = ({ kind = "fill", selection = "parent" } = {}) => {
+const loadNativeGradientApplyHost = ({
+  kind = "fill",
+  selection = "parent",
+  illustratorHierarchy = false,
+} = {}) => {
   const TEMP_PATH = "/private/var/folders/cp/T";
   const FILL_TOKEN = "A".repeat(32);
   const STROKE_TOKEN = "B".repeat(32);
@@ -276,8 +280,37 @@ const loadNativeGradientApplyHost = ({ kind = "fill", selection = "parent" } = {
 
   const fill = makeGradient("fill");
   const stroke = makeGradient("stroke");
-  const userGroup = group("ADBE Vector Group", [fill.parent, stroke.parent]);
-  const contents = group("ADBE Root Vectors Group", [userGroup]);
+  const path = leaf("ADBE Vector Shape");
+  const pathGroup = group("ADBE Vector Shape - Group", [path]);
+  const nestedPath = leaf("ADBE Vector Shape");
+  const nestedPathGroup = group("ADBE Vector Shape - Group", [nestedPath]);
+  const nestedVectorGroup = group("ADBE Vector Group", [nestedPathGroup]);
+  const mergePaths = group("ADBE Vector Filter - Merge", []);
+  const userContents = illustratorHierarchy
+    ? group("ADBE Vectors Group", [pathGroup, nestedVectorGroup, mergePaths, fill.parent])
+    : null;
+  const userGroup = group(
+    "ADBE Vector Group",
+    illustratorHierarchy ? [userContents] : [fill.parent, stroke.parent, pathGroup]
+  );
+  const siblingGradient = makeGradient("fill");
+  const siblingPath = leaf("ADBE Vector Shape");
+  const siblingPathGroup = group("ADBE Vector Shape - Group", [siblingPath]);
+  const siblingNestedGroup = group("ADBE Vector Group", []);
+  const siblingMergePaths = group("ADBE Vector Filter - Merge", []);
+  const siblingContents = illustratorHierarchy
+    ? group("ADBE Vectors Group", [
+        siblingPathGroup,
+        siblingNestedGroup,
+        siblingMergePaths,
+        siblingGradient.parent,
+      ])
+    : null;
+  const siblingUserGroup = group(
+    "ADBE Vector Group",
+    illustratorHierarchy ? [siblingContents] : [siblingGradient.parent]
+  );
+  const contents = group("ADBE Root Vectors Group", [userGroup, siblingUserGroup]);
   const unrelated = leaf("ADBE Vector Fill Color", PropertyValueType.COLOR);
   const applyCalls = [];
   const layer = group("ADBE AV Layer", [contents, unrelated], "Gradient layer");
@@ -390,6 +423,7 @@ const loadNativeGradientApplyHost = ({ kind = "fill", selection = "parent" } = {
     expectedHostVersion: "25.6.6",
     stopCount: 4,
     includeDisabledTargets: false,
+    smartApply: false,
     presets: {
       fill: presetRecord("fill", FILL_TOKEN),
       stroke: presetRecord("stroke", STROKE_TOKEN),
@@ -402,6 +436,10 @@ const loadNativeGradientApplyHost = ({ kind = "fill", selection = "parent" } = {
   const target = kind === "fill" ? fill : stroke;
   if (selection === "parent" || selection === "both") target.parent.selected = true;
   if (selection === "payload" || selection === "both") target.payload.selected = true;
+  if (selection === "path") {
+    pathGroup.selected = true;
+    path.selected = true;
+  }
   events.length = 0;
 
   const sandbox = {
@@ -485,6 +523,16 @@ const loadNativeGradientApplyHost = ({ kind = "fill", selection = "parent" } = {
     otherGradient,
     fill,
     stroke,
+    path,
+    pathGroup,
+    userContents,
+    nestedVectorGroup,
+    mergePaths,
+    siblingGradient,
+    siblingPath,
+    siblingPathGroup,
+    siblingContents,
+    siblingUserGroup,
     userGroup,
     contents,
     unrelated,
@@ -597,6 +645,54 @@ nativeGradientBehaviorTest("B2 native-gradient Stroke apply chooses only the str
 });
 
 nativeGradientBehaviorTest(
+  "Smart Apply stays inside the owning Illustrator group for overlapping Path selections",
+  () => {
+    const fixture = loadNativeGradientApplyHost({
+      selection: "path",
+      illustratorHierarchy: true,
+    });
+    fixture.otherLayer.selected = false;
+    fixture.otherProperty.selected = false;
+
+    const disabled = plainHostValue(fixture.invoke());
+    assert.equal(disabled.status, "no-selected-gradient");
+    assert.equal(disabled.selectedTargetCount, 0);
+    assert.equal(fixture.applyCalls.length, 0);
+
+    fixture.request.smartApply = true;
+    const enabled = plainHostValue(fixture.invoke());
+    assert.equal(enabled.status, "ok");
+    assert.equal(enabled.selectedTargetCount, 1);
+    assert.equal(enabled.appliedTargetCount, 1);
+    assert.deepEqual(enabled.targets[0].propertyIndexPath, [1, 1, 1, 4, 1]);
+    assert.equal(fixture.applyCalls.length, 1);
+
+    const twoSelectedGroups = loadNativeGradientApplyHost({
+      selection: "path",
+      illustratorHierarchy: true,
+    });
+    twoSelectedGroups.otherLayer.selected = false;
+    twoSelectedGroups.otherProperty.selected = false;
+    twoSelectedGroups.siblingPathGroup.selected = true;
+    twoSelectedGroups.siblingPath.selected = true;
+    twoSelectedGroups.events.length = 0;
+    twoSelectedGroups.request.smartApply = true;
+    const twoSelected = plainHostValue(twoSelectedGroups.invoke());
+    assert.equal(twoSelected.status, "ok");
+    assert.equal(twoSelected.selectedTargetCount, 2);
+    assert.equal(twoSelected.appliedTargetCount, 2);
+    assert.deepEqual(
+      twoSelected.targets.map((target) => target.propertyIndexPath),
+      [
+        [1, 1, 1, 4, 1],
+        [1, 2, 1, 4, 1],
+      ]
+    );
+    assert.equal(twoSelectedGroups.applyCalls.length, 2);
+  }
+);
+
+nativeGradientBehaviorTest(
   "B2 native-gradient selection is exact, deduped, ambiguity-safe, and malformed-native fail-closed",
   () => {
     const deduped = loadNativeGradientApplyHost({ selection: "both" });
@@ -644,8 +740,8 @@ nativeGradientBehaviorTest(
     ancestorOnly.events.length = 0;
     const ancestorResult = plainHostValue(ancestorOnly.invoke());
     assert.equal(ancestorResult.status, "ok");
-    assert.equal(ancestorResult.selectedTargetCount, 2);
-    assert.equal(ancestorOnly.applyCalls.length, 2);
+    assert.equal(ancestorResult.selectedTargetCount, 3);
+    assert.equal(ancestorOnly.applyCalls.length, 3);
 
     const broadAncestor = loadNativeGradientApplyHost({ kind: "fill", selection: "payload" });
     broadAncestor.otherLayer.selected = false;
@@ -656,7 +752,7 @@ nativeGradientBehaviorTest(
     const originalUserGroupProperty = broadAncestor.userGroup.property.bind(
       broadAncestor.userGroup
     );
-    const broadSiblings = Array.from({ length: 65 }, (_, index) => ({
+    const broadSiblings = Array.from({ length: 1800 }, (_, index) => ({
       matchName: `ADBE Broad Sibling ${index + 1}`,
       name: `Broad Sibling ${index + 1}`,
       propertyType: 1,
@@ -1562,6 +1658,46 @@ test("color collection and apply share exact, group, layer, multi-layer, and dis
   assert.deepEqual(JSON.parse(JSON.stringify(secondLayerColor.value)), [0.8, 0.8, 0.2, 1]);
 });
 
+test("Smart Apply uses the nearest parent scope only when direct color scope is empty", async () => {
+  const { host, values, leaf, group, makeLayer, makeComp, setProject } = await loadAeftHost();
+  const path = leaf("ADBE Vector Shape", values.NO_VALUE, null, "Path");
+  const pathGroup = group("ADBE Vector Shape - Group", [path], "Path 1");
+  const fill = leaf("ADBE Vector Fill Color", values.COLOR, [0.2, 0.3, 0.4, 1]);
+  const nestedPath = leaf("ADBE Vector Shape", values.NO_VALUE, null, "Nested Path");
+  const nestedPathGroup = group("ADBE Vector Shape - Group", [nestedPath], "Path 2");
+  const nestedVectorGroup = group("ADBE Vector Group", [nestedPathGroup], "Group 1");
+  const mergePaths = group("ADBE Vector Filter - Merge", [], "Merge Paths 1");
+  const contents = group(
+    "ADBE Vectors Group",
+    [pathGroup, nestedVectorGroup, mergePaths, fill],
+    "Contents"
+  );
+  const userGroup = group("ADBE Vector Group", [contents], "Group A");
+  const siblingColor = leaf("ADBE Vector Fill Color", values.COLOR, [0.4, 0.5, 0.6, 1]);
+  const siblingContents = group("ADBE Vectors Group", [siblingColor], "Contents");
+  const siblingGroup = group("ADBE Vector Group", [siblingContents], "Group B");
+  const rootContents = group("ADBE Root Vectors Group", [userGroup, siblingGroup], "Contents");
+  const layer = makeLayer([rootContents], 5201, 1);
+  layer.selectedProperties = [pathGroup, path];
+  setProject(makeComp([layer], 5200));
+
+  const disabled = JSON.parse(
+    JSON.stringify(host.applyColorToSelectedProperties([0.8, 0.1, 0.2, 1], false, false))
+  );
+  assert.equal(disabled.status, "no-supported-colors");
+  assert.equal(disabled.appliedCount, 0);
+  assert.deepEqual(JSON.parse(JSON.stringify(fill.value)), [0.2, 0.3, 0.4, 1]);
+
+  layer.selectedProperties = [path, pathGroup];
+  const enabled = JSON.parse(
+    JSON.stringify(host.applyColorToSelectedProperties([0.8, 0.1, 0.2, 1], false, true))
+  );
+  assert.equal(enabled.status, "ok");
+  assert.equal(enabled.appliedCount, 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(fill.value)), [0.8, 0.1, 0.2, 1]);
+  assert.deepEqual(JSON.parse(JSON.stringify(siblingColor.value)), [0.4, 0.5, 0.6, 1]);
+});
+
 test("solid apply re-resolves replaced wrappers, continues after a failed fresh target, and closes one Undo", async () => {
   const { host, values, leaf, makeLayer, makeComp, setProject, app } = await loadAeftHost();
   const first = leaf("ADBE Effect Color", values.COLOR, [0.1, 0.1, 0.1, 1]);
@@ -1742,13 +1878,19 @@ test("General settings use compact grouped rows with descriptions and an iOS-sty
     read("src/js/settings/settings.tsx"),
     read("src/js/settings/settings.scss"),
   ]);
-  for (const group of ["swatch-settings-group", "collection-settings-group", "image-settings-group"]) {
+  for (const group of [
+    "swatch-settings-group",
+    "application-settings-group",
+    "collection-settings-group",
+    "image-settings-group",
+  ]) {
     assert.match(settings, new RegExp(`data-testid="${group}"`));
   }
   assert.match(settings, /className="setting-copy"/);
   assert.match(settings, /className="setting-description"/);
   assert.match(settings, /className="toggle-track"/);
   assert.match(settings, /data-testid="include-disabled-colors"/);
+  assert.match(settings, /data-testid="smart-apply"/);
   assert.match(settings, /data-testid=\{`gradient-collection-\$\{mode\}`\}/);
   assert.match(settings, /data-testid=\{`extraction-\$\{preset\}`\}/);
   assert.match(styles, /\.settings-group/);
@@ -1855,8 +1997,9 @@ test("Main and Settings expose the requested compact interaction contracts", asy
   assert.match(mainStyles, /width:\s*var\(--cp-swatch-size\)/);
   assert.match(layoutSettings, /migrateLayoutSettings/);
   assert.match(layoutDomain, /includeDisabledColors:\s*boolean/);
-  assert.match(layoutDomain, /LAYOUT_SETTINGS_SCHEMA_VERSION = 4/);
+  assert.match(layoutDomain, /LAYOUT_SETTINGS_SCHEMA_VERSION = 5/);
   assert.match(layoutDomain, /gradientCollectionMode:\s*GradientCollectionMode/);
+  assert.match(layoutDomain, /smartApply:\s*boolean/);
   assert.match(layoutDomain, /extractionPreset:\s*ExtractionPreset/);
   assert.match(imageDomain, /neuquant-float/);
   assert.match(imageDomain, /rgbquant/);

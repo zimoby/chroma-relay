@@ -70,6 +70,7 @@ const rendererOptions = (palette: readonly [number, number, number, number][], b
   hostVersion: RENDERER_HOST_VERSION,
   platform: "darwin",
   includeDisabledTargets: false,
+  smartApply: false,
 });
 const rgba = (index: number): [number, number, number, number] => [
   index / 10,
@@ -693,6 +694,7 @@ test("B3 renderer generates both kind leases, makes one host call, and cleans al
     assert.equal(request.expectedHostVersion, RENDERER_HOST_VERSION);
     assert.equal(request.stopCount, 3);
     assert.equal(request.includeDisabledTargets, false);
+    assert.equal(request.smartApply, false);
     assert.deepEqual(Object.keys(request.presets).sort(), ["fill", "stroke"]);
     for (const kind of ["fill", "stroke"] as const) {
       assert.deepEqual(Object.keys(request.presets[kind]).sort(), [
@@ -1918,7 +1920,7 @@ test("B3 Main exposes only the explicit flyout gradient action and preserves nor
   assert.doesNotMatch(mainSource, /multiple-selected-gradients|target-state-unsupported|selection-drift/);
   assert.match(
     mainSource,
-    /evalTS\(\s*"applyColorToSelectedProperties",\s*rgba,\s*layoutSettings\.includeDisabledColors\s*\)/
+    /evalTS\(\s*"applyColorToSelectedProperties",\s*rgba,\s*layoutSettings\.includeDisabledColors,\s*layoutSettings\.smartApply\s*\)/
   );
   assert.doesNotMatch(mainSource, /onClick=\{[^}]*applyActivePaletteNativeGradient/);
 });

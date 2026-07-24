@@ -98,6 +98,7 @@ test("migrates existing layout settings to color-stop collection mode", () => {
     extractionPreset: "tonal",
   });
   assert.equal(migrated?.gradientCollectionMode, "color-stops");
+  assert.equal(migrated?.smartApply, true);
   assert.equal(
     migrateLayoutSettings({ ...migrated, gradientCollectionMode: "gradient-slot" })
       ?.gradientCollectionMode,

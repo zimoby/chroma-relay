@@ -1,7 +1,7 @@
 import contract from "../../shared/product-contract.json" with { type: "json" };
 
-// LAYOUT_SETTINGS_SCHEMA_VERSION = 4 is supplied by product-contract.json.
-export const LAYOUT_SETTINGS_SCHEMA_VERSION = contract.schemas.settings as 4;
+// LAYOUT_SETTINGS_SCHEMA_VERSION = 5 is supplied by product-contract.json.
+export const LAYOUT_SETTINGS_SCHEMA_VERSION = contract.schemas.settings as 5;
 export const MIN_SWATCH_SIZE = 24;
 export const MAX_SWATCH_SIZE = 64;
 
@@ -17,24 +17,36 @@ export type LayoutSettings = {
   includeDisabledColors: boolean;
   extractionPreset: ExtractionPreset;
   gradientCollectionMode: GradientCollectionMode;
+  smartApply: boolean;
 };
 
 type LayoutSettingsV1 = Omit<
   LayoutSettings,
-  "schemaVersion" | "includeDisabledColors" | "extractionPreset" | "gradientCollectionMode"
+  | "schemaVersion"
+  | "includeDisabledColors"
+  | "extractionPreset"
+  | "gradientCollectionMode"
+  | "smartApply"
 > & {
   schemaVersion: 1;
 };
 
 type LayoutSettingsV2 = Omit<
   LayoutSettings,
-  "schemaVersion" | "extractionPreset" | "gradientCollectionMode"
+  "schemaVersion" | "extractionPreset" | "gradientCollectionMode" | "smartApply"
 > & {
   schemaVersion: 2;
 };
 
-type LayoutSettingsV3 = Omit<LayoutSettings, "schemaVersion" | "gradientCollectionMode"> & {
+type LayoutSettingsV3 = Omit<
+  LayoutSettings,
+  "schemaVersion" | "gradientCollectionMode" | "smartApply"
+> & {
   schemaVersion: 3;
+};
+
+type LayoutSettingsV4 = Omit<LayoutSettings, "schemaVersion" | "smartApply"> & {
+  schemaVersion: 4;
 };
 
 export const DEFAULT_LAYOUT_SETTINGS: LayoutSettings = {
@@ -45,6 +57,7 @@ export const DEFAULT_LAYOUT_SETTINGS: LayoutSettings = {
   includeDisabledColors: false,
   extractionPreset: "balanced",
   gradientCollectionMode: "color-stops",
+  smartApply: true,
 };
 
 export const clampSwatchSize = (value: number) =>
@@ -96,6 +109,17 @@ const isLayoutSettingsV3 = (value: unknown): value is LayoutSettingsV3 => {
   );
 };
 
+const isLayoutSettingsV4 = (value: unknown): value is LayoutSettingsV4 => {
+  if (!hasValidBaseSettings(value)) return false;
+  const settings = value as Partial<LayoutSettingsV4>;
+  return (
+    settings.schemaVersion === 4 &&
+    typeof settings.includeDisabledColors === "boolean" &&
+    isExtractionPreset(settings.extractionPreset) &&
+    isGradientCollectionMode(settings.gradientCollectionMode)
+  );
+};
+
 export const isLayoutSettings = (value: unknown): value is LayoutSettings => {
   if (!hasValidBaseSettings(value)) return false;
   const settings = value as Partial<LayoutSettings>;
@@ -103,17 +127,26 @@ export const isLayoutSettings = (value: unknown): value is LayoutSettings => {
     settings.schemaVersion === LAYOUT_SETTINGS_SCHEMA_VERSION &&
     typeof settings.includeDisabledColors === "boolean" &&
     isExtractionPreset(settings.extractionPreset) &&
-    isGradientCollectionMode(settings.gradientCollectionMode)
+    isGradientCollectionMode(settings.gradientCollectionMode) &&
+    typeof settings.smartApply === "boolean"
   );
 };
 
 export const migrateLayoutSettings = (value: unknown): LayoutSettings | null => {
   if (isLayoutSettings(value)) return { ...value };
+  if (isLayoutSettingsV4(value)) {
+    return {
+      ...value,
+      schemaVersion: LAYOUT_SETTINGS_SCHEMA_VERSION,
+      smartApply: DEFAULT_LAYOUT_SETTINGS.smartApply,
+    };
+  }
   if (isLayoutSettingsV3(value)) {
     return {
       ...value,
       schemaVersion: LAYOUT_SETTINGS_SCHEMA_VERSION,
       gradientCollectionMode: DEFAULT_LAYOUT_SETTINGS.gradientCollectionMode,
+      smartApply: DEFAULT_LAYOUT_SETTINGS.smartApply,
     };
   }
   if (isLayoutSettingsV2(value)) {
@@ -122,6 +155,7 @@ export const migrateLayoutSettings = (value: unknown): LayoutSettings | null => 
       schemaVersion: LAYOUT_SETTINGS_SCHEMA_VERSION,
       extractionPreset: DEFAULT_LAYOUT_SETTINGS.extractionPreset,
       gradientCollectionMode: DEFAULT_LAYOUT_SETTINGS.gradientCollectionMode,
+      smartApply: DEFAULT_LAYOUT_SETTINGS.smartApply,
     };
   }
   if (isLayoutSettingsV1(value)) {
@@ -131,6 +165,7 @@ export const migrateLayoutSettings = (value: unknown): LayoutSettings | null => 
       includeDisabledColors: DEFAULT_LAYOUT_SETTINGS.includeDisabledColors,
       extractionPreset: DEFAULT_LAYOUT_SETTINGS.extractionPreset,
       gradientCollectionMode: DEFAULT_LAYOUT_SETTINGS.gradientCollectionMode,
+      smartApply: DEFAULT_LAYOUT_SETTINGS.smartApply,
     };
   }
   return null;

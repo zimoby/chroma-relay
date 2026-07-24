@@ -223,7 +223,7 @@ test("reviewed manifest binds commit, contract, assets, fixture bytes, and exact
   const manifest = await createReviewedInputManifest({
     commit: "12d32bd11129f66dd9bfd2510154eb2975a10e36",
     packageJson: { version: "0.0.1" },
-    productContract: { marker: { current: "Palette v2" }, schemas: { palette: 3, settings: 4 } },
+    productContract: { marker: { current: "Palette v2" }, schemas: { palette: 3, settings: 5 } },
     assets: [{ path: "main/index.html", bytes: Buffer.from("main") }, { path: "jsx/index.js", bytes: Buffer.from("host") }],
     fixtures: [{ path: "fixture.aep", bytes: Buffer.from("fixture") }],
     templates: [{ path: "fill-template.ffx", bytes: Buffer.from("ffx") }],

@@ -320,6 +320,7 @@ export const App = () => {
         | "includeDisabledColors"
         | "extractionPreset"
         | "gradientCollectionMode"
+        | "smartApply"
       >
     >
   ) => {
@@ -338,6 +339,10 @@ export const App = () => {
       setStatus(
         patch.extractionPreset !== undefined
           ? `${EXTRACTION_PRESET_LABELS[next.extractionPreset]} image extraction saved`
+          : patch.smartApply !== undefined
+          ? next.smartApply
+            ? "Smart Apply enabled"
+            : "Smart Apply disabled"
           : patch.includeDisabledColors !== undefined
           ? next.includeDisabledColors
             ? "Disabled colors included"
@@ -347,7 +352,7 @@ export const App = () => {
           : `Fixed layout saved · ${next.swatchSize} px`
       );
     } catch {
-      setStatus("Layout setting could not be saved");
+      setStatus("Setting could not be saved");
     }
   };
 
@@ -1092,6 +1097,35 @@ export const App = () => {
                     </span>
                   </div>
                 </div>
+              </div>
+            </section>
+
+            <section className="settings-section">
+              <h3 className="settings-section-title">Application</h3>
+              <div className="settings-group" data-testid="application-settings-group">
+                <label className="settings-item settings-toggle-row">
+                  <span className="setting-copy">
+                    <span className="setting-title">Smart Apply</span>
+                    <span className="setting-description">
+                      If the selection has no matching color or gradient, use the nearest parent
+                      group.
+                    </span>
+                  </span>
+                  <span className="settings-item-control toggle-control">
+                    <input
+                      aria-label="Use the nearest parent group when the selection has no matching color or gradient"
+                      checked={settings.smartApply}
+                      data-testid="smart-apply"
+                      onChange={(event) =>
+                        commitSettings({ smartApply: event.currentTarget.checked })
+                      }
+                      type="checkbox"
+                    />
+                    <span aria-hidden="true" className="toggle-track">
+                      <span className="toggle-thumb" />
+                    </span>
+                  </span>
+                </label>
               </div>
             </section>
 

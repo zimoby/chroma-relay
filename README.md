@@ -43,6 +43,7 @@ Disabled layers and groups are skipped by default and can be included from Setti
 - Click a color swatch to apply its exact RGBA value to selected writable color properties.
 - Click a gradient slot to apply the stored native gradient to supported targets.
 - Use **Panel flyout → Apply Active Palette as Gradient** to generate a gradient from an active palette containing 2–8 color slots.
+- **Smart Apply**, enabled by default in Settings, expands a target-free property or group to the nearest parent group containing matching colors or gradients. Direct matches remain exact, and the fallback never expands to the whole layer.
 - Color and gradient operations share the scoped host transaction and one balanced Undo group.
 
 Collecting an exact native gradient from project properties requires a clean saved project and stable descriptor identity. Applying an already stored or generated gradient also fails closed on ambiguous targets, but supports dirty or unsaved projects when the selected targets are static, unlocked, and exactly resolvable.

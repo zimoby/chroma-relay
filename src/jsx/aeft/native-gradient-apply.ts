@@ -10,6 +10,7 @@ import type { NativeGradientKind } from "./native-gradient-target";
 import {
   compareSelectionPropertyPaths,
   isSelectionBranchDisabled,
+  resolveParentScopeRoot,
   resolveSelectedScopeRoots,
   selectionScopeKey,
 } from "./selection-scope";
@@ -46,6 +47,7 @@ export type NativeGradientApplyRequest = {
   expectedHostVersion: string;
   stopCount: number;
   includeDisabledTargets: boolean;
+  smartApply: boolean;
   presets: {
     fill: NativeGradientPresetRecord;
     stroke: NativeGradientPresetRecord;
@@ -317,6 +319,7 @@ const isValidRequestEnvelope = (request: any) =>
     typeof request.expectedHostVersion === "string" &&
     request.expectedHostVersion.length > 0 &&
     typeof request.includeDisabledTargets === "boolean" &&
+    typeof request.smartApply === "boolean" &&
     isPositiveInteger(request.stopCount) &&
     request.stopCount >= 2 &&
     request.stopCount <= 8 &&
@@ -523,7 +526,11 @@ const collectResolvedTargets = (
 const isExactNativeGradientSelection = (property: any) =>
   isExactNativeGradientPayload(property);
 
-const resolveSelectedTargets = (activeItem: any, includeDisabledTargets: boolean) => {
+const resolveSelectedTargets = (
+  activeItem: any,
+  includeDisabledTargets: boolean,
+  smartApply: boolean
+) => {
   const state: ResolvedTargetState = {
     invalid: false,
     targets: [],
@@ -539,6 +546,8 @@ const resolveSelectedTargets = (activeItem: any, includeDisabledTargets: boolean
   }
   for (let rootIndex = 0; rootIndex < scopes.roots.length; rootIndex += 1) {
     const root = scopes.roots[rootIndex];
+    const directMatchCount =
+      state.targets.length + state.preservedStateCount + state.skippedDisabledCount;
     collectResolvedTargets(
       root.property,
       root.layer,
@@ -548,6 +557,32 @@ const resolveSelectedTargets = (activeItem: any, includeDisabledTargets: boolean
       root.exact
     );
     if (state.invalid) return state;
+    let parentRoot =
+      smartApply &&
+      state.targets.length + state.preservedStateCount + state.skippedDisabledCount ===
+        directMatchCount
+        ? resolveParentScopeRoot(root)
+        : null;
+    while (
+      parentRoot &&
+      state.targets.length + state.preservedStateCount + state.skippedDisabledCount ===
+        directMatchCount
+    ) {
+      collectResolvedTargets(
+        parentRoot.property,
+        parentRoot.layer,
+        activeItem,
+        state,
+        includeDisabledTargets,
+        false
+      );
+      if (state.invalid) return state;
+      parentRoot =
+        state.targets.length + state.preservedStateCount + state.skippedDisabledCount ===
+        directMatchCount
+          ? resolveParentScopeRoot(parentRoot)
+          : null;
+    }
   }
   state.targets.sort((left, right) => {
     if (left.descriptor.layerIndex !== right.descriptor.layerIndex) {
@@ -842,7 +877,11 @@ export const applyNativeGradientPresetToSelectedTarget = (
     return failBeforeMutation(result, "no-active-comp");
   }
 
-  const selected = resolveSelectedTargets(activeItem, request.includeDisabledTargets);
+  const selected = resolveSelectedTargets(
+    activeItem,
+    request.includeDisabledTargets,
+    request.smartApply
+  );
   result.selectedTargetCount = selected.targets.length;
   result.selectedPropertyCount = selected.targets.length;
   result.skippedDisabledCount = selected.skippedDisabledCount;
