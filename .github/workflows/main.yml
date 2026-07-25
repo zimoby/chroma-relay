@@ -1,48 +1,44 @@
-name: ZXP Release
+name: Verify and Release
 
 on:
   push:
+    branches:
+      - main
     tags:
       - "*.*.*"
+  pull_request:
+  workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  build:
+  verify:
     runs-on: windows-latest
 
     strategy:
       matrix:
         node-version: [22.22.3]
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
         with:
           persist-credentials: false
       - name: Use Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v2
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node-version }}
-      # AE_NATIVE_GRADIENT_READ_TOKEN must be a fine-grained read-only Contents token scoped to zimoby/ae-native-gradient-toolkit.
       - name: Install dependencies
         shell: bash
         env:
-          AE_NATIVE_GRADIENT_READ_TOKEN: ${{ secrets.AE_NATIVE_GRADIENT_READ_TOKEN }}
-          GIT_CONFIG_COUNT: "2"
+          GIT_CONFIG_COUNT: "1"
           GIT_CONFIG_KEY_0: url.https://github.com/.insteadOf
           GIT_CONFIG_VALUE_0: ssh://git@github.com/
-          GIT_CONFIG_KEY_1: credential.helper
-          GIT_CONFIG_VALUE_1: >-
-            !f() { test "$1" = get || exit 0; printf '%s\n' 'username=x-access-token' "password=$AE_NATIVE_GRADIENT_READ_TOKEN"; }; f
         run: |
-          if [ -z "$AE_NATIVE_GRADIENT_READ_TOKEN" ]; then
-            echo "::error::AE_NATIVE_GRADIENT_READ_TOKEN is required for the private Git dependency" >&2
-            exit 1
-          fi
           npm ci
       - name: Verify static contract
         run: npm run verify:static
       - name: Build ZXP
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         shell: bash
         env:
           ZXP_PASSWORD: ${{ secrets.ZXP_PASSWORD }}
@@ -52,14 +48,27 @@ jobs:
             exit 1
           fi
           npm run zxp
+      - name: Upload ZXP artifact
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@v4
+        with:
+          name: chroma-relay-zxp
+          path: "./dist/zxp/*"
+          if-no-files-found: error
 
+  release:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download ZXP artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: chroma-relay-zxp
+          path: ./dist/zxp
       - name: GitHub Release
-        uses: softprops/action-gh-release@v1
-        if: startsWith(github.ref, 'refs/tags/')
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          SOURCE_NAME: ${{ steps.extract_names.outputs.SOURCE_NAME }}
-          SOURCE_BRANCH: ${{ steps.extract_names.outputs.SOURCE_BRANCH }}
-          SOURCE_TAG: ${{ steps.extract_names.outputs.SOURCE_TAG }}
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           files: "./dist/zxp/*"

@@ -32,13 +32,13 @@ Collecting an exact native gradient requires a clean saved project and stable de
 - CEP 9 or later with Chrome 74-compatible output
 - Node.js 22.x and npm 10.x for development
 - Local After Effects for runtime testing
-- GitHub access to the private, immutable `@zimoby/ae-native-gradient` dependency
+- Network access to install the public, commit-pinned [`@zimoby/ae-native-gradient`](https://github.com/zimoby/ae-native-gradient-toolkit) dependency
 
 Native gradients are enabled on macOS and Windows for AE 22–26. Live Windows evidence currently covers AE 2024 only; static routing does not prove the other versions.
 
 ## Setup
 
-Authenticate Git before installing the private dependency. Never store access tokens in the repository or tracked npm configuration.
+Install dependencies and build the extension:
 
 ```bash
 npm ci

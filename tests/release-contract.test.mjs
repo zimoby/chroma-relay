@@ -55,6 +55,42 @@ test("tag workflow verifies static input and scans the actual ZXP build before p
   assert.ok(verifyIndex >= 0, "workflow must run verify:static");
   assert.ok(buildIndex > verifyIndex, "ZXP build must follow static verification");
   assert.ok(releaseIndex > buildIndex, "release upload must follow the ZXP build");
+  assert.match(workflow, /^  pull_request:\r?$/m);
+  assert.match(workflow, /^  workflow_dispatch:\r?$/m);
+  assert.match(workflow, /^  contents: read\r?$/m);
+  const tagPushGuard = "github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')";
+  const buildStep = workflow.match(
+    /^      - name: Build ZXP\r?\n((?: {8,}.*(?:\r?\n|$))+)/m,
+  )?.[0];
+  const uploadStep = workflow.match(
+    /^      - name: Upload ZXP artifact\r?\n((?: {8,}.*(?:\r?\n|$))+)/m,
+  )?.[0];
+  const downloadStep = workflow.match(
+    /^      - name: Download ZXP artifact\r?\n((?: {8,}.*(?:\r?\n|$))+)/m,
+  )?.[0];
+  const releaseStep = workflow.match(
+    /^      - name: GitHub Release\r?\n((?: {8,}.*(?:\r?\n|$))+)/m,
+  )?.[0];
+  assert.ok(buildStep, "expected one bounded ZXP build step");
+  assert.ok(uploadStep, "expected one bounded ZXP upload step");
+  assert.ok(downloadStep, "expected one bounded ZXP download step");
+  assert.ok(releaseStep, "expected one bounded GitHub Release step");
+  assert.match(buildStep, new RegExp(`^        if: ${tagPushGuard.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\r?$`, "m"));
+  assert.match(uploadStep, new RegExp(`^        if: ${tagPushGuard.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\r?$`, "m"));
+  assert.match(uploadStep, /^        uses: actions\/upload-artifact@v4\r?$/m);
+  assert.match(uploadStep, /^          name: chroma-relay-zxp\r?$/m);
+  assert.match(uploadStep, /^          path: "\.\/dist\/zxp\/\*"\r?$/m);
+  assert.match(uploadStep, /^          if-no-files-found: error\r?$/m);
+  assert.match(downloadStep, /^        uses: actions\/download-artifact@v4\r?$/m);
+  assert.match(downloadStep, /^          name: chroma-relay-zxp\r?$/m);
+  assert.match(downloadStep, /^          path: \.\/dist\/zxp\r?$/m);
+  assert.match(releaseStep, /^        uses: softprops\/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2\.6\.2\r?$/m);
+  assert.match(releaseStep, /^          files: "\.\/dist\/zxp\/\*"\r?$/m);
+  assert.match(
+    workflow,
+    /^  release:\r?\n    if: github\.event_name == 'push' && startsWith\(github\.ref, 'refs\/tags\/'\)\r?\n    needs: verify\r?$/m,
+  );
+  assert.match(workflow, /^    permissions:\r?\n      contents: write\r?$/m);
   assert.match(packageJson.scripts.zxp, /vite build --watch false && npm run check:cep$/);
 });
 

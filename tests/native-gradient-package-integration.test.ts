@@ -60,12 +60,16 @@ test("uses the approved installed package and exact immutable lock source", () =
   );
 });
 
-test("tag-release install is deterministic, Node 22 aligned, and credential safe", () => {
+test("CI install is deterministic, Node 22 aligned, public, and credential safe", () => {
   assert.match(workflow, /node-version: \[22\.22\.3\]/);
+  assert.match(workflow, /^  pull_request:\r?$/m);
+  assert.match(workflow, /^  workflow_dispatch:\r?$/m);
+  assert.match(workflow, /^      - main\r?$/m);
+  assert.match(workflow, /^  contents: read\r?$/m);
 
   const checkoutSteps = Array.from(
     workflow.matchAll(
-      /^      - uses: actions\/checkout@v2\r?\n(?:(?!^      - ).*(?:\r?\n|$))*/gm,
+      /^      - uses: actions\/checkout@v4\r?\n(?:(?!^      - ).*(?:\r?\n|$))*/gm,
     ),
     (match) => match[0],
   );
@@ -84,27 +88,11 @@ test("tag-release install is deterministic, Node 22 aligned, and credential safe
   assert.match(installStep, /^        shell: bash$/m);
   assert.match(installStep, /^        run: \|$/m);
   assert.match(installStep, /^          npm ci$/m);
-  assert.match(
-    installStep,
-    /^          AE_NATIVE_GRADIENT_READ_TOKEN: \$\{\{ secrets\.AE_NATIVE_GRADIENT_READ_TOKEN \}\}$/m,
-  );
-  assert.match(installStep, /^          GIT_CONFIG_COUNT: "2"$/m);
+  assert.match(installStep, /^          GIT_CONFIG_COUNT: "1"$/m);
   assert.match(installStep, /^          GIT_CONFIG_KEY_0: url\.https:\/\/github\.com\/\.insteadOf$/m);
   assert.match(installStep, /^          GIT_CONFIG_VALUE_0: ssh:\/\/git@github\.com\/$/m);
-  assert.match(installStep, /^          GIT_CONFIG_KEY_1: credential\.helper$/m);
-  assert.match(
-    installStep,
-    /^          GIT_CONFIG_VALUE_1: >-\r?\n            .*password=\$AE_NATIVE_GRADIENT_READ_TOKEN/m,
-  );
-  assert.match(
-    installStep,
-    /if \[ -z "\$AE_NATIVE_GRADIENT_READ_TOKEN" \]; then[\s\S]*exit 1/,
-  );
-  assert.equal(
-    workflow.match(/secrets\.AE_NATIVE_GRADIENT_READ_TOKEN/g)?.length,
-    1,
-    "the read token secret must only be injected into the install step",
-  );
+  assert.doesNotMatch(installStep, /credential\.helper|password=|secrets\./);
+  assert.doesNotMatch(workflow, /AE_NATIVE_GRADIENT_READ_TOKEN|private Git dependency/);
   assert.doesNotMatch(workflow, /npm i --legacy-peer-deps/);
 });
 
