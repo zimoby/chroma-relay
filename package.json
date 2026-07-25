@@ -47,7 +47,7 @@
     "delsymlink": "cross-env BOLT_ACTION=delsymlink vite"
   },
   "dependencies": {
-    "@zimoby/ae-native-gradient": "git+https://github.com/zimoby/ae-native-gradient-toolkit.git#04144bea5f16e8b2dc2355b72f315f810c3f97e1",
+    "@zimoby/ae-native-gradient": "git+https://github.com/zimoby/ae-native-gradient-toolkit.git#856727fe2b3342d4ee6ade68b7afc8f2db6e3dfa",
     "image-q": "4.0.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"

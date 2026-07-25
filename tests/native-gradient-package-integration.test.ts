@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 
 const PACKAGE_NAME = "@zimoby/ae-native-gradient";
 const PACKAGE_VERSION = "0.1.0";
-const APPROVED_SHA = "04144bea5f16e8b2dc2355b72f315f810c3f97e1";
+const APPROVED_SHA = "856727fe2b3342d4ee6ade68b7afc8f2db6e3dfa";
 const APPROVED_SOURCE = `git+https://github.com/zimoby/ae-native-gradient-toolkit.git#${APPROVED_SHA}`;
 const REPO_ROOT = fileURLToPath(new URL("../", import.meta.url));
 
@@ -36,6 +36,10 @@ const templatePaths = {
 test("uses the approved installed package and exact immutable lock source", () => {
   assert.equal(installedPackage.name, PACKAGE_NAME);
   assert.equal(installedPackage.version, PACKAGE_VERSION);
+  assert.equal("private" in installedPackage, false);
+  assert.equal(installedPackage.license, "MIT");
+  const installedLicense = readFileSync(join(dirname(installedPackageJsonPath), "LICENSE"), "utf8");
+  assert.equal(installedLicense.startsWith("MIT License\n\nCopyright (c) 2026 Zimoby\n"), true);
 
   const manifestDependencies = rootPackage.dependencies as Record<string, string>;
   assert.equal(manifestDependencies[PACKAGE_NAME], APPROVED_SOURCE);
@@ -44,6 +48,8 @@ test("uses the approved installed package and exact immutable lock source", () =
   assert.equal(rootDependencies[PACKAGE_NAME], APPROVED_SOURCE);
 
   assert.equal(installedLockEntry.version, PACKAGE_VERSION);
+  assert.equal(installedLockEntry.license, "MIT");
+  assert.match(String(installedLockEntry.integrity), /^sha512-[A-Za-z0-9+/]+={0,2}$/);
   const resolved = installedLockEntry.resolved;
   assert.equal(typeof resolved, "string");
   assert.match(
