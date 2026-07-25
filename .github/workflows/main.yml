@@ -20,11 +20,11 @@ jobs:
       matrix:
         node-version: [22.22.3]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
           persist-credentials: false
       - name: Use Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: ${{ matrix.node-version }}
       - name: Install dependencies
@@ -50,7 +50,7 @@ jobs:
           npm run zxp
       - name: Upload ZXP artifact
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: chroma-relay-zxp
           path: "./dist/zxp/*"
@@ -64,7 +64,7 @@ jobs:
       contents: write
     steps:
       - name: Download ZXP artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
           name: chroma-relay-zxp
           path: ./dist/zxp

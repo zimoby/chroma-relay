@@ -69,7 +69,7 @@ test("CI install is deterministic, Node 22 aligned, public, and credential safe"
 
   const checkoutSteps = Array.from(
     workflow.matchAll(
-      /^      - uses: actions\/checkout@v4\r?\n(?:(?!^      - ).*(?:\r?\n|$))*/gm,
+      /^      - uses: actions\/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5\.1\.0\r?\n(?:(?!^      - ).*(?:\r?\n|$))*/gm,
     ),
     (match) => match[0],
   );
@@ -80,6 +80,10 @@ test("CI install is deterministic, Node 22 aligned, public, and credential safe"
   )?.[0];
   assert.ok(checkoutWithBlock, "expected one checkout with block");
   assert.match(checkoutWithBlock, /^          persist-credentials: false\r?$/m);
+  assert.match(
+    workflow,
+    /^        uses: actions\/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5\.0\.0\r?$/m,
+  );
 
   const installStep = workflow.match(
     /^      - name: Install dependencies\r?\n((?: {8,}.*(?:\r?\n|$))+)/m,

@@ -77,11 +77,11 @@ test("tag workflow verifies static input and scans the actual ZXP build before p
   assert.ok(releaseStep, "expected one bounded GitHub Release step");
   assert.match(buildStep, new RegExp(`^        if: ${tagPushGuard.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\r?$`, "m"));
   assert.match(uploadStep, new RegExp(`^        if: ${tagPushGuard.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\r?$`, "m"));
-  assert.match(uploadStep, /^        uses: actions\/upload-artifact@v4\r?$/m);
+  assert.match(uploadStep, /^        uses: actions\/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5\.0\.0\r?$/m);
   assert.match(uploadStep, /^          name: chroma-relay-zxp\r?$/m);
   assert.match(uploadStep, /^          path: "\.\/dist\/zxp\/\*"\r?$/m);
   assert.match(uploadStep, /^          if-no-files-found: error\r?$/m);
-  assert.match(downloadStep, /^        uses: actions\/download-artifact@v4\r?$/m);
+  assert.match(downloadStep, /^        uses: actions\/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5\.0\.0\r?$/m);
   assert.match(downloadStep, /^          name: chroma-relay-zxp\r?$/m);
   assert.match(downloadStep, /^          path: \.\/dist\/zxp\r?$/m);
   assert.match(releaseStep, /^        uses: softprops\/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2\.6\.2\r?$/m);
