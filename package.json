@@ -2,6 +2,8 @@
   "name": "com.zimoby.chroma-relay",
   "private": true,
   "version": "0.0.1",
+  "description": "A compact After Effects palette for exact colors and native gradients.",
+  "license": "MIT",
   "type": "module",
   "packageManager": "npm@10.9.8",
   "engines": {
