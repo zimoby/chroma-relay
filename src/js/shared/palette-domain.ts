@@ -59,7 +59,7 @@ export type PaletteCollectionEntry = {
 
 export type PaletteCollectionItem =
   | ({ type: "color" } & PaletteCollectionEntry)
-  | { type: "gradient"; gradient: NativeGradient };
+  | { type: "gradient"; gradient: NativeGradient; preserveDuplicate: boolean };
 
 const ENTITY_ID = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const DEFAULT_PALETTE_ID = "palette-default";
@@ -276,6 +276,9 @@ const paletteColorEqual = (left: PaletteColor, right: PaletteColor) =>
   left.id === right.id &&
   rgbaEqual(left.rgba, right.rgba, 0) &&
   JSON.stringify(left.gradient ?? null) === JSON.stringify(right.gradient ?? null);
+
+const paletteGradientEqual = (left: NativeGradient, right: NativeGradient) =>
+  JSON.stringify(left) === JSON.stringify(right);
 
 const clamp01 = (value: number) => Math.max(0, Math.min(1, value));
 
@@ -515,10 +518,25 @@ export const addPaletteCollectionItems = (
   let changed = false;
   for (let index = 0; index < items.length; index += 1) {
     const item = items[index];
-    if (!item || (item.type !== "color" && item.type !== "gradient")) return document;
+    if (
+      !item ||
+      (item.type !== "color" && item.type !== "gradient") ||
+      typeof item.preserveDuplicate !== "boolean"
+    ) {
+      return document;
+    }
     if (item.type === "gradient") {
       const gradient = normalizeGradient(item.gradient);
-      if (!gradient || colors.length >= MAX_PALETTE_COLORS) return document;
+      if (!gradient) return document;
+      if (
+        !item.preserveDuplicate &&
+        colors.some(
+          (color) => isPaletteGradient(color) && paletteGradientEqual(color.gradient, gradient)
+        )
+      ) {
+        continue;
+      }
+      if (colors.length >= MAX_PALETTE_COLORS) return document;
       const firstColor = gradient.colorStops[0];
       colors.push({
         id: nextColorId(document, colors, index),
@@ -533,7 +551,7 @@ export const addPaletteCollectionItems = (
       changed = true;
       continue;
     }
-    if (!isRgba(item.rgba) || typeof item.preserveDuplicate !== "boolean") return document;
+    if (!isRgba(item.rgba)) return document;
     if (
       !item.preserveDuplicate &&
       colors.some(
@@ -571,7 +589,10 @@ export const addPaletteGradients = (
   Array.isArray(values) && values.length > 0
     ? addPaletteCollectionItems(
         document,
-        values.map((gradient) => ({ type: "gradient", gradient } as PaletteCollectionItem))
+        values.map(
+          (gradient) =>
+            ({ type: "gradient", gradient, preserveDuplicate: true }) as PaletteCollectionItem
+        )
       )
     : document;
 

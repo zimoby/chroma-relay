@@ -26,6 +26,12 @@ Collection is read-only, deterministic across multiple selected layers, and skip
 
 Collecting an exact native gradient requires a clean saved project and stable descriptor identity. Applying a stored gradient fails closed on ambiguity, but supports dirty or unsaved projects when targets are static, unlocked, and exactly resolvable.
 
+After Effects omits untouched default gradient colors from saved project data. Chroma Relay materializes AE's canonical opaque white-to-black default ramp for those implicit Fill and Stroke gradients; edited gradients continue to use exact serialized stop data.
+
+Parsed gradients are kept together as gradient slots by default. Choose **Color stops** in Settings → Collection when each stop should be added as a separate palette color instead.
+
+Duplicate colors and exact-equal gradients are united into one palette button by default. Disable **Unite duplicates** in Settings → Collection when every selected occurrence and repeated Add action should be preserved.
+
 ## Requirements
 
 - After Effects 2022 / AEFT 22.0 or later

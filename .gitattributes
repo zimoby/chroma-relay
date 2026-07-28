@@ -6,4 +6,5 @@ package-lock.json text eol=lf
 src/js/main/index-react.tsx text eol=lf
 src/js/main/index.html text eol=lf
 src/js/main/main.tsx text eol=lf
+src/jsx/aeft/aeft.ts whitespace=cr-at-eol
 src/shared/shared.ts text eol=lf

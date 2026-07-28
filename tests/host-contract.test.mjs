@@ -14,6 +14,7 @@ const createHostModuleLoader = (sandboxGlobals) => {
     "./native-gradient-apply": "src/jsx/aeft/native-gradient-apply.ts",
     "./native-gradient-target": "src/jsx/aeft/native-gradient-target.ts",
     "./selection-scope": "src/jsx/aeft/selection-scope.ts",
+    "./collection-status": "src/js/shared/collection-status.ts",
     "../../js/shared/native-gradient-contract.ts": "src/js/shared/native-gradient-contract.ts",
   };
   const cache = {};
@@ -1509,6 +1510,158 @@ test("palette add selection preserves mixed traversal order and fails closed on 
   assert.deepEqual(dirty.nativeGradients, { status: "invalid", descriptors: [] });
 });
 
+test("palette add keeps duplicate solid occurrences in ordered entries while sharing one value", async () => {
+  const { host, values, leaf, makeLayer, makeComp, setProject } = await loadAeftHost();
+  const rgba = [0.2, 0.4, 0.6, 1];
+  const fill = leaf("ADBE Vector Fill Color", values.COLOR, rgba);
+  const stroke = leaf("ADBE Vector Stroke Color", values.COLOR, rgba.slice());
+  const layer = makeLayer([fill, stroke], 2004, 1);
+  layer.selectedProperties = [];
+  setProject(makeComp([layer], 1004));
+
+  const result = JSON.parse(JSON.stringify(host.resolvePaletteAddSelection(true)));
+  assert.deepEqual(result.colors.colors, [rgba]);
+  assert.deepEqual(result.colors.entries, [
+    { type: "solid", colorIndex: 0 },
+    { type: "solid", colorIndex: 0 },
+  ]);
+});
+
+test("palette add materializes implicit default gradients without blocking serialized gradients or solids", async () => {
+  const { host, values, leaf, group, makeLayer, makeComp, setProject } = await loadAeftHost();
+  const firstColor = leaf("ADBE Vector Fill Color", values.COLOR, [0.1, 0.2, 0.3, 1]);
+  const defaultPayload = leaf("ADBE Vector Grad Colors", values.CUSTOM_VALUE, null);
+  defaultPayload.isModified = false;
+  const defaultFill = group("ADBE Vector Graphic - G-Fill", [defaultPayload]);
+  const serializedPayload = leaf("ADBE Vector Grad Colors", values.CUSTOM_VALUE, null);
+  serializedPayload.isModified = true;
+  const serializedFill = group("ADBE Vector Graphic - G-Fill", [serializedPayload]);
+  const lastColor = leaf("ADBE Vector Stroke Color", values.COLOR, [0.7, 0.8, 0.9, 1]);
+  const layer = makeLayer([firstColor, defaultFill, serializedFill, lastColor], 2002, 1);
+  layer.selectedProperties = [];
+  setProject(makeComp([layer], 1002));
+
+  const mixed = JSON.parse(JSON.stringify(host.resolvePaletteAddSelection(true)));
+  assert.deepEqual(mixed.colors.colors, [
+    [0.1, 0.2, 0.3, 1],
+    [0.7, 0.8, 0.9, 1],
+  ]);
+  assert.deepEqual(
+    mixed.colors.entries.map(({ targetKey: _targetKey, ...entry }) => entry),
+    [
+      { type: "solid", colorIndex: 0 },
+      { type: "implicit-gradient" },
+      { type: "native-gradient", gradientIndex: 0 },
+      { type: "solid", colorIndex: 1 },
+    ]
+  );
+  assert.equal(mixed.colors.unsupportedGradientCount, 1);
+  assert.equal(mixed.colors.unmodifiedGradientCount, 1);
+  assert.equal(mixed.nativeGradients.status, "ok");
+  assert.equal(mixed.nativeGradients.descriptors.length, 1);
+  assert.equal(mixed.colors.entries[2].targetKey, mixed.nativeGradients.descriptors[0].targetKey);
+  assert.deepEqual(Array.from(mixed.nativeGradients.descriptors[0].propertyIndexPath), [3, 1]);
+
+  layer.selectedProperties = [defaultPayload];
+  const exactDefault = JSON.parse(JSON.stringify(host.resolvePaletteAddSelection(true)));
+  assert.equal(exactDefault.colors.status, "ok");
+  assert.deepEqual(exactDefault.colors.colors, []);
+  assert.deepEqual(exactDefault.colors.entries, [{ type: "implicit-gradient" }]);
+  assert.equal(exactDefault.colors.unsupportedGradientCount, 0);
+  assert.equal(exactDefault.colors.unmodifiedGradientCount, 1);
+  assert.deepEqual(exactDefault.nativeGradients, { status: "none", descriptors: [] });
+});
+
+test("palette add preserves four distinct implicit Fill and Stroke defaults as ordered gradient entries", async () => {
+  const { host, values, leaf, group, makeLayer, makeComp, setProject } = await loadAeftHost();
+  const implicitParents = Array.from({ length: 4 }, (_, index) => {
+    const payload = leaf("ADBE Vector Grad Colors", values.CUSTOM_VALUE, null);
+    payload.isModified = false;
+    return group(
+      index % 2 === 0 ? "ADBE Vector Graphic - G-Fill" : "ADBE Vector Graphic - G-Stroke",
+      [payload],
+    );
+  });
+  const layer = makeLayer(implicitParents, 2003, 1);
+  layer.selectedProperties = [];
+  setProject(makeComp([layer], 1003));
+
+  const selection = JSON.parse(JSON.stringify(host.resolvePaletteAddSelection(true)));
+  assert.equal(selection.colors.status, "ok");
+  assert.equal(selection.colors.unmodifiedGradientCount, 4);
+  assert.equal(selection.colors.unsupportedGradientCount, 0);
+  assert.deepEqual(selection.colors.entries, Array.from(
+    { length: 4 },
+    () => ({ type: "implicit-gradient" }),
+  ));
+  assert.deepEqual(selection.nativeGradients, { status: "none", descriptors: [] });
+});
+
+test("palette add retains throwing and unknown isModified states as serialized candidates", async () => {
+  const { host, values, leaf, group, makeLayer, makeComp, setProject } = await loadAeftHost();
+  const firstColor = leaf("ADBE Vector Fill Color", values.COLOR, [0.2, 0.3, 0.4, 1]);
+  const throwingPayload = leaf("ADBE Vector Grad Colors", values.CUSTOM_VALUE, null);
+  Object.defineProperty(throwingPayload, "isModified", {
+    configurable: true,
+    get: () => { throw new Error("unreadable isModified"); },
+  });
+  const unknownPayload = leaf("ADBE Vector Grad Colors", values.CUSTOM_VALUE, null);
+  const layer = makeLayer([
+    firstColor,
+    group("ADBE Vector Graphic - G-Fill", [throwingPayload]),
+    group("ADBE Vector Graphic - G-Stroke", [unknownPayload]),
+  ], 2004, 1);
+  layer.selectedProperties = [];
+  setProject(makeComp([layer], 1004));
+
+  const selection = JSON.parse(JSON.stringify(host.resolvePaletteAddSelection(true)));
+  assert.equal(selection.colors.status, "ok");
+  assert.equal(selection.colors.readErrorCount, 0);
+  assert.equal(selection.colors.unmodifiedGradientCount, 0);
+  assert.equal(selection.colors.unsupportedGradientCount, 2);
+  assert.deepEqual(
+    selection.colors.entries.map(({ targetKey: _targetKey, ...entry }) => entry),
+    [
+      { type: "solid", colorIndex: 0 },
+      { type: "native-gradient", gradientIndex: 0 },
+      { type: "native-gradient", gradientIndex: 1 },
+    ],
+  );
+  assert.equal(selection.nativeGradients.status, "ok");
+  assert.equal(selection.nativeGradients.descriptors.length, 2);
+});
+
+test("collection status distinguishes disabled capacity from enabled duplicate-or-capacity no-ops", () => {
+  const status = createHostModuleLoader({})("./collection-status");
+  const baseMessage = "Selected colors are already in the palette";
+
+  assert.equal(
+    status.appendCollectionSkipMessage(baseMessage, 2),
+    "Selected colors are already in the palette; Skipped 2 unsupported"
+  );
+  assert.equal(status.appendCollectionSkipMessage(baseMessage, 0), baseMessage);
+  assert.equal(
+    status.collectionUnchangedMessage(null, true, true),
+    "Palette does not have room for all selected items",
+  );
+  assert.equal(
+    status.collectionUnchangedMessage(null, true, false),
+    "Palette does not have room for all selected gradient stops",
+  );
+  assert.equal(
+    status.collectionUnchangedMessage(null, false, true),
+    "Palette does not have room for all selected colors",
+  );
+  assert.equal(
+    status.collectionUnchangedMessage("selected.png", false, true),
+    "Palette does not have room for all colors from selected.png",
+  );
+  assert.equal(
+    status.collectionUnchangedMessage(null, true, true, true),
+    "No items added; matching items may already exist or the palette may not have enough room",
+  );
+});
+
 test("selected native gradient descriptors execute exact path and fail-closed contracts", async () => {
   const { host, values, leaf, group, makeLayer, makeComp, setProject } = await loadAeftHost();
   const payload = leaf("ADBE Vector Grad Colors", values.CUSTOM_VALUE, null);
@@ -2068,6 +2221,7 @@ test("General settings use compact grouped rows with descriptions and an iOS-sty
   assert.match(settings, /className="setting-description"/);
   assert.match(settings, /className="toggle-track"/);
   assert.match(settings, /data-testid="include-disabled-colors"/);
+  assert.match(settings, /data-testid="unite-duplicates"/);
   assert.match(settings, /data-testid="smart-apply"/);
   assert.match(settings, /data-testid=\{`gradient-collection-\$\{mode\}`\}/);
   assert.match(settings, /data-testid=\{`extraction-\$\{preset\}`\}/);
@@ -2175,10 +2329,42 @@ test("Main and Settings expose the requested compact interaction contracts", asy
   assert.match(mainStyles, /width:\s*var\(--cp-swatch-size\)/);
   assert.match(layoutSettings, /migrateLayoutSettings/);
   assert.match(layoutDomain, /includeDisabledColors:\s*boolean/);
-  assert.match(layoutDomain, /LAYOUT_SETTINGS_SCHEMA_VERSION = 5/);
+  assert.match(layoutDomain, /LAYOUT_SETTINGS_SCHEMA_VERSION = 6/);
   assert.match(layoutDomain, /gradientCollectionMode:\s*GradientCollectionMode/);
   assert.match(layoutDomain, /smartApply:\s*boolean/);
+  assert.match(layoutDomain, /uniteDuplicates:\s*boolean/);
   assert.match(layoutDomain, /extractionPreset:\s*ExtractionPreset/);
+  assert.equal(
+    main.match(/preserveDuplicate:\s*!layoutSettings\.uniteDuplicates/g)?.length,
+    4,
+  );
+  assert.match(
+    main,
+    /extraction\.colors\.map[\s\S]*preserveDuplicate:\s*!layoutSettings\.uniteDuplicates/,
+  );
+  assert.match(
+    main,
+    /solidItem:[\s\S]*preserveDuplicate:\s*!layoutSettings\.uniteDuplicates/,
+  );
+  assert.match(
+    main,
+    /type: "gradient",[\s\S]*preserveDuplicate:\s*!layoutSettings\.uniteDuplicates/,
+  );
+  assert.match(
+    main,
+    /nativeGradientToPaletteColors[\s\S]*preserveDuplicate:\s*!layoutSettings\.uniteDuplicates/,
+  );
+  assert.match(
+    settings,
+    /checked=\{settings\.uniteDuplicates\}[\s\S]*commitSettings\(\{ uniteDuplicates: event\.currentTarget\.checked \}\)/,
+  );
+  assert.match(
+    settings,
+    /saveLayoutSettings\(next, configRoot\)[\s\S]*dispatchLayoutSettings\(next\)[\s\S]*setSettings\(next\)/,
+  );
+  assert.match(layoutSettings, /csi\.dispatchEvent\(event\)/);
+  assert.match(main, /incoming\.revision <= current\.revision/);
+  assert.match(main, /listenForLayoutSettings\(applyIncomingSettings\)/);
   assert.match(imageDomain, /neuquant-float/);
   assert.match(imageDomain, /rgbquant/);
   assert.match(imageDomain, /fallbackUsed/);
@@ -2261,7 +2447,20 @@ test("Main and Settings show status notifications only for negative outcomes", a
     main,
     /setLastResult\(nativeGradientReportNeedsAttention\(report\) \? message : null\)/
   );
-  assert.match(main, /setLastResult\(skipped > 0 \? `Skipped \$\{skipped\} unsupported` : null\)/);
+  assert.match(
+    main,
+    /setLastResult\(collectionSkipMessage\(skipped\)\)/
+  );
+  assert.match(main, /implicitGradient: createImplicitDefaultNativeGradient/);
+  assert.match(
+    main,
+    /const hasGradientSelection = selection\.colors\.entries\.some\([\s\S]*entry\.type === "implicit-gradient"/,
+  );
+  assert.match(main, /const unchangedMessage = collectionUnchangedMessage\(/);
+  assert.match(
+    main,
+    /appendCollectionSkipMessage\(\s*unchangedMessage,\s*skipped/
+  );
 
   assert.match(settings, /setStatus\(result\.ok \? null : result\.message\)/);
   assert.match(settings, /setStatus\(loaded\.error\)/);

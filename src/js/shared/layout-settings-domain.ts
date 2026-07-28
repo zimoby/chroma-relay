@@ -1,7 +1,7 @@
 import contract from "../../shared/product-contract.json" with { type: "json" };
 
-// LAYOUT_SETTINGS_SCHEMA_VERSION = 5 is supplied by product-contract.json.
-export const LAYOUT_SETTINGS_SCHEMA_VERSION = contract.schemas.settings as 5;
+// LAYOUT_SETTINGS_SCHEMA_VERSION = 6 is supplied by product-contract.json.
+export const LAYOUT_SETTINGS_SCHEMA_VERSION = contract.schemas.settings as 6;
 export const MIN_SWATCH_SIZE = 24;
 export const MAX_SWATCH_SIZE = 64;
 
@@ -18,6 +18,7 @@ export type LayoutSettings = {
   extractionPreset: ExtractionPreset;
   gradientCollectionMode: GradientCollectionMode;
   smartApply: boolean;
+  uniteDuplicates: boolean;
 };
 
 type LayoutSettingsV1 = Omit<
@@ -27,26 +28,38 @@ type LayoutSettingsV1 = Omit<
   | "extractionPreset"
   | "gradientCollectionMode"
   | "smartApply"
+  | "uniteDuplicates"
 > & {
   schemaVersion: 1;
 };
 
 type LayoutSettingsV2 = Omit<
   LayoutSettings,
-  "schemaVersion" | "extractionPreset" | "gradientCollectionMode" | "smartApply"
+  | "schemaVersion"
+  | "extractionPreset"
+  | "gradientCollectionMode"
+  | "smartApply"
+  | "uniteDuplicates"
 > & {
   schemaVersion: 2;
 };
 
 type LayoutSettingsV3 = Omit<
   LayoutSettings,
-  "schemaVersion" | "gradientCollectionMode" | "smartApply"
+  "schemaVersion" | "gradientCollectionMode" | "smartApply" | "uniteDuplicates"
 > & {
   schemaVersion: 3;
 };
 
-type LayoutSettingsV4 = Omit<LayoutSettings, "schemaVersion" | "smartApply"> & {
+type LayoutSettingsV4 = Omit<
+  LayoutSettings,
+  "schemaVersion" | "smartApply" | "uniteDuplicates"
+> & {
   schemaVersion: 4;
+};
+
+type LayoutSettingsV5 = Omit<LayoutSettings, "schemaVersion" | "uniteDuplicates"> & {
+  schemaVersion: 5;
 };
 
 export const DEFAULT_LAYOUT_SETTINGS: LayoutSettings = {
@@ -56,8 +69,9 @@ export const DEFAULT_LAYOUT_SETTINGS: LayoutSettings = {
   swatchSize: 32,
   includeDisabledColors: false,
   extractionPreset: "balanced",
-  gradientCollectionMode: "color-stops",
+  gradientCollectionMode: "gradient-slot",
   smartApply: true,
+  uniteDuplicates: true,
 };
 
 export const clampSwatchSize = (value: number) =>
@@ -120,6 +134,18 @@ const isLayoutSettingsV4 = (value: unknown): value is LayoutSettingsV4 => {
   );
 };
 
+const isLayoutSettingsV5 = (value: unknown): value is LayoutSettingsV5 => {
+  if (!hasValidBaseSettings(value)) return false;
+  const settings = value as Partial<LayoutSettingsV5>;
+  return (
+    settings.schemaVersion === 5 &&
+    typeof settings.includeDisabledColors === "boolean" &&
+    isExtractionPreset(settings.extractionPreset) &&
+    isGradientCollectionMode(settings.gradientCollectionMode) &&
+    typeof settings.smartApply === "boolean"
+  );
+};
+
 export const isLayoutSettings = (value: unknown): value is LayoutSettings => {
   if (!hasValidBaseSettings(value)) return false;
   const settings = value as Partial<LayoutSettings>;
@@ -128,17 +154,26 @@ export const isLayoutSettings = (value: unknown): value is LayoutSettings => {
     typeof settings.includeDisabledColors === "boolean" &&
     isExtractionPreset(settings.extractionPreset) &&
     isGradientCollectionMode(settings.gradientCollectionMode) &&
-    typeof settings.smartApply === "boolean"
+    typeof settings.smartApply === "boolean" &&
+    typeof settings.uniteDuplicates === "boolean"
   );
 };
 
 export const migrateLayoutSettings = (value: unknown): LayoutSettings | null => {
   if (isLayoutSettings(value)) return { ...value };
+  if (isLayoutSettingsV5(value)) {
+    return {
+      ...value,
+      schemaVersion: LAYOUT_SETTINGS_SCHEMA_VERSION,
+      uniteDuplicates: DEFAULT_LAYOUT_SETTINGS.uniteDuplicates,
+    };
+  }
   if (isLayoutSettingsV4(value)) {
     return {
       ...value,
       schemaVersion: LAYOUT_SETTINGS_SCHEMA_VERSION,
       smartApply: DEFAULT_LAYOUT_SETTINGS.smartApply,
+      uniteDuplicates: DEFAULT_LAYOUT_SETTINGS.uniteDuplicates,
     };
   }
   if (isLayoutSettingsV3(value)) {
@@ -147,6 +182,7 @@ export const migrateLayoutSettings = (value: unknown): LayoutSettings | null => 
       schemaVersion: LAYOUT_SETTINGS_SCHEMA_VERSION,
       gradientCollectionMode: DEFAULT_LAYOUT_SETTINGS.gradientCollectionMode,
       smartApply: DEFAULT_LAYOUT_SETTINGS.smartApply,
+      uniteDuplicates: DEFAULT_LAYOUT_SETTINGS.uniteDuplicates,
     };
   }
   if (isLayoutSettingsV2(value)) {
@@ -156,6 +192,7 @@ export const migrateLayoutSettings = (value: unknown): LayoutSettings | null => 
       extractionPreset: DEFAULT_LAYOUT_SETTINGS.extractionPreset,
       gradientCollectionMode: DEFAULT_LAYOUT_SETTINGS.gradientCollectionMode,
       smartApply: DEFAULT_LAYOUT_SETTINGS.smartApply,
+      uniteDuplicates: DEFAULT_LAYOUT_SETTINGS.uniteDuplicates,
     };
   }
   if (isLayoutSettingsV1(value)) {
@@ -166,6 +203,7 @@ export const migrateLayoutSettings = (value: unknown): LayoutSettings | null => 
       extractionPreset: DEFAULT_LAYOUT_SETTINGS.extractionPreset,
       gradientCollectionMode: DEFAULT_LAYOUT_SETTINGS.gradientCollectionMode,
       smartApply: DEFAULT_LAYOUT_SETTINGS.smartApply,
+      uniteDuplicates: DEFAULT_LAYOUT_SETTINGS.uniteDuplicates,
     };
   }
   return null;

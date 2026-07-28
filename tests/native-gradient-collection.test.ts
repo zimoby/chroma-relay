@@ -18,6 +18,7 @@ const {
   alphaAtGradientOffset,
   collectNativeGradientColorsFromProject,
   collectNativeGradientsFromProject,
+  createImplicitDefaultNativeGradient,
   nativeGradientToPaletteColors,
 } = await import("../src/js/shared/native-gradient-collection.ts");
 
@@ -28,6 +29,20 @@ const gradient = (
   schemaVersion: 1,
   colorStops,
   alphaStops,
+});
+
+test("materializes the owned AE implicit Fill and Stroke default gradient exactly", () => {
+  assert.deepEqual(createImplicitDefaultNativeGradient(), {
+    schemaVersion: 1,
+    colorStops: [
+      { offset: 0, midpoint: 0.5, rgb: [1, 1, 1], extra: 1 },
+      { offset: 1, midpoint: 0.5, rgb: [0, 0, 0], extra: 1 },
+    ],
+    alphaStops: [
+      { offset: 0, midpoint: 0.5, alpha: 1 },
+      { offset: 1, midpoint: 0.5, alpha: 1 },
+    ],
+  });
 });
 
 test("converts every ordered color stop with float32 RGB and linear endpoint alpha", () => {

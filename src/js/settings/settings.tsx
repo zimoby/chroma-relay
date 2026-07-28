@@ -316,6 +316,7 @@ export const App = () => {
         | "extractionPreset"
         | "gradientCollectionMode"
         | "smartApply"
+        | "uniteDuplicates"
       >
     >
   ) => {
@@ -1141,6 +1142,28 @@ export const App = () => {
                     ))}
                   </div>
                 </div>
+                <label className="settings-item settings-toggle-row">
+                  <span className="setting-copy">
+                    <span className="setting-title">Unite duplicates</span>
+                    <span className="setting-description">
+                      Keep one button for matching colors and exact gradients.
+                    </span>
+                  </span>
+                  <span className="settings-item-control toggle-control">
+                    <input
+                      aria-label="Unite duplicate colors and exact gradients"
+                      checked={settings.uniteDuplicates}
+                      data-testid="unite-duplicates"
+                      onChange={(event) =>
+                        commitSettings({ uniteDuplicates: event.currentTarget.checked })
+                      }
+                      type="checkbox"
+                    />
+                    <span aria-hidden="true" className="toggle-track">
+                      <span className="toggle-thumb" />
+                    </span>
+                  </span>
+                </label>
                 <label className="settings-item settings-toggle-row">
                   <span className="setting-copy">
                     <span className="setting-title">Include disabled items</span>

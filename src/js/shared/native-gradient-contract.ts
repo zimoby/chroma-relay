@@ -176,8 +176,10 @@ export const resolveNativeGradientCollectionDecision = (
   nativeSelectionStatus: "none" | "ok" | "invalid",
   nativeEntryCount: number,
   runtime: NativeGradientRuntimeDecision | NativeGradientCollectionRuntimeDecision,
+  gradientEntryCount = nativeEntryCount,
 ): NativeGradientCollectionDecision => {
   const hasNativeEntries = nativeEntryCount > 0;
+  const hasGradientEntries = gradientEntryCount > 0;
   if (nativeSelectionStatus === "invalid" && hasNativeEntries) {
     return {
       allowed: false,
@@ -186,7 +188,7 @@ export const resolveNativeGradientCollectionDecision = (
       reason: "invalid-selection",
     };
   }
-  if (hasNativeEntries && !runtime.supported) {
+  if (hasGradientEntries && !runtime.supported) {
     return {
       allowed: false,
       parseNativeGradients: false,
@@ -204,6 +206,7 @@ export const resolveNativeGradientCollectionDecision = (
 
 export type NativeGradientCollectionEntry =
   | Readonly<{ type: "solid"; colorIndex: number }>
+  | Readonly<{ type: "implicit-gradient" }>
   | Readonly<{ type: "native-gradient"; gradientIndex: number }>;
 
 export type NativeGradientCollectionExecutionResult<Gradient, Item, Document> = Readonly<{
@@ -218,6 +221,7 @@ export type NativeGradientCollectionExecutionResult<Gradient, Item, Document> = 
 
 export type NativeGradientCollectionOperations<Descriptor, Gradient, Item, Document> = Readonly<{
   nativeParser: (descriptors: readonly Descriptor[]) => readonly Gradient[];
+  implicitGradient?: () => Gradient;
   nativeTemplateReader?: () => void;
   nativeLeaseCreator?: () => void;
   solidItem: (rgba: unknown) => Item;
@@ -238,10 +242,15 @@ export const orchestrateNativeGradientCollection = async <Descriptor, Gradient, 
   }>,
   operations: NativeGradientCollectionOperations<Descriptor, Gradient, Item, Document>,
 ): Promise<NativeGradientCollectionExecutionResult<Gradient, Item, Document>> => {
+  let implicitEntryCount = 0;
+  for (let index = 0; index < input.entries.length; index += 1) {
+    if (input.entries[index].type === "implicit-gradient") implicitEntryCount += 1;
+  }
   const decision = resolveNativeGradientCollectionDecision(
     input.nativeSelectionStatus,
     input.nativeEntryCount,
     input.runtime,
+    input.nativeEntryCount + implicitEntryCount,
   );
   if (!decision.allowed) {
     return {
@@ -265,6 +274,14 @@ export const orchestrateNativeGradientCollection = async <Descriptor, Gradient, 
       const rgba = input.colors[entry.colorIndex];
       if (rgba === undefined) throw new Error("Solid color traversal index drifted");
       sourceItems.push(operations.solidItem(rgba));
+      continue;
+    }
+    if (entry.type === "implicit-gradient") {
+      if (!operations.implicitGradient) throw new Error("Implicit gradient materializer is unavailable");
+      const implicitItems = operations.gradientItems(operations.implicitGradient());
+      for (let itemIndex = 0; itemIndex < implicitItems.length; itemIndex += 1) {
+        sourceItems.push(implicitItems[itemIndex]);
+      }
       continue;
     }
     const gradient = gradients[entry.gradientIndex];

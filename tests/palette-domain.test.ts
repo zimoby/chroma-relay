@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import type { NativeGradient } from "@zimoby/ae-native-gradient";
 import {
   DEFAULT_NEW_PALETTE_COLOR,
   DEFAULT_PALETTE,
@@ -11,6 +12,7 @@ import {
   type Rgba,
   addPaletteColorToPalette,
   addPaletteCollectionEntries,
+  addPaletteCollectionItems,
   addPaletteColors,
   clonePaletteDocument,
   createPalette,
@@ -27,6 +29,18 @@ import {
   updatePaletteColor,
   updatePaletteColorInPalette,
 } from "../src/js/shared/palette-domain.ts";
+
+const DUPLICATE_TEST_GRADIENT: NativeGradient = {
+  schemaVersion: 1,
+  colorStops: [
+    { offset: 0, midpoint: 0.5, rgb: [1, 1, 1], extra: 1 },
+    { offset: 1, midpoint: 0.5, rgb: [0, 0, 0], extra: 1 },
+  ],
+  alphaStops: [
+    { offset: 0, midpoint: 0.5, alpha: 1 },
+    { offset: 1, midpoint: 0.5, alpha: 1 },
+  ],
+};
 
 const colorIds = (document: PaletteDocument) =>
   getActivePalette(document).colors.map((color) => color.id);
@@ -100,6 +114,40 @@ test("collection entries preserve gradient duplicates and reject partial capacit
     oneSlot
   );
   assert.equal(getActivePalette(oneSlot).colors.length, MAX_PALETTE_COLORS - 1);
+});
+
+test("collection duplicate policy applies equally to solids and exact gradients", () => {
+  const empty = createPalette(DEFAULT_PALETTE);
+  const solid: Rgba = [0.25, 0.5, 0.75, 1];
+  const united = addPaletteCollectionItems(empty, [
+    { type: "color", rgba: solid, preserveDuplicate: false },
+    { type: "color", rgba: solid, preserveDuplicate: false },
+    { type: "gradient", gradient: DUPLICATE_TEST_GRADIENT, preserveDuplicate: false },
+    { type: "gradient", gradient: DUPLICATE_TEST_GRADIENT, preserveDuplicate: false },
+  ]);
+  assert.equal(getActivePalette(united).colors.length, 2);
+  assert.strictEqual(
+    addPaletteCollectionItems(united, [
+      { type: "color", rgba: solid, preserveDuplicate: false },
+      { type: "gradient", gradient: DUPLICATE_TEST_GRADIENT, preserveDuplicate: false },
+    ]),
+    united,
+  );
+
+  const preserved = addPaletteCollectionItems(empty, [
+    { type: "color", rgba: solid, preserveDuplicate: true },
+    { type: "color", rgba: solid, preserveDuplicate: true },
+    { type: "gradient", gradient: DUPLICATE_TEST_GRADIENT, preserveDuplicate: true },
+    { type: "gradient", gradient: DUPLICATE_TEST_GRADIENT, preserveDuplicate: true },
+  ]);
+  assert.equal(getActivePalette(preserved).colors.length, 4);
+
+  const repeatedPreserved = addPaletteCollectionItems(preserved, [
+    { type: "color", rgba: solid, preserveDuplicate: true },
+    { type: "gradient", gradient: DUPLICATE_TEST_GRADIENT, preserveDuplicate: true },
+  ]);
+  assert.equal(getActivePalette(repeatedPreserved).colors.length, 6);
+  assert.equal(repeatedPreserved.revision, preserved.revision + 1);
 });
 
 test("migrates v1 exactly into one active Palette 1", () => {

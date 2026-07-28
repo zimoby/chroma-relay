@@ -1003,6 +1003,81 @@ test("S2 collection seam permits optimistic AE 22-26 parsing without template or
   });
 });
 
+test("S2 collection seam materializes implicit defaults without saved-AEP parsing", async () => {
+  const operations = { parser: 0, implicit: 0, paletteWriter: 0 };
+  const result = await orchestrateNativeGradientCollection({
+    nativeSelectionStatus: "none",
+    nativeEntryCount: 0,
+    runtime: resolveNativeGradientCollectionRuntime("darwin", "26.3.0"),
+    entries: [{ type: "implicit-gradient" }],
+    colors: [],
+    descriptors: [],
+    baseDocument: { revision: 0 },
+  }, {
+    nativeParser: () => {
+      operations.parser += 1;
+      return [];
+    },
+    implicitGradient: () => {
+      operations.implicit += 1;
+      return { id: "implicit-default" };
+    },
+    solidItem: (rgba) => ({ type: "solid", rgba }),
+    gradientItems: (gradient) => [{ type: "gradient", gradient }],
+    buildDocument: (items) => ({ revision: items.length }),
+    writePalette: () => {
+      operations.paletteWriter += 1;
+    },
+  });
+
+  assert.deepEqual(operations, { parser: 0, implicit: 1, paletteWriter: 1 });
+  assert.equal(result.allowed, true);
+  assert.equal(result.parseNativeGradients, false);
+  assert.deepEqual(result.sourceItems, [
+    { type: "gradient", gradient: { id: "implicit-default" } },
+  ]);
+});
+
+test("S2 collection seam rejects implicit defaults outside the supported runtime before materialization", async () => {
+  for (const [platform, version, reason] of [
+    ["darwin", "27.0.0", "unsupported-host-version"],
+    ["linux", "26.3.0", "unsupported-platform"],
+  ] as const) {
+    const operations = { parser: 0, implicit: 0, paletteWriter: 0 };
+    const result = await orchestrateNativeGradientCollection({
+      nativeSelectionStatus: "none",
+      nativeEntryCount: 0,
+      runtime: resolveNativeGradientCollectionRuntime(platform, version),
+      entries: [{ type: "implicit-gradient" }],
+      colors: [],
+      descriptors: [],
+      baseDocument: { revision: 0 },
+    }, {
+      nativeParser: () => {
+        operations.parser += 1;
+        return [];
+      },
+      implicitGradient: () => {
+        operations.implicit += 1;
+        return { id: "implicit-default" };
+      },
+      solidItem: (rgba): { type: string; rgba?: unknown; gradient?: unknown } => ({
+        type: "solid",
+        rgba,
+      }),
+      gradientItems: (gradient) => [{ type: "gradient", gradient }],
+      buildDocument: (items) => ({ revision: items.length }),
+      writePalette: () => {
+        operations.paletteWriter += 1;
+      },
+    });
+
+    assert.deepEqual(operations, { parser: 0, implicit: 0, paletteWriter: 0 });
+    assert.equal(result.allowed, false);
+    assert.equal(result.reason, reason);
+  }
+});
+
 test("S2 decoder rejects status evidence contradictions before renderer cleanup", async () => {
   const secondTarget = { ...validTarget, layerId: 3, layerIndex: 2 };
   const thirdTarget = { ...validTarget, layerId: 4, layerIndex: 3 };

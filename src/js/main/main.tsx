@@ -57,6 +57,7 @@ import {
 } from "../shared/palette-domain";
 import {
   collectNativeGradientsFromProject,
+  createImplicitDefaultNativeGradient,
   nativeGradientToPaletteColors,
 } from "../shared/native-gradient-collection";
 import { nativeGradientToCssPreview } from "../shared/native-gradient-preview";
@@ -64,6 +65,11 @@ import {
   orchestrateNativeGradientCollection,
   resolveNativeGradientCollectionRuntime,
 } from "../shared/native-gradient-contract";
+import {
+  appendCollectionSkipMessage,
+  collectionSkipMessage,
+  collectionUnchangedMessage,
+} from "../shared/collection-status";
 import {
   type PaletteCommand,
   dispatchPaletteResult,
@@ -470,6 +476,9 @@ export const App = () => {
       );
       lastHostResultRef.current = selection.colors;
       const hasColors = selection.colors.entries.length > 0;
+      const hasGradientSelection = selection.colors.entries.some(
+        (entry) => entry.type === "native-gradient" || entry.type === "implicit-gradient",
+      );
       const hasSelectedImage = selection.image.selectedImageCount > 0;
       if (hasColors && hasSelectedImage) {
         setLastResult("Choose selected colors or one image, not both");
@@ -492,7 +501,7 @@ export const App = () => {
         sourceItems = extraction.colors.map((rgba) => ({
           type: "color",
           rgba,
-          preserveDuplicate: false,
+          preserveDuplicate: !layoutSettings.uniteDuplicates,
         }));
         sourceName = selection.image.name || "selected image";
       } else if (hasColors) {
@@ -518,18 +527,25 @@ export const App = () => {
           baseDocument: collectionBaseDocument,
         }, {
           nativeParser: collectNativeGradientsFromProject,
+          implicitGradient: createImplicitDefaultNativeGradient,
           solidItem: (rgba) => ({
             type: "color",
             rgba: rgba as PaletteColor["rgba"],
-            preserveDuplicate: false,
+            preserveDuplicate: !layoutSettings.uniteDuplicates,
           }),
           gradientItems: (gradient): readonly PaletteCollectionItem[] =>
             layoutSettings.gradientCollectionMode === "gradient-slot"
-              ? [{ type: "gradient", gradient }]
+              ? [
+                  {
+                    type: "gradient",
+                    gradient,
+                    preserveDuplicate: !layoutSettings.uniteDuplicates,
+                  },
+                ]
               : nativeGradientToPaletteColors(gradient).map((rgba) => ({
                   type: "color",
                   rgba,
-                  preserveDuplicate: true,
+                  preserveDuplicate: !layoutSettings.uniteDuplicates,
                 })),
           buildDocument: (items) => addPaletteCollectionItems(collectionBaseDocument, items),
           writePalette: (document) => savePalette(document, configRootRef.current),
@@ -588,14 +604,17 @@ export const App = () => {
           ? addPaletteCollectionItems(collectionBaseDocument, sourceItems)
           : collectionBaseDocument);
       if (next === baseDocument) {
+        const unchangedMessage = collectionUnchangedMessage(
+          sourceName,
+          hasGradientSelection,
+          layoutSettings.gradientCollectionMode === "gradient-slot",
+          layoutSettings.uniteDuplicates,
+        );
         setLastResult(
-          sourceName
-            ? `Colors from ${sourceName} are already in the palette`
-            : selection.nativeGradients.status === "ok"
-              ? layoutSettings.gradientCollectionMode === "gradient-slot"
-                ? "Palette does not have room for all selected items"
-                : "Palette does not have room for all selected gradient stops"
-            : "Selected colors are already in the palette"
+          appendCollectionSkipMessage(
+            unchangedMessage,
+            skipped,
+          ),
         );
         return;
       }
@@ -611,7 +630,7 @@ export const App = () => {
         document: next,
       });
       countersRef.current.emittedEvents += 1;
-      setLastResult(skipped > 0 ? `Skipped ${skipped} unsupported` : null);
+      setLastResult(collectionSkipMessage(skipped));
     } catch (_error) {
       setLastResult(
         phase === "image"

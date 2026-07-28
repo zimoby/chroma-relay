@@ -91,7 +91,7 @@ test("rejects invalid or partial gradient-slot writes atomically", () => {
   assert.strictEqual(addPaletteGradients(full, [EXACT_GRADIENT]), full);
 });
 
-test("migrates existing layout settings to color-stop collection mode", () => {
+test("migrates existing layout settings to gradient-slot collection mode", () => {
   const migrated = migrateLayoutSettings({
     schemaVersion: 3,
     revision: 4,
@@ -100,7 +100,7 @@ test("migrates existing layout settings to color-stop collection mode", () => {
     includeDisabledColors: true,
     extractionPreset: "tonal",
   });
-  assert.equal(migrated?.gradientCollectionMode, "color-stops");
+  assert.equal(migrated?.gradientCollectionMode, "gradient-slot");
   assert.equal(migrated?.smartApply, true);
   assert.equal(
     migrateLayoutSettings({ ...migrated, gradientCollectionMode: "gradient-slot" })

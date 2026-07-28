@@ -38,6 +38,19 @@ export class NativeGradientCollectionError extends Error {
   }
 }
 
+export const createImplicitDefaultNativeGradient = (): NativeGradient =>
+  validateGeneratedGradient({
+    schemaVersion: 1,
+    colorStops: [
+      { offset: 0, midpoint: 0.5, rgb: [1, 1, 1], extra: 1 },
+      { offset: 1, midpoint: 0.5, rgb: [0, 0, 0], extra: 1 },
+    ],
+    alphaStops: [
+      { offset: 0, midpoint: 0.5, alpha: 1 },
+      { offset: 1, midpoint: 0.5, alpha: 1 },
+    ],
+  });
+
 type AlphaGroup = {
   offset: number;
   alpha: number | null;

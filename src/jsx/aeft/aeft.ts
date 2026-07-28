@@ -5,6 +5,7 @@ import {
   exactNativeGradientParent,
   findExactNativeGradientPayload,
   isExactNativeGradientPayload,
+  isUnmodifiedNativeGradientPayload,
 } from "./native-gradient-target";
 import type { NativeGradientTargetDescriptor } from "./native-gradient-target";
 import {
@@ -45,12 +46,14 @@ export type ColorCollectionResult = {
   entries: ColorCollectionEntry[];
   selectedPropertyCount: number;
   unsupportedGradientCount: number;
+  unmodifiedGradientCount: number;
   unsupportedTextCount: number;
   readErrorCount: number;
 };
 
 export type ColorCollectionEntry =
   | { type: "solid"; colorIndex: number }
+  | { type: "implicit-gradient" }
   | { type: "native-gradient"; gradientIndex: number; targetKey: string };
 
 type OrderedColorCollectionEntry = {
@@ -87,6 +90,7 @@ const emptyCollection = (status: ColorCollectionStatus): ColorCollectionResult =
   entries: [],
   selectedPropertyCount: 0,
   unsupportedGradientCount: 0,
+  unmodifiedGradientCount: 0,
   unsupportedTextCount: 0,
   readErrorCount: 0,
 });
@@ -98,9 +102,9 @@ const isSameColor = (left: HostRgba, right: HostRgba) => {
   return true;
 };
 
-const appendUniqueColor = (colors: HostRgba[], rgba: HostRgba) => {
+const indexColor = (colors: HostRgba[], rgba: HostRgba) => {
   for (let index = 0; index < colors.length; index += 1) {
-    if (isSameColor(colors[index], rgba)) return -1;
+    if (isSameColor(colors[index], rgba)) return index;
   }
   colors.push(rgba);
   return colors.length - 1;
@@ -141,6 +145,16 @@ const readColorProperty = (
       }
       if (!addSelectionKey(gradientKeys, gradientKey)) return;
       result.selectedPropertyCount += 1;
+      if (isUnmodifiedNativeGradientPayload(payload)) {
+        result.unmodifiedGradientCount += 1;
+        orderedEntries.push({
+          entry: { type: "implicit-gradient" },
+          layerIndex: layer.index,
+          propertyIndexPath: path.propertyIndexPath,
+          matchNamePath: path.matchNamePath,
+        });
+        return;
+      }
       orderedEntries.push({
         entry: {
           type: "native-gradient",
@@ -227,15 +241,13 @@ const readColorProperty = (
         return;
       }
     }
-    const colorIndex = appendUniqueColor(result.colors, rgba);
-    if (colorIndex >= 0) {
-      orderedEntries.push({
-        entry: { type: "solid", colorIndex },
-        layerIndex: layer.index,
-        propertyIndexPath: propertyIndexPath.slice(),
-        matchNamePath: matchNamePath.slice(),
-      });
-    }
+    const colorIndex = indexColor(result.colors, rgba);
+    orderedEntries.push({
+      entry: { type: "solid", colorIndex },
+      layerIndex: layer.index,
+      propertyIndexPath: propertyIndexPath.slice(),
+      matchNamePath: matchNamePath.slice(),
+    });
   } catch (_error) {
     result.readErrorCount += 1;
   }
@@ -338,14 +350,20 @@ export const collectSelectedColors = (
         targetKey: entry.targetKey,
       });
       canonicalGradientIndex += 1;
+    } else if (entry.type === "implicit-gradient") {
+      result.entries.push(entry);
     } else {
       const rgba = result.colors[entry.colorIndex];
-      const colorIndex = rgba ? appendUniqueColor(canonicalColors, rgba) : -1;
+      const colorIndex = rgba ? indexColor(canonicalColors, rgba) : -1;
       if (colorIndex >= 0) result.entries.push({ type: "solid", colorIndex });
     }
   }
   result.colors = canonicalColors;
-  if (result.colors.length > 0 || result.unsupportedGradientCount > 0) result.status = "ok";
+  if (
+    result.colors.length > 0 ||
+    result.unsupportedGradientCount > 0 ||
+    result.unmodifiedGradientCount > 0
+  ) result.status = "ok";
   return result;
 };
 

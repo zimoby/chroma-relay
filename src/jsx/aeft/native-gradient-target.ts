@@ -126,6 +126,15 @@ export const isExactNativeGradientPayload = (property: any) => {
   }
 };
 
+export const isUnmodifiedNativeGradientPayload = (payload: any) => {
+  try {
+    if (!payload || payload.matchName !== NATIVE_GRADIENT_PAYLOAD_MATCH_NAME) return false;
+    return payload.isModified === false;
+  } catch (_error) {
+    return false;
+  }
+};
+
 export type NativeGradientPropertyPath = {
   propertyIndexPath: number[];
   matchNamePath: string[];
@@ -203,6 +212,7 @@ const appendNativeGradientTarget = (
   state: NativeGradientCollectorState
 ) => {
   try {
+    if (isUnmodifiedNativeGradientPayload(payload)) return;
     if (
       nativeGradientKind(parent) !== kind ||
       !isSamePropertySlot(findExactNativeGradientPayload(parent), payload)

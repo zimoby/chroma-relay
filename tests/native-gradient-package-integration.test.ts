@@ -115,24 +115,39 @@ test("public library import parses both exported readable FFX templates", async 
   }
 });
 
-test("installed CLI uniquely inspects an exported template", () => {
+test("installed CLI binds both exported templates to the exact implicit default model", () => {
   const bin = installedPackage.bin as Record<string, string>;
   const cliPath = join(dirname(installedPackageJsonPath), bin["ae-native-gradient"]);
-  const result = spawnSync(
-    process.execPath,
-    [cliPath, "inspect", "--unique", templatePaths.fill],
-    { cwd: REPO_ROOT, encoding: "utf8", timeout: 15_000 },
-  );
-
-  assert.equal(result.error, undefined);
-  assert.equal(result.status, 0, result.stderr);
-  const report = JSON.parse(result.stdout) as {
-    schemaVersion: number;
-    candidates: Array<{ status: string }>;
-    uniqueProof?: { passed: boolean };
+  const expectedGradient = {
+    schemaVersion: 1,
+    colorStops: [
+      { offset: 0, midpoint: 0.5, rgb: [1, 1, 1], extra: 1 },
+      { offset: 1, midpoint: 0.5, rgb: [0, 0, 0], extra: 1 },
+    ],
+    alphaStops: [
+      { offset: 0, midpoint: 0.5, alpha: 1 },
+      { offset: 1, midpoint: 0.5, alpha: 1 },
+    ],
   };
-  assert.equal(report.schemaVersion, 1);
-  assert.equal(report.candidates.length, 1);
-  assert.equal(report.candidates[0]?.status, "valid");
-  assert.equal(report.uniqueProof?.passed, true);
+
+  for (const [kind, templatePath] of Object.entries(templatePaths)) {
+    const result = spawnSync(
+      process.execPath,
+      [cliPath, "inspect", "--unique", templatePath],
+      { cwd: REPO_ROOT, encoding: "utf8", timeout: 15_000 },
+    );
+
+    assert.equal(result.error, undefined);
+    assert.equal(result.status, 0, `${kind}: ${result.stderr}`);
+    const report = JSON.parse(result.stdout) as {
+      schemaVersion: number;
+      candidates: Array<{ status: string; gradient: unknown }>;
+      uniqueProof?: { passed: boolean };
+    };
+    assert.equal(report.schemaVersion, 1);
+    assert.equal(report.candidates.length, 1);
+    assert.equal(report.candidates[0]?.status, "valid");
+    assert.deepEqual(report.candidates[0]?.gradient, expectedGradient);
+    assert.equal(report.uniqueProof?.passed, true);
+  }
 });

@@ -20,7 +20,7 @@ test("the product contract owns current technical identity and schemas", async (
   assert.equal(contract.compatibility.portableFormat, "chroma-relay");
   assert.equal(contract.portable.fileExtension, ".chroma-relay.json");
   assert.equal(contract.schemas.palette, 3);
-  assert.equal(contract.schemas.settings, 5);
+  assert.equal(contract.schemas.settings, 6);
   assert.equal(contract.schemas.portable, 2);
   assert.equal(contract.marker.lineage, "I11");
   assert.equal(contract.marker.current, "Palette v2");
