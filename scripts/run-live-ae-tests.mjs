@@ -42,8 +42,12 @@ const EXPECTED_SOURCE = resolve(
   REPO_ROOT,
   "tests/fixtures/native-gradient/exact-identity-ae25.expected.json"
 );
-const FILL_TEMPLATE = resolve(REPO_ROOT, "src/assets/native-gradient/ae25-6/fill-template.ffx");
-const STROKE_TEMPLATE = resolve(REPO_ROOT, "src/assets/native-gradient/ae25-6/stroke-template.ffx");
+const FILL_TEMPLATE = fileURLToPath(
+  import.meta.resolve("@zimoby/ae-native-gradient/templates/ae25-6/fill.ffx")
+);
+const STROKE_TEMPLATE = fileURLToPath(
+  import.meta.resolve("@zimoby/ae-native-gradient/templates/ae25-6/stroke.ffx")
+);
 const REVIEWED_INPUTS = Object.freeze({
   fixture: {
     path: FIXTURE_SOURCE,

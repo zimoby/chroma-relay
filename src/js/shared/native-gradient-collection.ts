@@ -1,8 +1,7 @@
 import {
-  indexAepNativeGradientTargets,
-  parseRifx,
-  resolveAepNativeGradientTarget,
-  validateGeneratedGradient,
+  NativeGradientResolutionError,
+  createImplicitDefaultNativeGradient,
+  resolveAepNativeGradients,
   type AepNativeGradientTargetDescriptor,
   type ImmutableGradientAlphaStop,
   type ImmutableNativeGradient,
@@ -38,18 +37,7 @@ export class NativeGradientCollectionError extends Error {
   }
 }
 
-export const createImplicitDefaultNativeGradient = (): NativeGradient =>
-  validateGeneratedGradient({
-    schemaVersion: 1,
-    colorStops: [
-      { offset: 0, midpoint: 0.5, rgb: [1, 1, 1], extra: 1 },
-      { offset: 1, midpoint: 0.5, rgb: [0, 0, 0], extra: 1 },
-    ],
-    alphaStops: [
-      { offset: 0, midpoint: 0.5, alpha: 1 },
-      { offset: 1, midpoint: 0.5, alpha: 1 },
-    ],
-  });
+export { createImplicitDefaultNativeGradient };
 
 type AlphaGroup = {
   offset: number;
@@ -155,32 +143,24 @@ export const collectNativeGradientsFromAepBytes = (
   bytes: Uint8Array,
   descriptors: readonly HostNativeGradientTargetDescriptor[]
 ): NativeGradient[] => {
-  const document = parseRifx(bytes);
-  const targets = indexAepNativeGradientTargets(document);
-  return descriptors.map((descriptor) => {
-    const resolution = resolveAepNativeGradientTarget(targets, descriptor);
-    if (resolution.status === "none") {
+  try {
+    return resolveAepNativeGradients(bytes, descriptors);
+  } catch (error) {
+    if (!(error instanceof NativeGradientResolutionError)) throw error;
+    if (error.code === "target-not-resolved") {
       throw new NativeGradientCollectionError(
-        "target-not-resolved",
+        error.code,
         "Selected native gradient was not found exactly in the saved project"
       );
     }
-    if (resolution.status === "ambiguous") {
+    if (error.code === "target-ambiguous") {
       throw new NativeGradientCollectionError(
-        "target-ambiguous",
+        error.code,
         "Selected native gradient is ambiguous in the saved project"
       );
     }
-    const candidate = resolution.target.candidate;
-    if (candidate.status !== "valid") {
-      throw new NativeGradientCollectionError("gradient-invalid", "Saved gradient payload is invalid");
-    }
-    try {
-      return validateGeneratedGradient(candidate.gradient);
-    } catch {
-      throw new NativeGradientCollectionError("gradient-invalid", "Saved gradient payload is invalid");
-    }
-  });
+    throw new NativeGradientCollectionError(error.code, "Saved gradient payload is invalid");
+  }
 };
 
 const readStableAep = (filePath: string) => {

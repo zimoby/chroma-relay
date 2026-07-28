@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const PACKAGE_NAME = "@zimoby/ae-native-gradient";
-const PACKAGE_VERSION = "0.1.0";
-const APPROVED_SHA = "856727fe2b3342d4ee6ade68b7afc8f2db6e3dfa";
+const PACKAGE_VERSION = "0.2.0";
+const APPROVED_SHA = "2c7789e7659f3768734c90ee8fb62b89396ebb29";
 const APPROVED_SOURCE = `git+https://github.com/zimoby/ae-native-gradient-toolkit.git#${APPROVED_SHA}`;
 const REPO_ROOT = fileURLToPath(new URL("../", import.meta.url));
 
@@ -32,6 +32,15 @@ const templatePaths = {
   fill: fileURLToPath(import.meta.resolve(`${PACKAGE_NAME}/templates/fill.ffx`)),
   stroke: fileURLToPath(import.meta.resolve(`${PACKAGE_NAME}/templates/stroke.ffx`)),
 };
+const versionedTemplatePaths = Object.fromEntries(
+  ["ae22-6", "ae25-6", "ae26-3"].map((family) => [
+    family,
+    {
+      fill: fileURLToPath(import.meta.resolve(`${PACKAGE_NAME}/templates/${family}/fill.ffx`)),
+      stroke: fileURLToPath(import.meta.resolve(`${PACKAGE_NAME}/templates/${family}/stroke.ffx`)),
+    },
+  ]),
+) as Record<string, Record<"fill" | "stroke", string>>;
 
 test("uses the approved installed package and exact immutable lock source", () => {
   assert.equal(installedPackage.name, PACKAGE_NAME);
@@ -53,7 +62,7 @@ test("uses the approved installed package and exact immutable lock source", () =
   const resolved = installedLockEntry.resolved;
   assert.equal(typeof resolved, "string");
   assert.match(
-    resolved,
+    String(resolved),
     new RegExp(
       `^git\\+(?:https://github\\.com/|ssh://git@github\\.com/)(?:zimoby/ae-native-gradient-toolkit)(?:\\.git)?#${APPROVED_SHA}$`,
     ),
@@ -61,6 +70,7 @@ test("uses the approved installed package and exact immutable lock source", () =
 });
 
 test("CI install is deterministic, Node 22 aligned, public, and credential safe", () => {
+  assert.equal(existsSync(join(REPO_ROOT, ".npmrc")), false, "project npm config must not bypass peers");
   assert.match(workflow, /node-version: \[22\.22\.3\]/);
   assert.match(workflow, /^  pull_request:\r?$/m);
   assert.match(workflow, /^  workflow_dispatch:\r?$/m);
@@ -91,27 +101,39 @@ test("CI install is deterministic, Node 22 aligned, public, and credential safe"
   assert.ok(installStep, "expected one bounded named install step");
   assert.match(installStep, /^        shell: bash$/m);
   assert.match(installStep, /^        run: \|$/m);
-  assert.match(installStep, /^          npm ci$/m);
+  assert.match(installStep, /^          npm ci --legacy-peer-deps=false$/m);
   assert.match(installStep, /^          GIT_CONFIG_COUNT: "1"$/m);
   assert.match(installStep, /^          GIT_CONFIG_KEY_0: url\.https:\/\/github\.com\/\.insteadOf$/m);
   assert.match(installStep, /^          GIT_CONFIG_VALUE_0: ssh:\/\/git@github\.com\/$/m);
   assert.doesNotMatch(installStep, /credential\.helper|password=|secrets\./);
   assert.doesNotMatch(workflow, /AE_NATIVE_GRADIENT_READ_TOKEN|private Git dependency/);
-  assert.doesNotMatch(workflow, /npm i --legacy-peer-deps/);
+  assert.doesNotMatch(workflow, /legacy-peer-deps=true|npm i --legacy-peer-deps/);
 });
 
-test("public library import parses both exported readable FFX templates", async () => {
+test("public library exposes collection APIs and all versioned readable FFX templates", async () => {
   const library = await import(PACKAGE_NAME);
   assert.equal(typeof library.parseRifx, "function");
   assert.equal(typeof library.indexAepNativeGradientTargets, "function");
   assert.equal(typeof library.resolveAepNativeGradientTarget, "function");
+  assert.equal(typeof library.resolveAepNativeGradients, "function");
+  assert.equal(typeof library.createImplicitDefaultNativeGradient, "function");
 
-  for (const [kind, path] of Object.entries(templatePaths)) {
-    assert.equal(statSync(path).isFile(), true, `${kind} export must resolve to a file`);
-    const bytes = new Uint8Array(readFileSync(path));
-    assert.ok(bytes.byteLength > 0, `${kind} template must be readable and non-empty`);
-    const document = library.parseRifx(bytes);
-    assert.equal(document.root.formType, "FaFX");
+  assert.deepEqual(Object.keys(library.NATIVE_GRADIENT_TEMPLATE_METADATA), [
+    "ae22-6",
+    "ae25-6",
+    "ae26-3",
+  ]);
+  for (const [family, paths] of Object.entries(versionedTemplatePaths)) {
+    for (const [kind, path] of Object.entries(paths)) {
+      assert.equal(statSync(path).isFile(), true, `${family}/${kind} export must resolve`);
+      const bytes = new Uint8Array(readFileSync(path));
+      assert.ok(bytes.byteLength > 0, `${family}/${kind} template must be non-empty`);
+      assert.equal(
+        library.NATIVE_GRADIENT_TEMPLATE_METADATA[family][kind].sha256,
+        (await import("node:crypto")).createHash("sha256").update(bytes).digest("hex"),
+      );
+      assert.equal(library.parseRifx(bytes).root.formType, "FaFX");
+    }
   }
 });
 

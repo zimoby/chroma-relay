@@ -69,10 +69,6 @@ const config: CEP_Config = {
   installModules: [],
   copyAssets: [
     "assets/chroma-relay-icon.png",
-    "assets/native-gradient/ae22-6/fill-template.ffx",
-    "assets/native-gradient/ae22-6/stroke-template.ffx",
-    "assets/native-gradient/ae25-6/fill-template.ffx",
-    "assets/native-gradient/ae25-6/stroke-template.ffx",
   ],
   copyZipAssets: [],
 };

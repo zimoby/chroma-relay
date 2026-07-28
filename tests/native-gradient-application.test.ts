@@ -19,6 +19,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { NATIVE_GRADIENT_TEMPLATE_METADATA } from "@zimoby/ae-native-gradient";
 
 const nodeRequire = createRequire(import.meta.url);
 Object.defineProperty(globalThis, "require", { value: nodeRequire, configurable: true });
@@ -49,14 +50,19 @@ const {
   "../src/js/shared/native-gradient-contract.ts"
 );
 const REPO_ROOT = fileURLToPath(new URL("../", import.meta.url));
-const OWNED_TEMPLATE_ROOT = join(REPO_ROOT, "src/assets/native-gradient");
-const OWNED_TEMPLATES = {
-  fill: join(OWNED_TEMPLATE_ROOT, "ae22-6/fill-template.ffx"),
-  stroke: join(OWNED_TEMPLATE_ROOT, "ae22-6/stroke-template.ffx"),
+const AE22_FILL_TEMPLATE = fileURLToPath(
+  import.meta.resolve("@zimoby/ae-native-gradient/templates/ae22-6/fill.ffx"),
+);
+const TOOLKIT_TEMPLATE_ROOT = dirname(dirname(AE22_FILL_TEMPLATE));
+const TOOLKIT_TEMPLATES = {
+  fill: AE22_FILL_TEMPLATE,
+  stroke: fileURLToPath(
+    import.meta.resolve("@zimoby/ae-native-gradient/templates/ae22-6/stroke.ffx"),
+  ),
 } as const;
 const TEMPLATE_SHA256 = {
-  fill: "06120a98926bc03906a607481345e8e2d6d8938b32e090752f87847d21a426d2",
-  stroke: "e934fed01b7c9e52c60210714ea916556b3cf159bb7dc09114045b516cb47b3b",
+  fill: NATIVE_GRADIENT_TEMPLATE_METADATA["ae22-6"].fill.sha256,
+  stroke: NATIVE_GRADIENT_TEMPLATE_METADATA["ae22-6"].stroke.sha256,
 } as const;
 const RENDERER_HOST_VERSION = "22.6.5";
 const decodeNativeGradientApplyResult = (
@@ -66,7 +72,7 @@ const decodeNativeGradientApplyResult = (
 const rendererOptions = (palette: readonly [number, number, number, number][], base: string) => ({
   palette,
   tempBasePath: base,
-  templateRootPath: OWNED_TEMPLATE_ROOT,
+  templateRootPath: TOOLKIT_TEMPLATE_ROOT,
   hostVersion: RENDERER_HOST_VERSION,
   platform: "darwin",
   includeDisabledTargets: false,
@@ -230,43 +236,25 @@ test("rejects count, shape, non-finite, and out-of-range RGBA before filesystem 
   });
 });
 
-test("owns AE22 and AE25 templates and stages the pinned package's AE26 templates", () => {
-  const packageTemplates = {
-    fill: fileURLToPath(import.meta.resolve("@zimoby/ae-native-gradient/templates/fill.ffx")),
-    stroke: fileURLToPath(import.meta.resolve("@zimoby/ae-native-gradient/templates/stroke.ffx")),
-  } as const;
-  const ae25Templates = {
-    fill: join(OWNED_TEMPLATE_ROOT, "ae25-6/fill-template.ffx"),
-    stroke: join(OWNED_TEMPLATE_ROOT, "ae25-6/stroke-template.ffx"),
-  } as const;
-  const ae25TemplateSha256 = {
-    fill: "a0cddaf936cc337a427d3a81c4224764fd6fc1f13a9bbeb6ae863276fa28dc59",
-    stroke: "cb1ffe6195604834203a950433a83dd7097e971f8477567fdc2c32e3c34ed9dd",
-  } as const;
-
-  for (const kind of ["fill", "stroke"] as const) {
-    const owned = readFileSync(OWNED_TEMPLATES[kind]);
-    const ae25Owned = readFileSync(ae25Templates[kind]);
-    const installed = readFileSync(packageTemplates[kind]);
-    assert.notDeepEqual(owned, installed);
-    assert.notDeepEqual(ae25Owned, installed);
-    assert.equal(sha256(owned), TEMPLATE_SHA256[kind]);
-    assert.equal(sha256(ae25Owned), ae25TemplateSha256[kind]);
-    assert.equal(owned.includes(Buffer.from("2022")), true);
-    assert.equal(ae25Owned.includes(Buffer.from("Adobe After Effects 2025 (Macintosh)")), true);
-    assert.equal(installed.includes(Buffer.from("Adobe After Effects 2026 (Macintosh)")), true);
+test("uses toolkit-owned templates and stages every supported family", () => {
+  for (const family of ["ae22-6", "ae25-6", "ae26-3"] as const) {
+    for (const kind of ["fill", "stroke"] as const) {
+      const templatePath = fileURLToPath(
+        import.meta.resolve(`@zimoby/ae-native-gradient/templates/${family}/${kind}.ffx`),
+      );
+      const bytes = readFileSync(templatePath);
+      assert.equal(sha256(bytes), NATIVE_GRADIENT_TEMPLATE_METADATA[family][kind].sha256);
+    }
   }
 
   const config = readFileSync(join(REPO_ROOT, "cep.config.ts"), "utf8");
-  assert.match(config, /assets\/native-gradient\/ae22-6\/fill-template\.ffx/);
-  assert.match(config, /assets\/native-gradient\/ae22-6\/stroke-template\.ffx/);
-  assert.match(config, /assets\/native-gradient\/ae25-6\/fill-template\.ffx/);
-  assert.match(config, /assets\/native-gradient\/ae25-6\/stroke-template\.ffx/);
+  assert.doesNotMatch(config, /assets\/native-gradient\/ae(?:22|25|26)/);
   const viteConfig = readFileSync(join(REPO_ROOT, "vite.config.ts"), "utf8");
-  assert.match(viteConfig, /@zimoby\/ae-native-gradient\/templates\/fill\.ffx/);
-  assert.match(viteConfig, /@zimoby\/ae-native-gradient\/templates\/stroke\.ffx/);
-  assert.match(viteConfig, /"native-gradient", "ae26-3"/);
+  assert.match(viteConfig, /NATIVE_GRADIENT_TEMPLATE_METADATA/);
+  assert.match(viteConfig, /templates\/\$\{family\}\/\$\{kind\}\.ffx/);
   const liveRunner = readFileSync(join(REPO_ROOT, "scripts/run-live-ae-tests.mjs"), "utf8");
+  assert.match(liveRunner, /templates\/ae25-6\/fill\.ffx/);
+  assert.match(liveRunner, /templates\/ae25-6\/stroke\.ffx/);
   for (const family of ["ae22-6", "ae25-6", "ae26-3"]) {
     assert.match(liveRunner, new RegExp(`assets/native-gradient/${family}/fill-template\\.ffx`));
     assert.match(liveRunner, new RegExp(`assets/native-gradient/${family}/stroke-template\\.ffx`));
@@ -280,7 +268,7 @@ test("atomically publishes a token-owned preset and reports exact generated evid
       palette,
       kind: "fill",
       tempBasePath: base,
-      templatePath: OWNED_TEMPLATES.fill,
+      templatePath: TOOLKIT_TEMPLATES.fill,
     });
 
     assert.match(lease.runToken, /^[A-F0-9]{32}$/);
@@ -350,7 +338,7 @@ test("publishes an exact stored gradient without rebuilding evenly spaced stops"
       gradient,
       kind: "fill",
       tempBasePath: base,
-      templatePath: OWNED_TEMPLATES.fill,
+      templatePath: TOOLKIT_TEMPLATES.fill,
     });
     assert.equal(lease.stopCount, 2);
     assert.deepEqual(lease.toolkitReport.gradient, gradient);
@@ -376,7 +364,7 @@ test("uses the matching stroke template and rejects a kind-substituted template"
       palette: [rgba(0), rgba(1)],
       kind: "stroke",
       tempBasePath: base,
-      templatePath: OWNED_TEMPLATES.stroke,
+      templatePath: TOOLKIT_TEMPLATES.stroke,
     });
     assert.equal(lease.kind, "stroke");
     assert.equal(lease.templateSha256, TEMPLATE_SHA256.stroke);
@@ -389,7 +377,7 @@ test("uses the matching stroke template and rejects a kind-substituted template"
           palette: [rgba(0), rgba(1)],
           kind: "stroke",
           tempBasePath: base,
-          templatePath: OWNED_TEMPLATES.fill,
+          templatePath: TOOLKIT_TEMPLATES.fill,
         }),
       assertFileError("template-mismatch"),
     );
@@ -429,7 +417,7 @@ test("refuses a cryptographic token collision without disturbing the first prese
         palette: [rgba(0), rgba(1)],
         kind: "fill",
         tempBasePath: base,
-        templatePath: OWNED_TEMPLATES.fill,
+        templatePath: TOOLKIT_TEMPLATES.fill,
       });
       assert.throws(
         () =>
@@ -437,7 +425,7 @@ test("refuses a cryptographic token collision without disturbing the first prese
             palette: [rgba(0), rgba(1)],
             kind: "fill",
             tempBasePath: base,
-            templatePath: OWNED_TEMPLATES.fill,
+            templatePath: TOOLKIT_TEMPLATES.fill,
           }),
         assertFileError("path-collision"),
       );
@@ -455,7 +443,7 @@ test("cleanup refuses extra-entry collision, content tamper, and traversal-shape
       palette: [rgba(0), rgba(1)],
       kind: "fill",
       tempBasePath: base,
-      templatePath: OWNED_TEMPLATES.fill,
+      templatePath: TOOLKIT_TEMPLATES.fill,
     });
     const original = readFileSync(lease.presetPath);
 
@@ -608,7 +596,7 @@ test("publication uses exclusive temp write and rename, then cleans rename and h
         palette: [rgba(0), rgba(1)],
         kind: "fill",
         tempBasePath: base,
-        templatePath: OWNED_TEMPLATES.fill,
+        templatePath: TOOLKIT_TEMPLATES.fill,
       });
       assert.equal(exclusiveTempOpened, true);
       assert.equal(renamed, true);
@@ -630,7 +618,7 @@ test("publication uses exclusive temp write and rename, then cleans rename and h
             palette: [rgba(0), rgba(1)],
             kind: "fill",
             tempBasePath: base,
-            templatePath: OWNED_TEMPLATES.fill,
+            templatePath: TOOLKIT_TEMPLATES.fill,
           }),
         assertFileError("publication-failed"),
       );
@@ -661,7 +649,7 @@ test("publication uses exclusive temp write and rename, then cleans rename and h
             palette: [rgba(0), rgba(1)],
             kind: "fill",
             tempBasePath: base,
-            templatePath: OWNED_TEMPLATES.fill,
+            templatePath: TOOLKIT_TEMPLATES.fill,
           }),
         assertFileError("verification-failed"),
       );
@@ -1730,7 +1718,7 @@ test("S2 second RNG failure after owned root creation removes the root", async (
             palette: [rgba(0), rgba(1)],
             kind: "fill",
             tempBasePath: base,
-            templatePath: OWNED_TEMPLATES.fill,
+            templatePath: TOOLKIT_TEMPLATES.fill,
           }),
         assertFileError("publication-failed"),
       );
@@ -1864,8 +1852,8 @@ test("B3 renderer cleans the first lease when second-kind generation fails befor
     const templateRootPath = join(base, "templates");
     const templateFamilyPath = join(templateRootPath, "ae22-6");
     mkdirSync(templateFamilyPath, { recursive: true });
-    writeFileSync(join(templateFamilyPath, "fill-template.ffx"), readFileSync(OWNED_TEMPLATES.fill));
-    writeFileSync(join(templateFamilyPath, "stroke-template.ffx"), readFileSync(OWNED_TEMPLATES.fill));
+    writeFileSync(join(templateFamilyPath, "fill-template.ffx"), readFileSync(TOOLKIT_TEMPLATES.fill));
+    writeFileSync(join(templateFamilyPath, "stroke-template.ffx"), readFileSync(TOOLKIT_TEMPLATES.fill));
     const report = await applyActivePaletteNativeGradient(
       {
         palette: [rgba(0), rgba(1)],

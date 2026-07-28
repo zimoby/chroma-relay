@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { closeSync, ftruncateSync, mkdtempSync, openSync, rmSync } from "node:fs";
+import { closeSync, ftruncateSync, mkdtempSync, openSync, readFileSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import type { ImmutableNativeGradient } from "@zimoby/ae-native-gradient";
 
 const nodeRequire = createRequire(import.meta.url);
@@ -17,10 +18,12 @@ const {
   NativeGradientCollectionError,
   alphaAtGradientOffset,
   collectNativeGradientColorsFromProject,
+  collectNativeGradientsFromAepBytes,
   collectNativeGradientsFromProject,
   createImplicitDefaultNativeGradient,
   nativeGradientToPaletteColors,
 } = await import("../src/js/shared/native-gradient-collection.ts");
+const REPO_ROOT = fileURLToPath(new URL("../", import.meta.url));
 
 const gradient = (
   colorStops: ImmutableNativeGradient["colorStops"],
@@ -31,7 +34,7 @@ const gradient = (
   alphaStops,
 });
 
-test("materializes the owned AE implicit Fill and Stroke default gradient exactly", () => {
+test("materializes the toolkit AE implicit Fill and Stroke default gradient exactly", () => {
   assert.deepEqual(createImplicitDefaultNativeGradient(), {
     schemaVersion: 1,
     colorStops: [
@@ -43,6 +46,43 @@ test("materializes the owned AE implicit Fill and Stroke default gradient exactl
       { offset: 1, midpoint: 0.5, alpha: 1 },
     ],
   });
+});
+
+test("delegates exact AEP batch resolution while preserving Chroma error codes", () => {
+  const bytes = new Uint8Array(
+    readFileSync(join(REPO_ROOT, "tests/fixtures/native-gradient/exact-identity-ae25.aep")),
+  );
+  const expected = JSON.parse(
+    readFileSync(
+      join(REPO_ROOT, "tests/fixtures/native-gradient/exact-identity-ae25.expected.json"),
+      "utf8",
+    ),
+  ) as {
+    targets: Array<{
+      compId: number;
+      layerId: number;
+      layerIndex: number;
+      kind: "fill" | "stroke";
+      propertyIndexPath: number[];
+      matchNamePath: string[];
+      gradient: ImmutableNativeGradient;
+    }>;
+  };
+  const descriptors = expected.targets.map(({ gradient: _gradient, ...descriptor }) => ({
+    ...descriptor,
+    projectPath: "fixture.aep",
+    projectDirty: false as const,
+  }));
+
+  assert.deepEqual(
+    collectNativeGradientsFromAepBytes(bytes, [descriptors[2], descriptors[0]]),
+    [expected.targets[2].gradient, expected.targets[0].gradient],
+  );
+  assert.throws(
+    () => collectNativeGradientsFromAepBytes(bytes, [{ ...descriptors[0], compId: 999 }]),
+    (error) =>
+      error instanceof NativeGradientCollectionError && error.code === "target-not-resolved",
+  );
 });
 
 test("converts every ordered color stop with float32 RGB and linear endpoint alpha", () => {
