@@ -36,11 +36,12 @@ test("build and package scripts use one Bolt Vite pipeline", async () => {
 
   assert.equal(
     packageJson.scripts.build,
-    'rimraf dist/* && tsc -p "tsconfig-build.json" && vite build --watch false'
+    'rimraf dist && tsc -p "tsconfig-build.json" && vite build --watch false'
   );
+  assert.match(packageJson.scripts["build:dev"], /^rimraf dist && /);
   assert.equal(packageJson.scripts["package:alpha"], undefined);
-  assert.match(packageJson.scripts.zxp, /ZXP_PACKAGE=true vite build --watch false/);
-  assert.match(packageJson.scripts.zip, /ZIP_PACKAGE=true vite build --watch false$/);
+  assert.match(packageJson.scripts.zxp, /^rimraf dist && .*ZXP_PACKAGE=true vite build --watch false/);
+  assert.match(packageJson.scripts.zip, /^rimraf dist && .*ZIP_PACKAGE=true vite build --watch false$/);
   assert.match(packageJson.scripts["cdp:native-gradient:prepare"], /prepareProductionBuild/);
   assert.match(viteConfig, /cep\(config\)/);
   assert.doesNotMatch(viteConfig, /ALPHA_PACKAGE|isUnsignedAlpha/);
