@@ -19,6 +19,12 @@ export type NativeGradientApplyStatus =
   | "undo-close-failed"
   | "finalization-failed";
 
+export type NativeGradientSelectionRestorationMode =
+  | "not-attempted"
+  | "exact"
+  | "ae-normalized"
+  | "failed";
+
 export type NativeGradientTemplateFamily = "ae22-6" | "ae25-6" | "ae26-3";
 export type NativeGradientPlatform = "darwin" | "win32";
 
@@ -322,6 +328,61 @@ export type NativeGradientApplyError = {
   number: number | null;
 };
 
+export type NativeGradientSelectionPathDiagnostic = {
+  propertyIndexPath: number[];
+  matchNamePath: string[];
+  resolved: boolean;
+  selectedAfterSet: boolean | null;
+};
+
+export type NativeGradientSelectionLayerDiagnostic = {
+  layerId: number;
+  layerIndex: number;
+  selected: boolean;
+  resolved: boolean;
+  selectedAfterSet: boolean | null;
+  properties: NativeGradientSelectionPathDiagnostic[];
+};
+
+export type NativeGradientSelectionSnapshotDiagnostic = {
+  layerId: number;
+  layerIndex: number;
+  selected: boolean;
+  properties: Array<{
+    propertyIndexPath: number[];
+    matchNamePath: string[];
+  }>;
+};
+
+export type NativeGradientSelectionDiagnostics = {
+  schemaVersion: 1;
+  inGroup: {
+    stage:
+      | "clear"
+      | "layer-resolve"
+      | "layer-select"
+      | "property-resolve"
+      | "property-select"
+      | "verify"
+      | "complete";
+    error: NativeGradientApplyError | null;
+    expected: NativeGradientSelectionSnapshotDiagnostic[];
+    expectedTruncated: boolean;
+    actual: NativeGradientSelectionSnapshotDiagnostic[] | null;
+    actualTruncated: boolean;
+    exact: boolean;
+    acceptedNormalization: boolean;
+    layers: NativeGradientSelectionLayerDiagnostic[];
+    layersTruncated: boolean;
+  };
+  afterUndoGroup: {
+    actual: NativeGradientSelectionSnapshotDiagnostic[] | null;
+    actualTruncated: boolean;
+    exact: boolean;
+    acceptedNormalization: boolean;
+  } | null;
+};
+
 export type NativeGradientApplyResult = {
   schemaVersion: 1;
   status: NativeGradientApplyStatus;
@@ -350,5 +411,7 @@ export type NativeGradientApplyResult = {
   undoGroupClosed: boolean;
   selectionRestoreAttempted: boolean;
   selectionRestored: boolean;
+  selectionRestorationMode: NativeGradientSelectionRestorationMode;
+  selectionDiagnostics?: NativeGradientSelectionDiagnostics;
   applyError: NativeGradientApplyError | null;
 };

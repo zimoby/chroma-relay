@@ -9,15 +9,21 @@ import {
 import type { NativeGradientKind } from "./native-gradient-target";
 import {
   addSelectionKey,
+  clearSelectionScopeNormalization,
   compareSelectionPropertyPaths,
   createSelectionKeySet,
   hasSelectionKey,
   isSelectionBranchDisabled,
+  reconcileSelectionScopeNormalization,
   resolveParentScopeRoot,
   resolveSelectedScopeRoots,
+  setSelectionScopeNormalization,
   selectionScopeKey,
 } from "./selection-scope";
-import type { SelectionKeySet } from "./selection-scope";
+import type {
+  SelectionKeySet,
+  SelectionScopeIgnoredAncestor,
+} from "./selection-scope";
 import {
   MAX_NATIVE_GRADIENT_DESCRIPTOR_PATH_DEPTH,
   MAX_NATIVE_GRADIENT_DIAGNOSTIC_LENGTH,
@@ -30,6 +36,7 @@ import {
 import type {
   NativeGradientApplyResult,
   NativeGradientApplyTarget,
+  NativeGradientSelectionDiagnostics,
 } from "../../js/shared/native-gradient-contract.ts";
 export type {
   NativeGradientApplyResult,
@@ -144,6 +151,7 @@ const resultFor = (hostVersion: string): NativeGradientApplyResult => ({
   undoGroupClosed: false,
   selectionRestoreAttempted: false,
   selectionRestored: false,
+  selectionRestorationMode: "not-attempted",
   applyError: null,
 });
 
@@ -738,6 +746,134 @@ const selectionSnapshotsEqual = (
   return true;
 };
 
+type SelectionRestorationClassification = {
+  mode: "exact" | "ae-normalized" | "failed";
+  actual: LayerSelectionSnapshot[] | null;
+  ignoredAncestors: SelectionScopeIgnoredAncestor[];
+};
+
+const propertyPathSetContains = (paths: PropertyPath[], candidate: PropertyPath) => {
+  for (let index = 0; index < paths.length; index += 1) {
+    if (propertyPathsEqual(paths[index], candidate)) return true;
+  }
+  return false;
+};
+
+const isNativeGradientPayloadPath = (path: PropertyPath) => {
+  const depth = path.matchNamePath.length;
+  return (
+    depth >= 2 &&
+    path.matchNamePath[depth - 1] === PAYLOAD_MATCH_NAME &&
+    (path.matchNamePath[depth - 2] === FILL_MATCH_NAME ||
+      path.matchNamePath[depth - 2] === STROKE_MATCH_NAME)
+  );
+};
+
+const isNearestVectorGroupAncestorOfNativeGradient = (
+  candidate: PropertyPath,
+  expectedProperties: PropertyPath[]
+) => {
+  if (
+    candidate.matchNamePath.length === 0 ||
+    candidate.matchNamePath[candidate.matchNamePath.length - 1] !== "ADBE Vector Group"
+  ) {
+    return false;
+  }
+  for (let pathIndex = 0; pathIndex < expectedProperties.length; pathIndex += 1) {
+    const expected = expectedProperties[pathIndex];
+    const depth = expected.matchNamePath.length;
+    if (!isNativeGradientPayloadPath(expected)) continue;
+    let nearestVectorGroupIndex = -1;
+    for (let index = 0; index < depth - 2; index += 1) {
+      if (expected.matchNamePath[index] === "ADBE Vector Group") {
+        nearestVectorGroupIndex = index;
+      }
+    }
+    if (nearestVectorGroupIndex + 1 !== candidate.matchNamePath.length) continue;
+    let prefixMatches = true;
+    for (let index = 0; index <= nearestVectorGroupIndex; index += 1) {
+      if (
+        expected.propertyIndexPath[index] !== candidate.propertyIndexPath[index] ||
+        expected.matchNamePath[index] !== candidate.matchNamePath[index]
+      ) {
+        prefixMatches = false;
+        break;
+      }
+    }
+    if (prefixMatches) return true;
+  }
+  return false;
+};
+
+const classifySelectionRestoration = (
+  hostVersion: string,
+  expected: LayerSelectionSnapshot[],
+  actual: LayerSelectionSnapshot[] | null
+): SelectionRestorationClassification => {
+  if (!actual) return { mode: "failed", actual, ignoredAncestors: [] };
+  if (selectionSnapshotsEqual(actual, expected)) {
+    return { mode: "exact", actual, ignoredAncestors: [] };
+  }
+  const normalizedHostVersion = normalizeNativeGradientHostVersion(hostVersion);
+  if (!normalizedHostVersion || normalizedHostVersion.indexOf("23.") !== 0) {
+    return { mode: "failed", actual, ignoredAncestors: [] };
+  }
+  if (actual.length !== expected.length) {
+    return { mode: "failed", actual, ignoredAncestors: [] };
+  }
+  let nativeGradientLayerCount = 0;
+  const ignoredAncestors: SelectionScopeIgnoredAncestor[] = [];
+  for (let layerIndex = 0; layerIndex < expected.length; layerIndex += 1) {
+    const expectedLayer = expected[layerIndex];
+    const actualLayer = actual[layerIndex];
+    if (
+      actualLayer.layerId !== expectedLayer.layerId ||
+      actualLayer.layerIndex !== expectedLayer.layerIndex ||
+      actualLayer.selected !== expectedLayer.selected
+    ) {
+      return { mode: "failed", actual, ignoredAncestors: [] };
+    }
+    let layerHasNativeGradient = false;
+    for (let pathIndex = 0; pathIndex < expectedLayer.properties.length; pathIndex += 1) {
+      if (isNativeGradientPayloadPath(expectedLayer.properties[pathIndex])) {
+        layerHasNativeGradient = true;
+      }
+    }
+    if (layerHasNativeGradient) nativeGradientLayerCount += 1;
+    for (let pathIndex = 0; pathIndex < expectedLayer.properties.length; pathIndex += 1) {
+      if (!propertyPathSetContains(actualLayer.properties, expectedLayer.properties[pathIndex])) {
+        return { mode: "failed", actual, ignoredAncestors: [] };
+      }
+    }
+    let layerExtraCount = 0;
+    for (let pathIndex = 0; pathIndex < actualLayer.properties.length; pathIndex += 1) {
+      const actualPath = actualLayer.properties[pathIndex];
+      if (propertyPathSetContains(expectedLayer.properties, actualPath)) continue;
+      if (
+        !isNearestVectorGroupAncestorOfNativeGradient(
+          actualPath,
+          expectedLayer.properties
+        )
+      ) {
+        return { mode: "failed", actual, ignoredAncestors: [] };
+      }
+      layerExtraCount += 1;
+      if (layerExtraCount > 1) {
+        return { mode: "failed", actual, ignoredAncestors: [] };
+      }
+      ignoredAncestors.push({
+        layerId: actualLayer.layerId,
+        layerIndex: actualLayer.layerIndex,
+        path: actualPath,
+      });
+    }
+  }
+  if (nativeGradientLayerCount < 2 || ignoredAncestors.length === 0) {
+    return { mode: "failed", actual, ignoredAncestors: [] };
+  }
+  return { mode: "ae-normalized", actual, ignoredAncestors };
+};
+
 const selectionMatchesSnapshot = (
   activeItem: any,
   expected: LayerSelectionSnapshot[]
@@ -785,23 +921,169 @@ const clearSelection = (activeItem: any) => {
   }
 };
 
-const restoreSelection = (activeItem: any, snapshot: LayerSelectionSnapshot[]) => {
-  clearSelection(activeItem);
+const readSelected = (value: any) => {
+  try {
+    return value && value.selected === true;
+  } catch (_error) {
+    return null;
+  }
+};
+
+const boundedDiagnosticSnapshot = (snapshot: LayerSelectionSnapshot[] | null) => {
+  if (snapshot === null) return { snapshot: null, truncated: false };
+  const bounded: LayerSelectionSnapshot[] = [];
+  let propertyCount = 0;
+  let truncated = false;
   for (let index = 0; index < snapshot.length; index += 1) {
     const entry = snapshot[index];
-    const layer = activeItem.layer(entry.layerIndex);
-    if (!layer || layer.id !== entry.layerId || layer.index !== entry.layerIndex) {
-      throw new Error("Selection layer drifted");
+    if (!entry.selected && entry.properties.length === 0) continue;
+    if (bounded.length >= MAX_NATIVE_GRADIENT_TARGET_COUNT) {
+      truncated = true;
+      break;
     }
-    layer.selected = entry.selected;
+    const properties: PropertyPath[] = [];
     for (let pathIndex = 0; pathIndex < entry.properties.length; pathIndex += 1) {
-      const property = resolvePropertyPath(layer, entry.properties[pathIndex]);
-      if (!property) throw new Error("Selection property drifted");
-      property.selected = true;
+      if (propertyCount >= MAX_NATIVE_GRADIENT_TARGET_COUNT) {
+        truncated = true;
+        break;
+      }
+      const path = entry.properties[pathIndex];
+      properties.push({
+        propertyIndexPath: path.propertyIndexPath,
+        matchNamePath: path.matchNamePath,
+      });
+      propertyCount += 1;
     }
+    bounded.push({
+      layerId: entry.layerId,
+      layerIndex: entry.layerIndex,
+      selected: entry.selected,
+      properties,
+    });
+    if (properties.length !== entry.properties.length) truncated = true;
   }
-  if (!selectionMatchesSnapshot(activeItem, snapshot)) {
-    throw new Error("Selection restoration was not exact");
+  return { snapshot: bounded, truncated };
+};
+
+const createSelectionDiagnostics = (
+  snapshot: LayerSelectionSnapshot[]
+): NativeGradientSelectionDiagnostics => {
+  const expected = boundedDiagnosticSnapshot(snapshot);
+  return {
+    schemaVersion: 1,
+    inGroup: {
+      stage: "clear",
+      error: null,
+      expected: expected.snapshot || [],
+      expectedTruncated: expected.truncated,
+      actual: null,
+      actualTruncated: false,
+      exact: false,
+      acceptedNormalization: false,
+      layers: [],
+      layersTruncated: false,
+    },
+    afterUndoGroup: null,
+  };
+};
+
+const captureDiagnosticActual = (
+  activeItem: any,
+  expected: LayerSelectionSnapshot[],
+  diagnostics: NativeGradientSelectionDiagnostics
+) => {
+  const actual = captureSelection(activeItem);
+  const boundedActual = boundedDiagnosticSnapshot(actual);
+  diagnostics.inGroup.actual = boundedActual.snapshot;
+  diagnostics.inGroup.actualTruncated = boundedActual.truncated;
+  diagnostics.inGroup.exact =
+    actual !== null && selectionSnapshotsEqual(actual, expected);
+  return actual;
+};
+
+const restoreSelection = (
+  activeItem: any,
+  snapshot: LayerSelectionSnapshot[],
+  diagnostics: NativeGradientSelectionDiagnostics,
+  hostVersion: string
+) => {
+  let diagnosticPropertyCount = 0;
+  try {
+    diagnostics.inGroup.stage = "clear";
+    clearSelection(activeItem);
+    for (let index = 0; index < snapshot.length; index += 1) {
+      const entry = snapshot[index];
+      const shouldRecordLayer = entry.selected || entry.properties.length > 0;
+      const layerDiagnostic =
+        shouldRecordLayer &&
+        diagnostics.inGroup.layers.length < MAX_NATIVE_GRADIENT_TARGET_COUNT
+          ? {
+              layerId: entry.layerId,
+              layerIndex: entry.layerIndex,
+              selected: entry.selected,
+              resolved: false,
+              selectedAfterSet: null as boolean | null,
+              properties: [] as NativeGradientSelectionDiagnostics["inGroup"]["layers"][number]["properties"],
+            }
+          : null;
+      if (layerDiagnostic) diagnostics.inGroup.layers.push(layerDiagnostic);
+      else if (shouldRecordLayer) diagnostics.inGroup.layersTruncated = true;
+      diagnostics.inGroup.stage = "layer-resolve";
+      const layer = activeItem.layer(entry.layerIndex);
+      if (!layer || layer.id !== entry.layerId || layer.index !== entry.layerIndex) {
+        throw new Error("Selection layer drifted");
+      }
+      if (layerDiagnostic) layerDiagnostic.resolved = true;
+      diagnostics.inGroup.stage = "layer-select";
+      try {
+        layer.selected = entry.selected;
+      } finally {
+        if (layerDiagnostic) layerDiagnostic.selectedAfterSet = readSelected(layer);
+      }
+      for (let pathIndex = 0; pathIndex < entry.properties.length; pathIndex += 1) {
+        const path = entry.properties[pathIndex];
+        const propertyDiagnostic =
+          layerDiagnostic && diagnosticPropertyCount < MAX_NATIVE_GRADIENT_TARGET_COUNT
+            ? {
+                propertyIndexPath: path.propertyIndexPath,
+                matchNamePath: path.matchNamePath,
+                resolved: false,
+                selectedAfterSet: null as boolean | null,
+              }
+            : null;
+        if (propertyDiagnostic && layerDiagnostic) {
+          layerDiagnostic.properties.push(propertyDiagnostic);
+          diagnosticPropertyCount += 1;
+        } else if (shouldRecordLayer) {
+          diagnostics.inGroup.layersTruncated = true;
+        }
+        diagnostics.inGroup.stage = "property-resolve";
+        const property = resolvePropertyPath(layer, path);
+        if (!property) throw new Error("Selection property drifted");
+        if (propertyDiagnostic) propertyDiagnostic.resolved = true;
+        diagnostics.inGroup.stage = "property-select";
+        try {
+          property.selected = true;
+        } finally {
+          if (propertyDiagnostic) propertyDiagnostic.selectedAfterSet = readSelected(property);
+        }
+      }
+    }
+    diagnostics.inGroup.stage = "verify";
+    const actual = captureDiagnosticActual(activeItem, snapshot, diagnostics);
+    const classification = classifySelectionRestoration(hostVersion, snapshot, actual);
+    diagnostics.inGroup.acceptedNormalization = classification.mode === "ae-normalized";
+    if (classification.mode === "failed") {
+      throw new Error("Selection restoration was not exact");
+    }
+    diagnostics.inGroup.stage = "complete";
+    return classification;
+  } catch (error) {
+    if (diagnostics.inGroup.actual === null) {
+      captureDiagnosticActual(activeItem, snapshot, diagnostics);
+    }
+    diagnostics.inGroup.error = captureApplyError(error);
+    throw error;
   }
 };
 
@@ -987,13 +1269,26 @@ export const applyNativeGradientPresetToSelectedTarget = (
     result.status = result.primaryStatus;
   }
 
+  let restorationClassification: SelectionRestorationClassification | null = null;
   if (selectionMutationEntered) {
     result.selectionRestoreAttempted = true;
+    const selectionDiagnostics = createSelectionDiagnostics(snapshot);
     try {
-      restoreSelection(activeItem, snapshot);
+      restorationClassification = restoreSelection(
+        activeItem,
+        snapshot,
+        selectionDiagnostics,
+        hostVersion
+      );
       result.selectionRestored = true;
+      result.selectionRestorationMode = restorationClassification.mode;
+      if (restorationClassification.mode === "ae-normalized") {
+        result.selectionDiagnostics = selectionDiagnostics;
+      }
     } catch (_error) {
       result.selectionRestored = false;
+      result.selectionRestorationMode = "failed";
+      result.selectionDiagnostics = selectionDiagnostics;
     }
   }
 
@@ -1004,6 +1299,70 @@ export const applyNativeGradientPresetToSelectedTarget = (
       result.undoGroupClosed = true;
     } catch (_error) {
       result.undoGroupClosed = false;
+    }
+  }
+
+  if (result.selectionDiagnostics) {
+    const actual = captureSelection(activeItem);
+    const boundedActual = boundedDiagnosticSnapshot(actual);
+    const afterUndoClassification = classifySelectionRestoration(
+      hostVersion,
+      snapshot,
+      actual
+    );
+    result.selectionDiagnostics.afterUndoGroup = {
+      actual: boundedActual.snapshot,
+      actualTruncated: boundedActual.truncated,
+      exact: afterUndoClassification.mode === "exact",
+      acceptedNormalization: afterUndoClassification.mode === "ae-normalized",
+    };
+    if (
+      result.selectionRestorationMode === "ae-normalized" &&
+      afterUndoClassification.mode === "failed"
+    ) {
+      result.selectionRestored = false;
+      result.selectionRestorationMode = "failed";
+      restorationClassification = afterUndoClassification;
+    } else if (result.selectionRestorationMode === "ae-normalized") {
+      result.selectionRestorationMode = afterUndoClassification.mode;
+      restorationClassification = afterUndoClassification;
+      if (afterUndoClassification.mode === "exact") {
+        delete result.selectionDiagnostics;
+      }
+    }
+  }
+
+  if (selectionMutationEntered) {
+    if (
+      result.selectionRestored &&
+      result.selectionRestorationMode === "ae-normalized" &&
+      restorationClassification &&
+      restorationClassification.actual
+    ) {
+      if (
+        !setSelectionScopeNormalization(
+          activeItem,
+          restorationClassification.actual,
+          restorationClassification.ignoredAncestors
+        )
+      ) {
+        result.selectionRestored = false;
+        result.selectionRestorationMode = "failed";
+        if (result.selectionDiagnostics) {
+          result.selectionDiagnostics.inGroup.acceptedNormalization = false;
+          if (result.selectionDiagnostics.afterUndoGroup) {
+            result.selectionDiagnostics.afterUndoGroup.acceptedNormalization = false;
+          }
+        }
+        clearSelectionScopeNormalization();
+      }
+    } else if (
+      result.selectionRestored &&
+      result.selectionRestorationMode === "exact"
+    ) {
+      reconcileSelectionScopeNormalization(activeItem, snapshot);
+    } else {
+      clearSelectionScopeNormalization();
     }
   }
 

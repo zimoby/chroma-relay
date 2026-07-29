@@ -3,6 +3,19 @@ export type SelectionPropertyPath = {
   matchNamePath: string[];
 };
 
+export type SelectionScopeLayerSnapshot = {
+  layerId: number;
+  layerIndex: number;
+  selected: boolean;
+  properties: SelectionPropertyPath[];
+};
+
+export type SelectionScopeIgnoredAncestor = {
+  layerId: number;
+  layerIndex: number;
+  path: SelectionPropertyPath;
+};
+
 export type SelectedScopeRoot = {
   layer: any;
   property: any;
@@ -27,6 +40,46 @@ export type SelectionTraversalRoot = {
   matchNamePath: string[];
   disabled: boolean;
   materialOptions: boolean;
+};
+
+type SelectionScopeNormalizationRecord = {
+  compId: number;
+  snapshot: SelectionScopeLayerSnapshot[];
+  ignoredAncestors: SelectionScopeIgnoredAncestor[];
+};
+
+const SELECTION_SCOPE_NORMALIZATION_KEY = "__chromaRelaySelectionScopeNormalizationV1";
+let selectionScopeNormalizationFallback: SelectionScopeNormalizationRecord | null = null;
+
+const selectionScopeHostGlobal = () => {
+  try {
+    return typeof $ !== "undefined" && $ ? ($ as any) : null;
+  } catch (_error) {
+    return null;
+  }
+};
+
+const readSelectionScopeNormalization = (): SelectionScopeNormalizationRecord | null => {
+  const hostGlobal = selectionScopeHostGlobal();
+  try {
+    return hostGlobal && hostGlobal[SELECTION_SCOPE_NORMALIZATION_KEY]
+      ? hostGlobal[SELECTION_SCOPE_NORMALIZATION_KEY]
+      : selectionScopeNormalizationFallback;
+  } catch (_error) {
+    return selectionScopeNormalizationFallback;
+  }
+};
+
+const writeSelectionScopeNormalization = (
+  value: SelectionScopeNormalizationRecord | null
+) => {
+  selectionScopeNormalizationFallback = value;
+  const hostGlobal = selectionScopeHostGlobal();
+  if (hostGlobal) {
+    try {
+      hostGlobal[SELECTION_SCOPE_NORMALIZATION_KEY] = value;
+    } catch (_error) {}
+  }
 };
 
 export const createSelectionKeySet = (): SelectionKeySet => ({ size: 0, values: {} });
@@ -139,6 +192,194 @@ const pathsEqual = (left: SelectionPropertyPath, right: SelectionPropertyPath) =
       return false;
     }
   }
+  return true;
+};
+
+const isValidSelectionPath = (path: SelectionPropertyPath) => {
+  if (
+    !path ||
+    !path.propertyIndexPath ||
+    !path.matchNamePath ||
+    path.propertyIndexPath.length === 0 ||
+    path.propertyIndexPath.length > 128 ||
+    path.propertyIndexPath.length !== path.matchNamePath.length
+  ) {
+    return false;
+  }
+  for (let index = 0; index < path.propertyIndexPath.length; index += 1) {
+    if (
+      !isPositiveInteger(path.propertyIndexPath[index]) ||
+      typeof path.matchNamePath[index] !== "string" ||
+      path.matchNamePath[index].length === 0
+    ) {
+      return false;
+    }
+  }
+  return true;
+};
+
+const cloneSelectionPath = (path: SelectionPropertyPath): SelectionPropertyPath => ({
+  propertyIndexPath: path.propertyIndexPath.slice(),
+  matchNamePath: path.matchNamePath.slice(),
+});
+
+const normalizeSelectionSnapshot = (
+  snapshot: SelectionScopeLayerSnapshot[]
+): SelectionScopeLayerSnapshot[] | null => {
+  if (!snapshot || snapshot.length > 128) return null;
+  const normalized: SelectionScopeLayerSnapshot[] = [];
+  const layerKeys: string[] = [];
+  for (let index = 0; index < snapshot.length; index += 1) {
+    const entry = snapshot[index];
+    if (!entry || (!entry.selected && entry.properties.length === 0)) continue;
+    if (
+      !isPositiveInteger(entry.layerId) ||
+      !isPositiveInteger(entry.layerIndex) ||
+      typeof entry.selected !== "boolean" ||
+      !entry.properties ||
+      entry.properties.length > 128
+    ) {
+      return null;
+    }
+    const layerKey = entry.layerId + ":" + entry.layerIndex;
+    for (let keyIndex = 0; keyIndex < layerKeys.length; keyIndex += 1) {
+      if (layerKeys[keyIndex] === layerKey) return null;
+    }
+    layerKeys.push(layerKey);
+    const properties: SelectionPropertyPath[] = [];
+    for (let pathIndex = 0; pathIndex < entry.properties.length; pathIndex += 1) {
+      const path = entry.properties[pathIndex];
+      if (!isValidSelectionPath(path)) return null;
+      for (let priorIndex = 0; priorIndex < properties.length; priorIndex += 1) {
+        if (pathsEqual(properties[priorIndex], path)) return null;
+      }
+      properties.push(cloneSelectionPath(path));
+    }
+    properties.sort(compareSelectionPropertyPaths);
+    normalized.push({
+      layerId: entry.layerId,
+      layerIndex: entry.layerIndex,
+      selected: entry.selected,
+      properties,
+    });
+  }
+  normalized.sort((left, right) => left.layerIndex - right.layerIndex);
+  return normalized;
+};
+
+const selectionScopeSnapshotsEqual = (
+  left: SelectionScopeLayerSnapshot[],
+  right: SelectionScopeLayerSnapshot[]
+) => {
+  if (left.length !== right.length) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    if (
+      left[index].layerId !== right[index].layerId ||
+      left[index].layerIndex !== right[index].layerIndex ||
+      left[index].selected !== right[index].selected ||
+      left[index].properties.length !== right[index].properties.length
+    ) {
+      return false;
+    }
+    for (let pathIndex = 0; pathIndex < left[index].properties.length; pathIndex += 1) {
+      if (!pathsEqual(left[index].properties[pathIndex], right[index].properties[pathIndex])) {
+        return false;
+      }
+    }
+  }
+  return true;
+};
+
+export const clearSelectionScopeNormalization = () => {
+  writeSelectionScopeNormalization(null);
+};
+
+export const hasSelectionScopeNormalization = () => readSelectionScopeNormalization() !== null;
+
+export const reconcileSelectionScopeNormalization = (
+  activeItem: any,
+  snapshot: SelectionScopeLayerSnapshot[]
+) => {
+  const selectionScopeNormalization = readSelectionScopeNormalization();
+  if (!selectionScopeNormalization) return false;
+  const normalized = normalizeSelectionSnapshot(snapshot);
+  if (
+    !normalized ||
+    !activeItem ||
+    !isPositiveInteger(activeItem.id) ||
+    activeItem.id !== selectionScopeNormalization.compId ||
+    !selectionScopeSnapshotsEqual(normalized, selectionScopeNormalization.snapshot)
+  ) {
+    clearSelectionScopeNormalization();
+    return false;
+  }
+  return true;
+};
+
+export const setSelectionScopeNormalization = (
+  activeItem: any,
+  snapshot: SelectionScopeLayerSnapshot[],
+  ignoredAncestors: SelectionScopeIgnoredAncestor[]
+) => {
+  const normalized = normalizeSelectionSnapshot(snapshot);
+  if (
+    !activeItem ||
+    !isPositiveInteger(activeItem.id) ||
+    !normalized ||
+    !ignoredAncestors ||
+    ignoredAncestors.length === 0 ||
+    ignoredAncestors.length > 128
+  ) {
+    clearSelectionScopeNormalization();
+    return false;
+  }
+  const ignored: SelectionScopeIgnoredAncestor[] = [];
+  for (let index = 0; index < ignoredAncestors.length; index += 1) {
+    const candidate = ignoredAncestors[index];
+    if (
+      !candidate ||
+      !isPositiveInteger(candidate.layerId) ||
+      !isPositiveInteger(candidate.layerIndex) ||
+      !isValidSelectionPath(candidate.path)
+    ) {
+      clearSelectionScopeNormalization();
+      return false;
+    }
+    let found = false;
+    for (let layerIndex = 0; layerIndex < normalized.length; layerIndex += 1) {
+      const layer = normalized[layerIndex];
+      if (layer.layerId !== candidate.layerId || layer.layerIndex !== candidate.layerIndex) {
+        continue;
+      }
+      for (let pathIndex = 0; pathIndex < layer.properties.length; pathIndex += 1) {
+        if (pathsEqual(layer.properties[pathIndex], candidate.path)) found = true;
+      }
+    }
+    if (!found) {
+      clearSelectionScopeNormalization();
+      return false;
+    }
+    for (let priorIndex = 0; priorIndex < ignored.length; priorIndex += 1) {
+      if (
+        ignored[priorIndex].layerId === candidate.layerId &&
+        ignored[priorIndex].layerIndex === candidate.layerIndex &&
+        pathsEqual(ignored[priorIndex].path, candidate.path)
+      ) {
+        clearSelectionScopeNormalization();
+        return false;
+      }
+    }
+    ignored.push({
+      layerId: candidate.layerId,
+      layerIndex: candidate.layerIndex,
+      path: cloneSelectionPath(candidate.path),
+    });
+  }
+  writeSelectionScopeNormalization({
+    compId: activeItem.id,
+    snapshot: normalized,
+    ignoredAncestors: ignored,
+  });
   return true;
 };
 
@@ -357,10 +598,14 @@ export const resolveSelectedScopeRoots = (
   isExactTarget: (property: any) => boolean
 ): SelectedScopeResolution => {
   const roots: SelectedScopeRoot[] = [];
+  const invalidSelection = () => {
+    clearSelectionScopeNormalization();
+    return { invalid: true, roots: [] } as SelectedScopeResolution;
+  };
   try {
     const selectedLayers = activeItem.selectedLayers;
     if (!selectedLayers || typeof selectedLayers.length !== "number") {
-      return { invalid: true, roots: [] };
+      return invalidSelection();
     }
 
     const layers: any[] = [];
@@ -368,7 +613,7 @@ export const resolveSelectedScopeRoots = (
     for (let index = 0; index < selectedLayers.length; index += 1) {
       const layer = selectedLayers[index];
       if (!layer || !isPositiveInteger(layer.id) || !isPositiveInteger(layer.index)) {
-        return { invalid: true, roots: [] };
+        return invalidSelection();
       }
       const key = layer.id + ":" + layer.index;
       let duplicate = false;
@@ -382,6 +627,8 @@ export const resolveSelectedScopeRoots = (
     }
     layers.sort((left, right) => left.index - right.index);
 
+    const candidateLayers: Array<{ layer: any; candidates: SelectedScopeRoot[] }> = [];
+    const currentSnapshot: SelectionScopeLayerSnapshot[] = [];
     for (let layerOffset = 0; layerOffset < layers.length; layerOffset += 1) {
       const layer = layers[layerOffset];
       if (
@@ -390,15 +637,24 @@ export const resolveSelectedScopeRoots = (
         !isPositiveInteger(layer.index) ||
         !isSameLayerSlot(activeItem.layer(layer.index), layer)
       ) {
-        return { invalid: true, roots: [] };
+        return invalidSelection();
       }
 
       const selectedProperties = layer.selectedProperties;
       if (!selectedProperties || typeof selectedProperties.length !== "number") {
-        return { invalid: true, roots: [] };
+        return invalidSelection();
       }
       if (selectedProperties.length === 0) {
-        roots.push({ layer, property: layer, path: null, exact: false, wholeLayer: true });
+        candidateLayers.push({
+          layer,
+          candidates: [{ layer, property: layer, path: null, exact: false, wholeLayer: true }],
+        });
+        currentSnapshot.push({
+          layerId: layer.id,
+          layerIndex: layer.index,
+          selected: layer.selected === true,
+          properties: [],
+        });
         continue;
       }
 
@@ -406,7 +662,7 @@ export const resolveSelectedScopeRoots = (
       for (let propertyOffset = 0; propertyOffset < selectedProperties.length; propertyOffset += 1) {
         const property = selectedProperties[propertyOffset];
         const path = buildSelectionPropertyPath(layer, property);
-        if (!path) return { invalid: true, roots: [] };
+        if (!path) return invalidSelection();
 
         let duplicateIndex = -1;
         for (let index = 0; index < candidates.length; index += 1) {
@@ -426,14 +682,53 @@ export const resolveSelectedScopeRoots = (
       candidates.sort((left, right) =>
         compareSelectionPropertyPaths(left.path!, right.path!)
       );
+      candidateLayers.push({ layer, candidates });
+      const snapshotProperties: SelectionPropertyPath[] = [];
+      for (let candidateIndex = 0; candidateIndex < candidates.length; candidateIndex += 1) {
+        snapshotProperties.push(cloneSelectionPath(candidates[candidateIndex].path!));
+      }
+      currentSnapshot.push({
+        layerId: layer.id,
+        layerIndex: layer.index,
+        selected: layer.selected === true,
+        properties: snapshotProperties,
+      });
+    }
+
+    const normalizationMatches = reconcileSelectionScopeNormalization(activeItem, currentSnapshot);
+    const selectionScopeNormalization = readSelectionScopeNormalization();
+    const ignoredAncestors =
+      normalizationMatches && selectionScopeNormalization
+        ? selectionScopeNormalization.ignoredAncestors
+        : [];
+    const isIgnoredAncestor = (layer: any, path: SelectionPropertyPath | null) => {
+      if (!path) return false;
+      for (let index = 0; index < ignoredAncestors.length; index += 1) {
+        const ignored = ignoredAncestors[index];
+        if (
+          ignored.layerId === layer.id &&
+          ignored.layerIndex === layer.index &&
+          pathsEqual(ignored.path, path)
+        ) {
+          return true;
+        }
+      }
+      return false;
+    };
+
+    for (let layerOffset = 0; layerOffset < candidateLayers.length; layerOffset += 1) {
+      const layer = candidateLayers[layerOffset].layer;
+      const candidates = candidateLayers[layerOffset].candidates;
       for (let candidateIndex = 0; candidateIndex < candidates.length; candidateIndex += 1) {
         const candidate = candidates[candidateIndex];
+        if (isIgnoredAncestor(layer, candidate.path)) continue;
         let redundantNonExactDescendant = false;
         if (!candidate.exact) {
           for (let ancestorIndex = 0; ancestorIndex < candidates.length; ancestorIndex += 1) {
             const ancestor = candidates[ancestorIndex];
             if (
               ancestorIndex !== candidateIndex &&
+              !isIgnoredAncestor(layer, ancestor.path) &&
               ancestor.path &&
               candidate.path &&
               isStrictDescendantPath(candidate.path, ancestor.path)
@@ -448,7 +743,7 @@ export const resolveSelectedScopeRoots = (
     }
     return { invalid: false, roots };
   } catch (_error) {
-    return { invalid: true, roots: [] };
+    return invalidSelection();
   }
 };
 
