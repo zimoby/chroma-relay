@@ -744,3 +744,193 @@ test("native-gradient cleanup retains scratch when host setup completion is unkn
     retainScratch: false,
   });
 });
+
+test("AE23 selection diagnostic sends no harness host or cleanup action after product dispatch", async () => {
+  const source = await readFile(
+    resolve("scripts/diagnose-ae23-selection-restore.mjs"),
+    "utf8"
+  );
+  const dispatchMarker = "actionDispatched = true;";
+  const dispatchIndex = source.indexOf(dispatchMarker);
+  assert.ok(dispatchIndex > 0, "diagnostic must latch before product dispatch");
+  assert.match(
+    source.slice(dispatchIndex),
+    /actionDispatched = true;\s*const accepted = await client\.evaluate/
+  );
+  const afterDispatch = source.slice(dispatchIndex + dispatchMarker.length);
+  for (const forbidden of [
+    "hostEval(",
+    "cleanupSource",
+    "executeCommand(",
+    "project.close(",
+    "app.open(",
+    "app.newProject(",
+    "setTemporaryConfigRoot(",
+    "removeOwnedRunDirectory(",
+    "rm(scratch",
+  ]) {
+    assert.equal(
+      afterDispatch.includes(forbidden),
+      false,
+      `post-dispatch diagnostic contains forbidden operation: ${forbidden}`
+    );
+  }
+  assert.match(source, /harnessHostEvalAfterActionCount/);
+  assert.match(source, /harnessHostEvalAfterActionCount !== 0/);
+  assert.match(source, /projectCleanupAttempted: false/);
+  assert.match(source, /panelCleanupAttempted: false/);
+  assert.match(source, /scratchRemoved: false/);
+  assert.match(source, /expectedTruncated/);
+  assert.match(source, /layersTruncated/);
+  assert.match(source, /actualTruncated/);
+  assert.match(source, /if \(!primaryError\) primaryError = writeError;/);
+});
+
+test("raw AE selection-semantics diagnostic uses one host call and no cleanup action", async () => {
+  const source = await readFile(
+    resolve("scripts/diagnose-ae-selection-semantics.mjs"),
+    "utf8"
+  );
+  assert.equal((source.match(/\.evalScript\(/g) || []).length, 1);
+  assert.equal((source.match(/hostEval\(client, hostSource\)/g) || []).length, 1);
+  const dispatchIndex = source.indexOf("hostResult = await hostEval(client, hostSource);");
+  assert.ok(dispatchIndex > 0, "probe must dispatch its one host call");
+  const afterResult = source.slice(
+    dispatchIndex + "hostResult = await hostEval(client, hostSource);".length
+  );
+  assert.equal(afterResult.includes("hostEval("), false);
+  for (const forbidden of [
+    "applyPreset(",
+    "executeCommand(",
+    "project.close(",
+    "app.open(",
+    "app.newProject(",
+    "setTemporaryConfigRoot(",
+    "removeOwnedRunDirectory(",
+    "rm(scratch",
+  ]) {
+    assert.equal(
+      source.includes(forbidden),
+      false,
+      `selection-semantics diagnostic contains forbidden operation: ${forbidden}`
+    );
+  }
+  assert.match(source, /MAX_SELECTED_PROPERTIES = 32/);
+  assert.match(source, /Selection-semantics label must be a lowercase safe token/);
+  assert.match(source, /current-project-not-empty-clean/);
+  assert.match(source, /unexpected-ae-version/);
+  assert.ok(
+    source.indexOf("app.version !== EXPECTED_VERSION") < source.indexOf("app.beginUndoGroup("),
+    "exact AE version must be checked before fixture mutation"
+  );
+  assert.match(source, /stage = "end-undo";\s*undoOpened = false;\s*app\.endUndoGroup\(\);/);
+  assert.match(
+    source,
+    /if \(undoOpened\) \{\s*undoOpened = false;\s*try \{\s*app\.endUndoGroup\(\);/
+  );
+  assert.equal(source.includes("app.endUndoGroup();\n    undoOpened = false;"), false);
+  assert.match(source, /throw new Error\("selected-properties-over-limit"\)/);
+  assert.match(source, /throw new Error\("selected-property-path-invalid"\)/);
+  assert.match(source, /validateHostResult\(hostResult\)/);
+  assert.match(source, /installedPanelPath = await realpath/);
+  assert.match(source, /targetPanelPath = await realpath\(fileURLToPath\(targetUrl\)\)/);
+  assert.match(source, /Main CDP target resolved to the wrong panel/);
+  assert.match(source, /groupMatchNamePath/);
+  assert.match(source, /leafMatchNamePath/);
+  assert.match(source, /current\.matchName !== expectedMatchNames\[index\]/);
+  assert.match(source, /harnessHostEvalCount !== 1/);
+  assert.match(source, /harnessHostEvalAfterResultCount !== 0/);
+  assert.match(source, /projectCleanupAttempted: false/);
+  assert.match(source, /undoCommandAttempted: false/);
+  assert.match(source, /panelConfigChanged: false/);
+  for (const caseName of [
+    "fill-leaf-only",
+    "stroke-leaf-only",
+    "fill-parent-only",
+    "stroke-parent-only",
+    "fill-parent-then-leaf",
+    "stroke-parent-then-leaf",
+    "fill-leaf-then-parent-off",
+    "stroke-leaf-then-parent-off",
+    "fill-then-stroke",
+    "stroke-then-fill",
+  ]) {
+    assert.match(source, new RegExp(`runCase\\(\"${caseName}\"`));
+  }
+
+  const validatorStart = source.indexOf("const caseSpecs = [");
+  const validatorEnd = source.indexOf("\n\nlet client = null;", validatorStart);
+  assert.ok(validatorStart > 0 && validatorEnd > validatorStart);
+  const { caseSpecs, validateHostResult } = new Function(
+    `${source.slice(validatorStart, validatorEnd)}\nreturn { caseSpecs, validateHostResult };`
+  )();
+  const emptySnapshot = () => ({
+    selectedLayerCount: 0,
+    selectedPropertyCount: 0,
+    truncated: false,
+    layers: [],
+  });
+  const selectedSnapshot = (layerCount) => ({
+    selectedLayerCount: layerCount,
+    selectedPropertyCount: 0,
+    truncated: false,
+    layers: Array.from({ length: layerCount }, (_, index) => ({
+      layerId: 1000 + index,
+      layerIndex: index + 1,
+      layerName: `Layer ${index + 1}`,
+      selected: true,
+      properties: [],
+    })),
+  });
+  const validResult = {
+    projectItemCount: 10,
+    projectDirty: true,
+    caseCount: caseSpecs.length,
+    cases: caseSpecs.map((spec) => ({
+      name: spec.name,
+      baseline: emptySnapshot(),
+      steps: spec.operations.map(([target, scope, requested]) => ({
+        target,
+        scope,
+        requested,
+        selectedAfterSet: requested,
+        layerSelectedAfterSet: true,
+        snapshot: selectedSnapshot(spec.maximumLayerCount),
+      })),
+      insideUndo: selectedSnapshot(spec.maximumLayerCount),
+      afterUndo: selectedSnapshot(spec.maximumLayerCount),
+    })),
+  };
+  assert.equal(validateHostResult(validResult), null);
+
+  const mutate = (callback) => {
+    const candidate = structuredClone(validResult);
+    callback(candidate);
+    return validateHostResult(candidate);
+  };
+  assert.match(
+    mutate((candidate) => {
+      candidate.cases[0].steps[0].target = "stroke";
+    }),
+    /case-step-invalid-fill-leaf-only/
+  );
+  assert.match(
+    mutate((candidate) => {
+      candidate.cases[0].insideUndo.selectedLayerCount = 0;
+    }),
+    /snapshot-selected-layer-count-mismatch/
+  );
+  assert.match(
+    mutate((candidate) => {
+      candidate.cases[8].insideUndo.layers[1].layerId =
+        candidate.cases[8].insideUndo.layers[0].layerId;
+    }),
+    /snapshot-layer-identity-duplicate/
+  );
+  assert.match(
+    mutate((candidate) => {
+      candidate.cases[0].afterUndo.truncated = true;
+    }),
+    /snapshot-missing-or-truncated/
+  );
+});
