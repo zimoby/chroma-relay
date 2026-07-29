@@ -787,10 +787,9 @@ test("AE23 selection diagnostic sends no harness host or cleanup action after pr
 });
 
 test("raw AE selection-semantics diagnostic uses one host call and no cleanup action", async () => {
-  const source = await readFile(
-    resolve("scripts/diagnose-ae-selection-semantics.mjs"),
-    "utf8"
-  );
+  const source = (
+    await readFile(resolve("scripts/diagnose-ae-selection-semantics.mjs"), "utf8")
+  ).replace(/\r\n/g, "\n");
   assert.equal((source.match(/\.evalScript\(/g) || []).length, 1);
   assert.equal((source.match(/hostEval\(client, hostSource\)/g) || []).length, 1);
   const dispatchIndex = source.indexOf("hostResult = await hostEval(client, hostSource);");
