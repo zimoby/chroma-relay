@@ -17,8 +17,13 @@ import {
   normalizeNativeGradientHostVersion,
   resolveNativeGradientRuntime,
   resolveNativeGradientTemplateFamily,
+  type NativeGradientApplyError,
   type NativeGradientApplyResult,
   type NativeGradientApplyStatus,
+  type NativeGradientSelectionDiagnostics,
+  type NativeGradientSelectionLayerDiagnostic,
+  type NativeGradientSelectionPathDiagnostic,
+  type NativeGradientSelectionSnapshotDiagnostic,
   type NativeGradientTemplateFamily,
 } from "../shared/native-gradient-contract.ts";
 export { resolveNativeGradientRuntime } from "../shared/native-gradient-contract.ts";
@@ -1013,6 +1018,334 @@ const hasNoSelectionEvidence = (
       ? preservedStateCount > 0 || skippedDisabledCount === 0
       : skippedDisabledCount === 0 && preservedStateCount === 0);
 
+const SELECTION_DIAGNOSTIC_STAGES = {
+  clear: true,
+  "layer-resolve": true,
+  "layer-select": true,
+  "property-resolve": true,
+  "property-select": true,
+  verify: true,
+  complete: true,
+} as const;
+
+const isBoundedFiniteNumber = (value: unknown) =>
+  typeof value === "number" && Number.isFinite(value);
+
+const isValidApplyError = (value: unknown): value is NativeGradientApplyError => {
+  if (value === null) return false;
+  if (!value || typeof value !== "object") return false;
+  const error = value as Record<string, unknown>;
+  return (
+    Object.prototype.hasOwnProperty.call(error, "line") &&
+    Object.prototype.hasOwnProperty.call(error, "number") &&
+    typeof error.name === "string" &&
+    typeof error.message === "string" &&
+    error.name.length <= MAX_NATIVE_GRADIENT_DIAGNOSTIC_LENGTH &&
+    error.message.length <= MAX_NATIVE_GRADIENT_DIAGNOSTIC_LENGTH &&
+    (error.line === null || isBoundedFiniteNumber(error.line)) &&
+    (error.number === null || isBoundedFiniteNumber(error.number))
+  );
+};
+
+const isValidSelectionPath = (
+  value: unknown,
+): value is NativeGradientSelectionSnapshotDiagnostic["properties"][number] => {
+  if (!value || typeof value !== "object") return false;
+  const path = value as Record<string, unknown>;
+  if (
+    !Array.isArray(path.propertyIndexPath) ||
+    !Array.isArray(path.matchNamePath) ||
+    path.propertyIndexPath.length === 0 ||
+    path.propertyIndexPath.length > MAX_NATIVE_GRADIENT_DESCRIPTOR_PATH_DEPTH ||
+    path.propertyIndexPath.length !== path.matchNamePath.length
+  ) {
+    return false;
+  }
+  for (let index = 0; index < path.propertyIndexPath.length; index += 1) {
+    const propertyIndex = path.propertyIndexPath[index];
+    const matchName = path.matchNamePath[index];
+    if (
+      !isFiniteNonNegativeInteger(propertyIndex) ||
+      propertyIndex <= 0 ||
+      typeof matchName !== "string" ||
+      matchName.length === 0 ||
+      matchName.length > MAX_NATIVE_GRADIENT_MATCH_NAME_LENGTH
+    ) {
+      return false;
+    }
+  }
+  return true;
+};
+
+const isValidSelectionSnapshotEntry = (
+  value: unknown,
+): value is NativeGradientSelectionSnapshotDiagnostic => {
+  if (!value || typeof value !== "object") return false;
+  const entry = value as Record<string, unknown>;
+  if (
+    !isFiniteNonNegativeInteger(entry.layerId) ||
+    entry.layerId <= 0 ||
+    !isFiniteNonNegativeInteger(entry.layerIndex) ||
+    entry.layerIndex <= 0 ||
+    typeof entry.selected !== "boolean" ||
+    !Array.isArray(entry.properties) ||
+    entry.properties.length > MAX_NATIVE_GRADIENT_TARGET_COUNT
+  ) {
+    return false;
+  }
+  for (let index = 0; index < entry.properties.length; index += 1) {
+    if (!isValidSelectionPath(entry.properties[index])) return false;
+  }
+  return true;
+};
+
+const isValidSelectionSnapshotList = (value: unknown) => {
+  if (!Array.isArray(value) || value.length > MAX_NATIVE_GRADIENT_TARGET_COUNT) return false;
+  let propertyCount = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    if (!isValidSelectionSnapshotEntry(value[index])) return false;
+    propertyCount += value[index].properties.length;
+    if (propertyCount > MAX_NATIVE_GRADIENT_TARGET_COUNT) return false;
+  }
+  return true;
+};
+
+type SelectionSnapshotPath = NativeGradientSelectionSnapshotDiagnostic["properties"][number];
+type SelectionOperationLayer = NativeGradientSelectionDiagnostics["inGroup"]["layers"][number];
+
+const selectionSnapshotPathsEqual = (
+  left: SelectionSnapshotPath,
+  right: SelectionSnapshotPath,
+) => {
+  if (
+    left.propertyIndexPath.length !== right.propertyIndexPath.length ||
+    left.matchNamePath.length !== right.matchNamePath.length ||
+    left.propertyIndexPath.length !== left.matchNamePath.length
+  ) return false;
+  for (let index = 0; index < left.propertyIndexPath.length; index += 1) {
+    if (
+      left.propertyIndexPath[index] !== right.propertyIndexPath[index] ||
+      left.matchNamePath[index] !== right.matchNamePath[index]
+    ) return false;
+  }
+  return true;
+};
+
+const selectionSnapshotPathSetContains = (
+  paths: SelectionSnapshotPath[],
+  candidate: SelectionSnapshotPath,
+) => paths.some((path) => selectionSnapshotPathsEqual(path, candidate));
+
+const hasDuplicateSelectionSnapshotPaths = (paths: SelectionSnapshotPath[]) => {
+  for (let leftIndex = 0; leftIndex < paths.length; leftIndex += 1) {
+    for (let rightIndex = leftIndex + 1; rightIndex < paths.length; rightIndex += 1) {
+      if (selectionSnapshotPathsEqual(paths[leftIndex], paths[rightIndex])) return true;
+    }
+  }
+  return false;
+};
+
+const isSnapshotNativeGradientPayload = (path: SelectionSnapshotPath) => {
+  const depth = path.matchNamePath.length;
+  return (
+    depth >= 2 &&
+    path.matchNamePath[depth - 1] === "ADBE Vector Grad Colors" &&
+    (path.matchNamePath[depth - 2] === "ADBE Vector Graphic - G-Fill" ||
+      path.matchNamePath[depth - 2] === "ADBE Vector Graphic - G-Stroke")
+  );
+};
+
+const isNearestVectorGroupAncestorOfSnapshotGradient = (
+  candidate: SelectionSnapshotPath,
+  expectedProperties: SelectionSnapshotPath[],
+) => {
+  if (
+    candidate.matchNamePath[candidate.matchNamePath.length - 1] !== "ADBE Vector Group"
+  ) return false;
+  for (const expected of expectedProperties) {
+    const depth = expected.matchNamePath.length;
+    if (!isSnapshotNativeGradientPayload(expected)) continue;
+    let nearestVectorGroupIndex = -1;
+    for (let index = 0; index < depth - 2; index += 1) {
+      if (expected.matchNamePath[index] === "ADBE Vector Group") nearestVectorGroupIndex = index;
+    }
+    if (nearestVectorGroupIndex + 1 !== candidate.matchNamePath.length) continue;
+    let prefixMatches = true;
+    for (let index = 0; index <= nearestVectorGroupIndex; index += 1) {
+      if (
+        expected.propertyIndexPath[index] !== candidate.propertyIndexPath[index] ||
+        expected.matchNamePath[index] !== candidate.matchNamePath[index]
+      ) {
+        prefixMatches = false;
+        break;
+      }
+    }
+    if (prefixMatches) return true;
+  }
+  return false;
+};
+
+const isAcceptedSelectionNormalizationEvidence = (
+  expected: NativeGradientSelectionSnapshotDiagnostic[],
+  actual: NativeGradientSelectionSnapshotDiagnostic[],
+) => {
+  if (actual.length !== expected.length) return false;
+  let nativeGradientLayerCount = 0;
+  let addedAncestorCount = 0;
+  for (let layerIndex = 0; layerIndex < expected.length; layerIndex += 1) {
+    const expectedLayer = expected[layerIndex];
+    const actualLayer = actual[layerIndex];
+    for (let previousIndex = 0; previousIndex < layerIndex; previousIndex += 1) {
+      if (
+        expected[previousIndex].layerId === expectedLayer.layerId ||
+        expected[previousIndex].layerIndex === expectedLayer.layerIndex ||
+        actual[previousIndex].layerId === actualLayer.layerId ||
+        actual[previousIndex].layerIndex === actualLayer.layerIndex
+      ) return false;
+    }
+    if (
+      actualLayer.layerId !== expectedLayer.layerId ||
+      actualLayer.layerIndex !== expectedLayer.layerIndex ||
+      actualLayer.selected !== expectedLayer.selected ||
+      hasDuplicateSelectionSnapshotPaths(expectedLayer.properties) ||
+      hasDuplicateSelectionSnapshotPaths(actualLayer.properties)
+    ) return false;
+    if (expectedLayer.properties.some(isSnapshotNativeGradientPayload)) {
+      nativeGradientLayerCount += 1;
+    }
+    for (const expectedPath of expectedLayer.properties) {
+      if (!selectionSnapshotPathSetContains(actualLayer.properties, expectedPath)) return false;
+    }
+    let layerAddedAncestorCount = 0;
+    for (const actualPath of actualLayer.properties) {
+      if (selectionSnapshotPathSetContains(expectedLayer.properties, actualPath)) continue;
+      if (
+        !isNearestVectorGroupAncestorOfSnapshotGradient(
+          actualPath,
+          expectedLayer.properties,
+        )
+      ) return false;
+      layerAddedAncestorCount += 1;
+      addedAncestorCount += 1;
+      if (layerAddedAncestorCount > 1) return false;
+    }
+  }
+  return nativeGradientLayerCount >= 2 && addedAncestorCount > 0;
+};
+
+const isCompleteSelectionNormalizationOperationEvidence = (
+  expected: NativeGradientSelectionSnapshotDiagnostic[],
+  layers: SelectionOperationLayer[],
+) => {
+  const relevantExpected = expected.filter(
+    (entry) => entry.selected || entry.properties.length > 0,
+  );
+  if (layers.length !== relevantExpected.length) return false;
+  for (let layerIndex = 0; layerIndex < relevantExpected.length; layerIndex += 1) {
+    const expectedLayer = relevantExpected[layerIndex];
+    const layer = layers[layerIndex];
+    if (
+      layer.layerId !== expectedLayer.layerId ||
+      layer.layerIndex !== expectedLayer.layerIndex ||
+      layer.selected !== expectedLayer.selected ||
+      layer.resolved !== true ||
+      layer.selectedAfterSet !== expectedLayer.selected ||
+      layer.properties.length !== expectedLayer.properties.length
+    ) return false;
+    for (let pathIndex = 0; pathIndex < expectedLayer.properties.length; pathIndex += 1) {
+      const expectedPath = expectedLayer.properties[pathIndex];
+      const property = layer.properties[pathIndex];
+      if (
+        !selectionSnapshotPathsEqual(property, expectedPath) ||
+        property.resolved !== true ||
+        property.selectedAfterSet !== true
+      ) return false;
+    }
+  }
+  return true;
+};
+
+const isValidPathDiagnostic = (
+  value: unknown,
+): value is NativeGradientSelectionPathDiagnostic => {
+  if (!value || typeof value !== "object") return false;
+  const path = value as Record<string, unknown>;
+  return (
+    isValidSelectionPath({
+      propertyIndexPath: path.propertyIndexPath,
+      matchNamePath: path.matchNamePath,
+    }) &&
+    typeof path.resolved === "boolean" &&
+    (path.selectedAfterSet === null || typeof path.selectedAfterSet === "boolean")
+  );
+};
+
+const isValidLayerDiagnostic = (
+  value: unknown,
+): value is NativeGradientSelectionLayerDiagnostic => {
+  if (!value || typeof value !== "object") return false;
+  const layer = value as Record<string, unknown>;
+  if (
+    !isFiniteNonNegativeInteger(layer.layerId) ||
+    layer.layerId <= 0 ||
+    !isFiniteNonNegativeInteger(layer.layerIndex) ||
+    layer.layerIndex <= 0 ||
+    typeof layer.selected !== "boolean" ||
+    typeof layer.resolved !== "boolean" ||
+    (layer.selectedAfterSet !== null && typeof layer.selectedAfterSet !== "boolean") ||
+    !Array.isArray(layer.properties) ||
+    layer.properties.length > MAX_NATIVE_GRADIENT_TARGET_COUNT
+  ) {
+    return false;
+  }
+  for (let index = 0; index < layer.properties.length; index += 1) {
+    if (!isValidPathDiagnostic(layer.properties[index])) return false;
+  }
+  return true;
+};
+
+const isValidSelectionDiagnostics = (
+  value: unknown,
+): value is NativeGradientSelectionDiagnostics => {
+  if (!value || typeof value !== "object") return false;
+  const diagnostics = value as Record<string, unknown>;
+  if (diagnostics.schemaVersion !== 1 || !diagnostics.inGroup || typeof diagnostics.inGroup !== "object") {
+    return false;
+  }
+  const inGroup = diagnostics.inGroup as Record<string, unknown>;
+  if (
+    typeof inGroup.stage !== "string" ||
+    !Object.prototype.hasOwnProperty.call(SELECTION_DIAGNOSTIC_STAGES, inGroup.stage) ||
+    (inGroup.error !== null && !isValidApplyError(inGroup.error)) ||
+    typeof inGroup.expectedTruncated !== "boolean" ||
+    typeof inGroup.actualTruncated !== "boolean" ||
+    typeof inGroup.exact !== "boolean" ||
+    typeof inGroup.acceptedNormalization !== "boolean" ||
+    typeof inGroup.layersTruncated !== "boolean" ||
+    !isValidSelectionSnapshotList(inGroup.expected) ||
+    (inGroup.actual !== null && !isValidSelectionSnapshotList(inGroup.actual)) ||
+    !Array.isArray(inGroup.layers) ||
+    inGroup.layers.length > MAX_NATIVE_GRADIENT_TARGET_COUNT
+  ) {
+    return false;
+  }
+  let layerPropertyCount = 0;
+  for (let index = 0; index < inGroup.layers.length; index += 1) {
+    if (!isValidLayerDiagnostic(inGroup.layers[index])) return false;
+    layerPropertyCount += inGroup.layers[index].properties.length;
+    if (layerPropertyCount > MAX_NATIVE_GRADIENT_TARGET_COUNT) return false;
+  }
+  if (diagnostics.afterUndoGroup === null) return true;
+  if (!diagnostics.afterUndoGroup || typeof diagnostics.afterUndoGroup !== "object") return false;
+  const afterUndoGroup = diagnostics.afterUndoGroup as Record<string, unknown>;
+  return (
+    typeof afterUndoGroup.actualTruncated === "boolean" &&
+    typeof afterUndoGroup.exact === "boolean" &&
+    typeof afterUndoGroup.acceptedNormalization === "boolean" &&
+    (afterUndoGroup.actual === null || isValidSelectionSnapshotList(afterUndoGroup.actual))
+  );
+};
+
 export const decodeNativeGradientApplyResult = (
   value: unknown,
   expectedHostVersion: unknown,
@@ -1021,12 +1354,17 @@ export const decodeNativeGradientApplyResult = (
   const record = value as Record<string, unknown>;
   const status = record.status;
   const primaryStatus = record.primaryStatus;
+  const selectionRestorationMode = record.selectionRestorationMode;
   if (
     record.schemaVersion !== 1 ||
     typeof status !== "string" ||
     !Object.prototype.hasOwnProperty.call(NATIVE_GRADIENT_WIRE_STATE, status) ||
     typeof primaryStatus !== "string" ||
     !Object.prototype.hasOwnProperty.call(NATIVE_GRADIENT_WIRE_STATE, primaryStatus) ||
+    (selectionRestorationMode !== "not-attempted" &&
+      selectionRestorationMode !== "exact" &&
+      selectionRestorationMode !== "ae-normalized" &&
+      selectionRestorationMode !== "failed") ||
     typeof record.hostVersion !== "string" ||
     !Array.isArray(record.targets) ||
     record.targets.length > MAX_NATIVE_GRADIENT_TARGET_COUNT ||
@@ -1100,23 +1438,74 @@ export const decodeNativeGradientApplyResult = (
   if (record.selectionRestored && !record.selectionRestoreAttempted) return null;
   if (record.selectionRestoreAttempted && !record.undoGroupOpened) return null;
   if (record.undoGroupOpened && (!record.selectionRestoreAttempted || !record.undoGroupCloseAttempted)) return null;
+  if (
+    (!record.selectionRestoreAttempted && selectionRestorationMode !== "not-attempted") ||
+    (record.selectionRestoreAttempted &&
+      record.selectionRestored &&
+      selectionRestorationMode !== "exact" &&
+      selectionRestorationMode !== "ae-normalized") ||
+    (record.selectionRestoreAttempted &&
+      !record.selectionRestored &&
+      selectionRestorationMode !== "failed")
+  ) return null;
 
   const applyError = record.applyError;
-  if (
-    applyError !== null &&
-    (!applyError ||
-      typeof applyError !== "object" ||
-      !Object.prototype.hasOwnProperty.call(applyError, "line") ||
-      !Object.prototype.hasOwnProperty.call(applyError, "number") ||
-      typeof (applyError as any).name !== "string" ||
-      typeof (applyError as any).message !== "string" ||
-      (applyError as any).name.length > MAX_NATIVE_GRADIENT_DIAGNOSTIC_LENGTH ||
-      (applyError as any).message.length > MAX_NATIVE_GRADIENT_DIAGNOSTIC_LENGTH ||
-      ((applyError as any).line !== null &&
-        (typeof (applyError as any).line !== "number" || !Number.isFinite((applyError as any).line))) ||
-      ((applyError as any).number !== null &&
-        (typeof (applyError as any).number !== "number" || !Number.isFinite((applyError as any).number))))
-  ) return null;
+  if (applyError !== null && !isValidApplyError(applyError)) return null;
+
+  if (Object.prototype.hasOwnProperty.call(record, "selectionDiagnostics")) {
+    if (!isValidSelectionDiagnostics(record.selectionDiagnostics)) return null;
+    const diagnostics = record.selectionDiagnostics as NativeGradientSelectionDiagnostics;
+    if (
+      diagnostics.afterUndoGroup === null ||
+      typeof diagnostics.afterUndoGroup.exact !== "boolean"
+    ) {
+      return null;
+    }
+    if (selectionRestorationMode === "ae-normalized") {
+      if (
+        record.selectionRestored !== true ||
+        diagnostics.inGroup.stage !== "complete" ||
+        diagnostics.inGroup.error !== null ||
+        diagnostics.inGroup.exact ||
+        !diagnostics.inGroup.acceptedNormalization ||
+        diagnostics.inGroup.expectedTruncated ||
+        diagnostics.inGroup.actualTruncated ||
+        diagnostics.inGroup.layersTruncated ||
+        diagnostics.inGroup.actual === null ||
+        diagnostics.afterUndoGroup.exact ||
+        !diagnostics.afterUndoGroup.acceptedNormalization ||
+        diagnostics.afterUndoGroup.actualTruncated ||
+        diagnostics.afterUndoGroup.actual === null ||
+        normalizedResultHostVersion.indexOf("23.") !== 0 ||
+        !isAcceptedSelectionNormalizationEvidence(
+          diagnostics.inGroup.expected,
+          diagnostics.inGroup.actual,
+        ) ||
+        !isCompleteSelectionNormalizationOperationEvidence(
+          diagnostics.inGroup.expected,
+          diagnostics.inGroup.layers,
+        ) ||
+        !isAcceptedSelectionNormalizationEvidence(
+          diagnostics.inGroup.expected,
+          diagnostics.afterUndoGroup.actual,
+        )
+      ) {
+        return null;
+      }
+    } else if (
+      selectionRestorationMode !== "failed" ||
+      record.selectionRestored === true ||
+      record.selectionRestoreAttempted !== true ||
+      (status !== "selection-restore-failed" && status !== "finalization-failed") ||
+      ((diagnostics.inGroup.exact || diagnostics.inGroup.acceptedNormalization) &&
+        (diagnostics.afterUndoGroup.exact ||
+          diagnostics.afterUndoGroup.acceptedNormalization))
+    ) {
+      return null;
+    }
+  } else if (selectionRestorationMode === "ae-normalized" || selectionRestorationMode === "failed") {
+    return null;
+  }
 
   const primaryState = NATIVE_GRADIENT_WIRE_STATE[primaryStatus as NativeGradientApplyStatus];
   if (primaryState === "finalization-only") return null;

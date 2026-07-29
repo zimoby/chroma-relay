@@ -176,6 +176,142 @@ test("selection traversal root carries copied stable path and filter state", () 
   assert.equal(selectionScope.selectionTraversalContainsProperty([group, property], layer), false);
 });
 
+test("selection normalization provenance stays narrow while exact live selection is unchanged", () => {
+  const buildFixture = () => {
+    const makeGroup = (matchName, children = []) => {
+      const property = {
+        matchName,
+        propertyIndex: 0,
+        parentProperty: null,
+        property(index) {
+          return children[index - 1] || null;
+        },
+      };
+      children.forEach((child, index) => {
+        child.parentProperty = property;
+        child.propertyIndex = index + 1;
+      });
+      return property;
+    };
+    const makeLeaf = () => ({
+      matchName: "ADBE Vector Grad Colors",
+      propertyIndex: 0,
+      parentProperty: null,
+    });
+    const makeLayer = (id, index, kind) => {
+      const payload = makeLeaf();
+      const gradient = makeGroup(
+        kind === "fill" ? "ADBE Vector Graphic - G-Fill" : "ADBE Vector Graphic - G-Stroke",
+        [payload]
+      );
+      const contents = makeGroup("ADBE Vectors Group", [gradient]);
+      const vectorGroup = makeGroup("ADBE Vector Group", [contents]);
+      const root = makeGroup("ADBE Root Vectors Group", [vectorGroup]);
+      const layer = {
+        id,
+        index,
+        selected: true,
+        selectedProperties: [],
+        property(propertyIndex) {
+          return propertyIndex === 1 ? root : null;
+        },
+      };
+      root.parentProperty = layer;
+      root.propertyIndex = 1;
+      return { layer, vectorGroup, payload };
+    };
+    const fill = makeLayer(2001, 1, "fill");
+    const stroke = makeLayer(2002, 2, "stroke");
+    fill.layer.selectedProperties = [fill.vectorGroup, fill.payload];
+    stroke.layer.selectedProperties = [stroke.payload];
+    const activeItem = {
+      id: 1001,
+      selectedLayers: [fill.layer, stroke.layer],
+      layer(index) {
+        return index === 1 ? fill.layer : index === 2 ? stroke.layer : null;
+      },
+    };
+    return { activeItem, fill, stroke };
+  };
+
+  const hostGlobal = {};
+  const loader = createHostModuleLoader({ $: hostGlobal });
+  const selectionScope = loader("./selection-scope");
+  const fixture = buildFixture();
+  const pathFor = (layer, property) => selectionScope.buildSelectionPropertyPath(layer, property);
+  const fillGroupPath = pathFor(fixture.fill.layer, fixture.fill.vectorGroup);
+  const fillPayloadPath = pathFor(fixture.fill.layer, fixture.fill.payload);
+  const strokePayloadPath = pathFor(fixture.stroke.layer, fixture.stroke.payload);
+  const normalizedSnapshot = [
+    {
+      layerId: fixture.fill.layer.id,
+      layerIndex: fixture.fill.layer.index,
+      selected: true,
+      properties: [fillGroupPath, fillPayloadPath],
+    },
+    {
+      layerId: fixture.stroke.layer.id,
+      layerIndex: fixture.stroke.layer.index,
+      selected: true,
+      properties: [strokePayloadPath],
+    },
+  ];
+  assert.equal(
+    selectionScope.setSelectionScopeNormalization(
+      fixture.activeItem,
+      normalizedSnapshot,
+      [{
+        layerId: fixture.fill.layer.id,
+        layerIndex: fixture.fill.layer.index,
+        path: fillGroupPath,
+      }]
+    ),
+    true
+  );
+  const isExact = (property) => property.matchName === "ADBE Vector Grad Colors";
+  const first = selectionScope.resolveSelectedScopeRoots(fixture.activeItem, isExact);
+  const second = selectionScope.resolveSelectedScopeRoots(fixture.activeItem, isExact);
+  assert.equal(first.invalid, false);
+  assert.equal(second.invalid, false);
+  assert.deepEqual(Array.from(first.roots, (root) => root.property.matchName), [
+    "ADBE Vector Grad Colors",
+    "ADBE Vector Grad Colors",
+  ]);
+  assert.deepEqual(Array.from(second.roots, (root) => root.property.matchName), [
+    "ADBE Vector Grad Colors",
+    "ADBE Vector Grad Colors",
+  ]);
+
+  const reloadedScope = createHostModuleLoader({ $: hostGlobal })("./selection-scope");
+  const afterReload = reloadedScope.resolveSelectedScopeRoots(fixture.activeItem, isExact);
+  assert.equal(afterReload.invalid, false);
+  assert.deepEqual(Array.from(afterReload.roots, (root) => root.property.matchName), [
+    "ADBE Vector Grad Colors",
+    "ADBE Vector Grad Colors",
+  ]);
+
+  fixture.stroke.layer.selectedProperties = [];
+  fixture.activeItem.selectedLayers = [fixture.fill.layer];
+  const changed = reloadedScope.resolveSelectedScopeRoots(fixture.activeItem, isExact);
+  assert.equal(changed.invalid, false);
+  assert.deepEqual(Array.from(changed.roots, (root) => root.property.matchName), [
+    "ADBE Vector Group",
+    "ADBE Vector Grad Colors",
+  ]);
+  assert.equal(reloadedScope.hasSelectionScopeNormalization(), false);
+
+  const explicitLoader = createHostModuleLoader({});
+  const explicitScope = explicitLoader("./selection-scope");
+  const explicit = buildFixture();
+  const broad = explicitScope.resolveSelectedScopeRoots(explicit.activeItem, isExact);
+  assert.equal(broad.invalid, false);
+  assert.deepEqual(Array.from(broad.roots, (root) => root.property.matchName), [
+    "ADBE Vector Group",
+    "ADBE Vector Grad Colors",
+    "ADBE Vector Grad Colors",
+  ]);
+});
+
 const loadAeftHost = async () => {
   class CompItem {}
   class FootageItem {}
@@ -351,6 +487,7 @@ const loadNativeGradientApplyHost = ({
         if (value && slot.failSelectionRestore) throw new Error("selection restore failed");
         if ((value && slot.ignoreSelectionTrue) || (!value && slot.ignoreSelectionFalse)) return;
         selected = value;
+        if (typeof slot.onSelectionChanged === "function") slot.onSelectionChanged(value);
       },
     });
     return slot;
@@ -522,6 +659,7 @@ const loadNativeGradientApplyHost = ({
     },
     throwBegin: false,
     throwEnd: false,
+    afterEnd: null,
     beginUndoGroup(label) {
       events.push(`begin:${label}`);
       if (this.throwBegin) throw new Error("beginUndoGroup failed");
@@ -529,6 +667,7 @@ const loadNativeGradientApplyHost = ({
     endUndoGroup() {
       events.push("end");
       if (this.throwEnd) throw new Error("endUndoGroup failed");
+      if (typeof this.afterEnd === "function") this.afterEnd();
     },
     executeCommand() {
       throw new Error("executeCommand is forbidden");
@@ -728,6 +867,7 @@ nativeGradientBehaviorTest(
     assert.equal(result.undoGroupClosed, true);
     assert.equal(result.selectionRestoreAttempted, true);
     assert.equal(result.selectionRestored, true);
+    assert.equal(result.selectionDiagnostics, undefined);
     assert.equal(fixture.applyCalls.length, 1);
     assert.equal(fixture.applyCalls[0].path, fixture.request.presets.fill.presetPath);
     assert.equal(fixture.applyCalls[0].isFile, true);
@@ -1245,6 +1385,218 @@ nativeGradientBehaviorTest(
     assert.equal(result.status, "selection-restore-failed");
     assert.equal(result.selectionRestoreAttempted, true);
     assert.equal(result.selectionRestored, false);
+    assert.equal(result.selectionDiagnostics.schemaVersion, 1);
+    assert.equal(result.selectionDiagnostics.inGroup.stage, "verify");
+    assert.equal(result.selectionDiagnostics.inGroup.expectedTruncated, false);
+    assert.equal(result.selectionDiagnostics.inGroup.actualTruncated, false);
+    assert.equal(result.selectionDiagnostics.inGroup.layersTruncated, false);
+    assert.equal(
+      result.selectionDiagnostics.inGroup.error.message,
+      "Selection restoration was not exact"
+    );
+    assert.ok(Array.isArray(result.selectionDiagnostics.inGroup.expected));
+    assert.ok(result.selectionDiagnostics.inGroup.expected.length > 0);
+    assert.ok(Array.isArray(result.selectionDiagnostics.inGroup.actual));
+    assert.ok(Array.isArray(result.selectionDiagnostics.inGroup.layers));
+    const affectedLayer = result.selectionDiagnostics.inGroup.layers.find(
+      (layer) => layer.layerId === fixture.otherLayer.id
+    );
+    assert.equal(affectedLayer.resolved, true);
+    const affectedProperty = affectedLayer.properties.find(
+      (property) => property.matchNamePath.at(-1) === "ADBE Opacity"
+    );
+    assert.equal(affectedProperty.resolved, true);
+    assert.equal(affectedProperty.selectedAfterSet, false);
+    assert.equal(result.selectionDiagnostics.inGroup.exact, false);
+    assert.equal(result.selectionDiagnostics.afterUndoGroup.exact, false);
+    assert.equal(result.selectionDiagnostics.afterUndoGroup.actualTruncated, false);
+    assert.equal(fixture.applyCalls.length, 1);
+  }
+);
+
+nativeGradientBehaviorTest(
+  "B2 accepts AE23 cross-layer normalization and keeps repeated scope off sibling gradients",
+  () => {
+    const fixture = loadNativeGradientApplyHost({ selection: "payload" });
+    fixture.app.version = "23.6x62";
+    fixture.request.expectedHostVersion = "23.6x62";
+    fixture.otherProperty.selected = false;
+    fixture.otherGradient.payload.selected = true;
+    const normalizeCrossLayerSelection = () => {
+      if (fixture.fill.payload.selected && fixture.otherGradient.payload.selected) {
+        fixture.userGroup.selected = true;
+      }
+    };
+    fixture.fill.payload.onSelectionChanged = normalizeCrossLayerSelection;
+    fixture.otherGradient.payload.onSelectionChanged = normalizeCrossLayerSelection;
+    fixture.events.length = 0;
+
+    const first = plainHostValue(fixture.invoke());
+    assert.equal(first.primaryStatus, "ok");
+    assert.equal(first.status, "ok");
+    assert.equal(first.selectedTargetCount, 2);
+    assert.equal(first.appliedTargetCount, 2);
+    assert.equal(first.selectionRestored, true);
+    assert.equal(first.selectionRestorationMode, "ae-normalized");
+    assert.equal(first.selectionDiagnostics.inGroup.exact, false);
+    assert.equal(first.selectionDiagnostics.inGroup.acceptedNormalization, true);
+    assert.equal(first.selectionDiagnostics.afterUndoGroup.exact, false);
+    assert.equal(first.selectionDiagnostics.afterUndoGroup.acceptedNormalization, true);
+    assert.equal(fixture.userGroup.selected, true);
+    assert.equal(fixture.fill.payload.selected, true);
+    assert.equal(fixture.otherGradient.payload.selected, true);
+    assert.equal(fixture.applyCalls.length, 2);
+
+    const second = plainHostValue(fixture.invoke());
+    assert.equal(second.primaryStatus, "ok");
+    assert.equal(second.status, "ok");
+    assert.equal(second.selectedTargetCount, 2);
+    assert.equal(second.appliedTargetCount, 2);
+    assert.equal(second.selectionRestored, true);
+    assert.equal(second.selectionRestorationMode, "exact");
+    assert.equal(fixture.applyCalls.length, 4);
+  }
+);
+
+nativeGradientBehaviorTest(
+  "B2 retains verified AE23 normalization scope when Undo close fails",
+  () => {
+    const fixture = loadNativeGradientApplyHost({ selection: "payload" });
+    fixture.app.version = "23.6x62";
+    fixture.app.throwEnd = true;
+    fixture.request.expectedHostVersion = "23.6x62";
+    fixture.otherProperty.selected = false;
+    fixture.otherGradient.payload.selected = true;
+    const normalizeCrossLayerSelection = () => {
+      if (fixture.fill.payload.selected && fixture.otherGradient.payload.selected) {
+        fixture.userGroup.selected = true;
+      }
+    };
+    fixture.fill.payload.onSelectionChanged = normalizeCrossLayerSelection;
+    fixture.otherGradient.payload.onSelectionChanged = normalizeCrossLayerSelection;
+    fixture.events.length = 0;
+
+    const first = plainHostValue(fixture.invoke());
+    assert.equal(first.status, "undo-close-failed");
+    assert.equal(first.selectionRestorationMode, "ae-normalized");
+    assert.equal(first.selectedTargetCount, 2);
+
+    const second = plainHostValue(fixture.invoke());
+    assert.equal(second.status, "undo-close-failed");
+    assert.equal(second.selectedTargetCount, 2);
+    assert.equal(fixture.applyCalls.length, 4);
+  }
+);
+
+nativeGradientBehaviorTest(
+  "B2 rejects AE23 normalization that drifts after Undo close",
+  () => {
+    const fixture = loadNativeGradientApplyHost({ selection: "payload" });
+    fixture.app.version = "23.6x62";
+    fixture.request.expectedHostVersion = "23.6x62";
+    fixture.otherProperty.selected = false;
+    fixture.otherGradient.payload.selected = true;
+    const normalizeCrossLayerSelection = () => {
+      if (fixture.fill.payload.selected && fixture.otherGradient.payload.selected) {
+        fixture.userGroup.selected = true;
+      }
+    };
+    fixture.fill.payload.onSelectionChanged = normalizeCrossLayerSelection;
+    fixture.otherGradient.payload.onSelectionChanged = normalizeCrossLayerSelection;
+    fixture.app.afterEnd = () => {
+      fixture.otherGradient.payload.selected = false;
+    };
+    fixture.events.length = 0;
+
+    const result = plainHostValue(fixture.invoke());
+    assert.equal(result.status, "selection-restore-failed");
+    assert.equal(result.selectionRestorationMode, "failed");
+    assert.equal(result.selectionRestored, false);
+    assert.equal(result.selectionDiagnostics.inGroup.acceptedNormalization, true);
+    assert.equal(result.selectionDiagnostics.afterUndoGroup.acceptedNormalization, false);
+  }
+);
+
+nativeGradientBehaviorTest(
+  "B2 rejects AE normalization outside AE23 and rejects unrelated restoration additions",
+  () => {
+    const cases = [
+      { version: "25.6.6x4", extra: "vector-group", expectedApplyCount: 2 },
+      { version: "23.6x62", extra: "gradient-sibling", expectedApplyCount: 2 },
+      { version: "23.6x62", extra: "mixed-non-gradient", expectedApplyCount: 1 },
+    ];
+    for (const entry of cases) {
+      const fixture = loadNativeGradientApplyHost({ selection: "payload" });
+      fixture.app.version = entry.version;
+      fixture.request.expectedHostVersion = entry.version;
+      const mixedNonGradient = entry.extra === "mixed-non-gradient";
+      fixture.otherProperty.selected = mixedNonGradient;
+      fixture.otherGradient.payload.selected = !mixedNonGradient;
+      const addedProperty = entry.extra === "gradient-sibling"
+        ? fixture.siblingGradient.parent
+        : fixture.userGroup;
+      const secondSelectedProperty = mixedNonGradient
+        ? fixture.otherProperty
+        : fixture.otherGradient.payload;
+      const addExtraWhenCrossLayerSelectionIsComplete = () => {
+        if (fixture.fill.payload.selected && secondSelectedProperty.selected) {
+          addedProperty.selected = true;
+        }
+      };
+      fixture.fill.payload.onSelectionChanged = (selected) => {
+        if (selected) addExtraWhenCrossLayerSelectionIsComplete();
+      };
+      secondSelectedProperty.onSelectionChanged = (selected) => {
+        if (selected) addExtraWhenCrossLayerSelectionIsComplete();
+      };
+      fixture.events.length = 0;
+      const result = plainHostValue(fixture.invoke());
+      assert.equal(result.status, "selection-restore-failed", `${entry.version}/${entry.extra}`);
+      assert.equal(result.primaryStatus, "ok", `${entry.version}/${entry.extra}`);
+      assert.equal(result.selectionRestored, false, `${entry.version}/${entry.extra}`);
+      assert.equal(result.selectionRestorationMode, "failed", `${entry.version}/${entry.extra}`);
+      assert.equal(
+        result.selectionDiagnostics.inGroup.acceptedNormalization,
+        false,
+        `${entry.version}/${entry.extra}`,
+      );
+      assert.equal(
+        fixture.events.filter((event) => event === "begin:Apply Chroma Relay Native Gradient").length,
+        1,
+      );
+      assert.equal(fixture.events.filter((event) => event === "end").length, 1);
+      assert.equal(fixture.applyCalls.length, entry.expectedApplyCount);
+    }
+  }
+);
+
+nativeGradientBehaviorTest(
+  "B2 native-gradient diagnoses a throwing restoration setter without retrying it",
+  () => {
+    const fixture = loadNativeGradientApplyHost();
+    fixture.otherProperty.failSelectionRestore = true;
+    const result = plainHostValue(fixture.invoke());
+    assert.equal(result.primaryStatus, "ok");
+    assert.equal(result.status, "selection-restore-failed");
+    assert.equal(result.selectionRestored, false);
+    assert.equal(result.selectionDiagnostics.inGroup.stage, "property-select");
+    assert.equal(result.selectionDiagnostics.inGroup.error.message, "selection restore failed");
+    assert.equal(result.selectionDiagnostics.inGroup.expectedTruncated, false);
+    assert.equal(result.selectionDiagnostics.inGroup.layersTruncated, false);
+    const affectedLayer = result.selectionDiagnostics.inGroup.layers.find(
+      (layer) => layer.layerId === fixture.otherLayer.id
+    );
+    const affectedProperty = affectedLayer.properties.find(
+      (property) => property.matchNamePath.at(-1) === "ADBE Opacity"
+    );
+    assert.equal(affectedProperty.resolved, true);
+    assert.equal(affectedProperty.selectedAfterSet, false);
+    assert.equal(result.selectionDiagnostics.afterUndoGroup.exact, false);
+    assert.equal(result.selectionDiagnostics.afterUndoGroup.actualTruncated, false);
+    assert.equal(
+      fixture.events.filter((event) => event === "selection:ADBE Opacity:true").length,
+      1
+    );
     assert.equal(fixture.applyCalls.length, 1);
   }
 );

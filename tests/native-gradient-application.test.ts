@@ -43,6 +43,7 @@ const {
 } = await import("../src/js/main/native-gradient-files.ts");
 const {
   boundNativeGradientDiagnostics,
+  MAX_NATIVE_GRADIENT_DIAGNOSTIC_LENGTH,
   orchestrateNativeGradientCollection,
   resolveNativeGradientCollectionDecision,
   resolveNativeGradientCollectionRuntime,
@@ -142,8 +143,49 @@ const validHostResult = (overrides: Record<string, unknown> = {}) => ({
   undoGroupClosed: true,
   selectionRestoreAttempted: true,
   selectionRestored: true,
+  selectionRestorationMode:
+    overrides.selectionRestorationMode ??
+    (overrides.selectionRestoreAttempted === false
+      ? "not-attempted"
+      : overrides.selectionRestored === false
+        ? "failed"
+        : "exact"),
   applyError: null,
   ...overrides,
+});
+const failedSelectionDiagnostics = () => ({
+  schemaVersion: 1,
+  inGroup: {
+    stage: "verify",
+    error: {
+      name: "Error",
+      message: "Selection restoration was not exact",
+      line: null,
+      number: null,
+    },
+    expected: [{
+      layerId: 2,
+      layerIndex: 1,
+      selected: true,
+      properties: [{
+        propertyIndexPath: validTarget.propertyIndexPath,
+        matchNamePath: validTarget.matchNamePath,
+      }],
+    }],
+    expectedTruncated: false,
+    actual: [{ layerId: 2, layerIndex: 1, selected: true, properties: [] }],
+    actualTruncated: false,
+    exact: false,
+    acceptedNormalization: false,
+    layers: [],
+    layersTruncated: false,
+  },
+  afterUndoGroup: {
+    actual: [{ layerId: 2, layerIndex: 1, selected: true, properties: [] }],
+    actualTruncated: false,
+    exact: false,
+    acceptedNormalization: false,
+  },
 });
 const validUnknownHostResult = (overrides: Record<string, unknown> = {}) =>
   validHostResult({
@@ -757,6 +799,7 @@ test("B3 renderer distinguishes apply success from host finalization failure", a
           status: "selection-restore-failed",
           primaryStatus: "ok",
           selectionRestored: false,
+          selectionDiagnostics: failedSelectionDiagnostics(),
         }),
     );
     assert.equal(report.status, "host-finalization-failed");
@@ -768,6 +811,133 @@ test("B3 renderer distinguishes apply success from host finalization failure", a
     );
     assert.deepEqual(readdirSync(base), []);
   });
+});
+
+test("selection diagnostics are structurally bounded and validated at the wire boundary", () => {
+  const validDiagnostics = {
+    schemaVersion: 1,
+    inGroup: {
+      stage: "verify",
+      error: {
+        name: "Error",
+        message: "Selection restoration was not exact",
+        line: null,
+        number: null,
+      },
+      expected: [
+        {
+          layerId: 2,
+          layerIndex: 1,
+          selected: true,
+          properties: [
+            {
+              propertyIndexPath: validTarget.propertyIndexPath,
+              matchNamePath: validTarget.matchNamePath,
+            },
+          ],
+        },
+      ],
+      expectedTruncated: false,
+      actual: [
+        {
+          layerId: 2,
+          layerIndex: 1,
+          selected: true,
+          properties: [],
+        },
+      ],
+      actualTruncated: false,
+      exact: false,
+      acceptedNormalization: false,
+      layers: [
+        {
+          layerId: 2,
+          layerIndex: 1,
+          selected: true,
+          resolved: true,
+          selectedAfterSet: true,
+          properties: [
+            {
+              propertyIndexPath: validTarget.propertyIndexPath,
+              matchNamePath: validTarget.matchNamePath,
+              resolved: true,
+              selectedAfterSet: false,
+            },
+          ],
+        },
+      ],
+      layersTruncated: false,
+    },
+    afterUndoGroup: {
+      actual: [
+        {
+          layerId: 2,
+          layerIndex: 1,
+          selected: true,
+          properties: [],
+        },
+      ],
+      actualTruncated: false,
+      exact: false,
+      acceptedNormalization: false,
+    },
+  };
+  assert.equal(
+    decodeNativeGradientApplyResult(
+      validHostResult({
+        status: "selection-restore-failed",
+        primaryStatus: "ok",
+        selectionRestored: false,
+        selectionDiagnostics: validDiagnostics,
+      }),
+    )?.status,
+    "selection-restore-failed",
+  );
+  assert.equal(
+    decodeNativeGradientApplyResult(
+      validHostResult({
+        status: "selection-restore-failed",
+        primaryStatus: "ok",
+        selectionRestored: false,
+        selectionDiagnostics: {
+          ...validDiagnostics,
+          schemaVersion: 999,
+        },
+      }),
+    ),
+    null,
+  );
+  assert.equal(
+    decodeNativeGradientApplyResult(
+      validHostResult({
+        status: "selection-restore-failed",
+        primaryStatus: "ok",
+        selectionRestored: false,
+        selectionDiagnostics: {
+          ...validDiagnostics,
+          inGroup: {
+            ...validDiagnostics.inGroup,
+            error: {
+              name: "Error",
+              message: "x".repeat(MAX_NATIVE_GRADIENT_DIAGNOSTIC_LENGTH + 1),
+              line: null,
+              number: null,
+            },
+          },
+        },
+      }),
+    ),
+    null,
+  );
+  assert.equal(
+    decodeNativeGradientApplyResult(
+      validHostResult({
+        status: "ok",
+        selectionDiagnostics: validDiagnostics,
+      }),
+    ),
+    null,
+  );
 });
 
 test("B3 resolves the live macOS Folder.temp base without adding a Windows subdirectory", () => {
@@ -1261,9 +1431,19 @@ test("S2 correction matrix accepts post-Undo drift and rejects malformed near-ne
   assert.equal(decodeNativeGradientApplyResult(postUndoDrift)?.status, "target-drift");
 
   const finalizationStates = [
-    ["selection-restore-failed", { selectionRestored: false }],
+    [
+      "selection-restore-failed",
+      { selectionRestored: false, selectionDiagnostics: failedSelectionDiagnostics() },
+    ],
     ["undo-close-failed", { undoGroupClosed: false }],
-    ["finalization-failed", { selectionRestored: false, undoGroupClosed: false }],
+    [
+      "finalization-failed",
+      {
+        selectionRestored: false,
+        undoGroupClosed: false,
+        selectionDiagnostics: failedSelectionDiagnostics(),
+      },
+    ],
   ] as const;
   for (const [status, overrides] of finalizationStates) {
     assert.equal(
@@ -1740,6 +1920,7 @@ test("S2 finalization and cleanup failures are both reported", async () => {
           primaryStatus: "ok",
           selectionRestored: false,
           undoGroupClosed: false,
+          selectionDiagnostics: failedSelectionDiagnostics(),
         });
       },
     );
@@ -1902,6 +2083,240 @@ test("B3 preserves unknown completion when cleanup also fails and continues clea
       "Gradient apply may have completed; verify the selected gradient; temporary preset cleanup also failed",
     );
   });
+});
+
+test("B3 renderer accepts AE-normalized restoration as success and rejects contradictory evidence", async () => {
+  const expected = [
+    {
+      layerId: 2,
+      layerIndex: 1,
+      selected: true,
+      properties: [{
+        propertyIndexPath: validTarget.propertyIndexPath,
+        matchNamePath: validTarget.matchNamePath,
+      }],
+    },
+    {
+      layerId: 3,
+      layerIndex: 2,
+      selected: true,
+      properties: [{
+        propertyIndexPath: [1, 1, 1, 1],
+        matchNamePath: [
+          "ADBE Root Vectors Group",
+          "ADBE Vector Group",
+          "ADBE Vector Graphic - G-Stroke",
+          "ADBE Vector Grad Colors",
+        ],
+      }],
+    },
+  ];
+  const actual = [
+    {
+      ...expected[0],
+      properties: [
+        {
+          propertyIndexPath: [1, 1],
+          matchNamePath: ["ADBE Root Vectors Group", "ADBE Vector Group"],
+        },
+        ...expected[0].properties,
+      ],
+    },
+    expected[1],
+  ];
+  const operationLayers = (entries: typeof expected) => entries
+    .filter((entry) => entry.selected || entry.properties.length > 0)
+    .map((entry) => ({
+      layerId: entry.layerId,
+      layerIndex: entry.layerIndex,
+      selected: entry.selected,
+      resolved: true,
+      selectedAfterSet: entry.selected,
+      properties: entry.properties.map((property) => ({
+        ...property,
+        resolved: true,
+        selectedAfterSet: true,
+      })),
+    }));
+  const diagnostics = {
+    schemaVersion: 1,
+    inGroup: {
+      stage: "complete",
+      error: null,
+      expected,
+      expectedTruncated: false,
+      actual,
+      actualTruncated: false,
+      exact: false,
+      acceptedNormalization: true,
+      layers: operationLayers(expected),
+      layersTruncated: false,
+    },
+    afterUndoGroup: {
+      actual,
+      actualTruncated: false,
+      exact: false,
+      acceptedNormalization: true,
+    },
+  };
+  await withTempBase(async (base) => {
+    const report = await applyActivePaletteNativeGradient(
+      { ...rendererOptions([rgba(0), rgba(1)], base), hostVersion: "23.6x62" },
+      async () => validHostResult({
+        hostVersion: "23.6x62",
+        selectionRestorationMode: "ae-normalized",
+        selectionDiagnostics: diagnostics,
+      }),
+    );
+    assert.equal(report.status, "ok");
+    assert.equal(report.primaryStatus, "ok");
+    assert.equal(nativeGradientResultMessage(report, 2), "Applied 2-color native gradient");
+    assert.deepEqual(readdirSync(base), []);
+  });
+  assert.equal(
+    decodeNativeGradientApplyResult(
+      validHostResult({
+        hostVersion: "23.6x62",
+        selectionRestorationMode: "ae-normalized",
+        selectionDiagnostics: {
+          ...diagnostics,
+          inGroup: { ...diagnostics.inGroup, acceptedNormalization: false },
+        },
+      }),
+      "23.6x62",
+    ),
+    null,
+  );
+  assert.equal(
+    decodeNativeGradientApplyResult(
+      validHostResult({
+        hostVersion: "23.6x62",
+        selectionRestorationMode: "ae-normalized",
+        selectionDiagnostics: {
+          ...diagnostics,
+          inGroup: { ...diagnostics.inGroup, layersTruncated: true },
+        },
+      }),
+      "23.6x62",
+    ),
+    null,
+  );
+  assert.equal(
+    decodeNativeGradientApplyResult(
+      validHostResult({
+        hostVersion: "23.6x62",
+        selectionRestorationMode: "ae-normalized",
+        selectionDiagnostics: {
+          ...diagnostics,
+          inGroup: { ...diagnostics.inGroup, layers: [] },
+        },
+      }),
+      "23.6x62",
+    ),
+    null,
+  );
+  const duplicatedExpected = [expected[0], { ...expected[0] }];
+  const duplicatedActual = [actual[0], { ...actual[0] }];
+  assert.equal(
+    decodeNativeGradientApplyResult(
+      validHostResult({
+        hostVersion: "23.6x62",
+        selectionRestorationMode: "ae-normalized",
+        selectionDiagnostics: {
+          ...diagnostics,
+          inGroup: {
+            ...diagnostics.inGroup,
+            expected: duplicatedExpected,
+            actual: duplicatedActual,
+            layers: operationLayers(duplicatedExpected),
+          },
+          afterUndoGroup: {
+            ...diagnostics.afterUndoGroup,
+            actual: duplicatedActual,
+          },
+        },
+      }),
+      "23.6x62",
+    ),
+    null,
+  );
+  const mixedExpected = [
+    expected[0],
+    {
+      ...expected[1],
+      properties: [{
+        propertyIndexPath: [1],
+        matchNamePath: ["ADBE Opacity"],
+      }],
+    },
+  ];
+  const mixedActual = [
+    {
+      ...mixedExpected[0],
+      properties: [actual[0].properties[0], ...mixedExpected[0].properties],
+    },
+    mixedExpected[1],
+  ];
+  assert.equal(
+    decodeNativeGradientApplyResult(
+      validHostResult({
+        hostVersion: "23.6x62",
+        selectionRestorationMode: "ae-normalized",
+        selectionDiagnostics: {
+          ...diagnostics,
+          inGroup: {
+            ...diagnostics.inGroup,
+            expected: mixedExpected,
+            actual: mixedActual,
+            layers: operationLayers(mixedExpected),
+          },
+          afterUndoGroup: {
+            ...diagnostics.afterUndoGroup,
+            actual: mixedActual,
+          },
+        },
+      }),
+      "23.6x62",
+    ),
+    null,
+  );
+  const driftedAfterUndo = [actual[0], { ...actual[1], properties: [] }];
+  assert.equal(
+    decodeNativeGradientApplyResult(
+      validHostResult({
+        status: "selection-restore-failed",
+        primaryStatus: "ok",
+        hostVersion: "23.6x62",
+        selectionRestored: false,
+        selectionDiagnostics: {
+          ...diagnostics,
+          afterUndoGroup: {
+            actual: driftedAfterUndo,
+            actualTruncated: false,
+            exact: false,
+            acceptedNormalization: false,
+          },
+        },
+      }),
+      "23.6x62",
+    )?.status,
+    "selection-restore-failed",
+  );
+  assert.equal(
+    decodeNativeGradientApplyResult(
+      validHostResult({
+        hostVersion: "23.6x62",
+        selectionRestorationMode: "ae-normalized",
+        selectionDiagnostics: {
+          ...diagnostics,
+          inGroup: { ...diagnostics.inGroup, actual: expected },
+          afterUndoGroup: { ...diagnostics.afterUndoGroup, actual: expected },
+        },
+      }),
+      "23.6x62",
+    ),
+    null,
+  );
 });
 
 test("B3 result messages use exact B2 status literals and preserve cleanup evidence", () => {
