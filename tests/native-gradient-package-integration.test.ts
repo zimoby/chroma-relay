@@ -7,8 +7,10 @@ import { fileURLToPath } from "node:url";
 
 const PACKAGE_NAME = "@zimoby/ae-native-gradient";
 const PACKAGE_VERSION = "0.2.0";
-const APPROVED_SHA = "2c7789e7659f3768734c90ee8fb62b89396ebb29";
-const APPROVED_SOURCE = `git+https://github.com/zimoby/ae-native-gradient-toolkit.git#${APPROVED_SHA}`;
+const APPROVED_TARBALL =
+  "https://registry.npmjs.org/@zimoby/ae-native-gradient/-/ae-native-gradient-0.2.0.tgz";
+const APPROVED_INTEGRITY =
+  "sha512-9Jko+z0AxDWfgwGKwU6Vg8aJhCn2p/7dGDPE9CpNS/5Qj+103/V890pYxvorKUgb5E6lrNLgflF6fNRDsIbCZA==";
 const REPO_ROOT = fileURLToPath(new URL("../", import.meta.url));
 
 type JsonRecord = Record<string, unknown>;
@@ -42,7 +44,7 @@ const versionedTemplatePaths = Object.fromEntries(
   ]),
 ) as Record<string, Record<"fill" | "stroke", string>>;
 
-test("uses the approved installed package and exact immutable lock source", () => {
+test("uses the exact public npm release and immutable registry artifact", () => {
   assert.equal(installedPackage.name, PACKAGE_NAME);
   assert.equal(installedPackage.version, PACKAGE_VERSION);
   assert.equal("private" in installedPackage, false);
@@ -51,22 +53,15 @@ test("uses the approved installed package and exact immutable lock source", () =
   assert.equal(installedLicense.startsWith("MIT License\n\nCopyright (c) 2026 Zimoby\n"), true);
 
   const manifestDependencies = rootPackage.dependencies as Record<string, string>;
-  assert.equal(manifestDependencies[PACKAGE_NAME], APPROVED_SOURCE);
+  assert.equal(manifestDependencies[PACKAGE_NAME], PACKAGE_VERSION);
 
   const rootDependencies = rootLockEntry.dependencies as Record<string, string>;
-  assert.equal(rootDependencies[PACKAGE_NAME], APPROVED_SOURCE);
+  assert.equal(rootDependencies[PACKAGE_NAME], PACKAGE_VERSION);
 
   assert.equal(installedLockEntry.version, PACKAGE_VERSION);
   assert.equal(installedLockEntry.license, "MIT");
-  assert.match(String(installedLockEntry.integrity), /^sha512-[A-Za-z0-9+/]+={0,2}$/);
-  const resolved = installedLockEntry.resolved;
-  assert.equal(typeof resolved, "string");
-  assert.match(
-    String(resolved),
-    new RegExp(
-      `^git\\+(?:https://github\\.com/|ssh://git@github\\.com/)(?:zimoby/ae-native-gradient-toolkit)(?:\\.git)?#${APPROVED_SHA}$`,
-    ),
-  );
+  assert.equal(installedLockEntry.integrity, APPROVED_INTEGRITY);
+  assert.equal(installedLockEntry.resolved, APPROVED_TARBALL);
 });
 
 test("CI install is deterministic, Node 22 aligned, public, and credential safe", () => {
@@ -102,10 +97,7 @@ test("CI install is deterministic, Node 22 aligned, public, and credential safe"
   assert.match(installStep, /^        shell: bash$/m);
   assert.match(installStep, /^        run: \|$/m);
   assert.match(installStep, /^          npm ci --legacy-peer-deps=false$/m);
-  assert.match(installStep, /^          GIT_CONFIG_COUNT: "1"$/m);
-  assert.match(installStep, /^          GIT_CONFIG_KEY_0: url\.https:\/\/github\.com\/\.insteadOf$/m);
-  assert.match(installStep, /^          GIT_CONFIG_VALUE_0: ssh:\/\/git@github\.com\/$/m);
-  assert.doesNotMatch(installStep, /credential\.helper|password=|secrets\./);
+  assert.doesNotMatch(installStep, /GIT_CONFIG_|credential\.helper|password=|secrets\./);
   assert.doesNotMatch(workflow, /AE_NATIVE_GRADIENT_READ_TOKEN|private Git dependency/);
   assert.doesNotMatch(workflow, /legacy-peer-deps=true|npm i --legacy-peer-deps/);
 });
