@@ -2,8 +2,12 @@
 
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { isAbsolute, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import WebSocket from "ws";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { CdpClient } from "./lib/cdp-client.mjs";
+import {
+  createOwnedTemporaryConfigDirectory,
+  removeOwnedRunDirectory,
+} from "./lib/live-runner-policy.mjs";
 
 const REPO_ROOT = fileURLToPath(new URL("../", import.meta.url));
 const modeArg = process.argv.slice(2).find((value) => value.startsWith("--mode="));
@@ -32,16 +36,7 @@ const requestedOutput = outputArg
 const outputDirectory = isAbsolute(requestedOutput)
   ? requestedOutput
   : resolve(REPO_ROOT, requestedOutput);
-const temporaryRoot =
-  mode === "apply"
-    ? "/private/tmp/chroma-relay-i08-apply"
-    : mode === "mutate"
-      ? "/private/tmp/chroma-relay-i09-mutate"
-      : mode === "image"
-        ? "/private/tmp/chroma-relay-image-extraction"
-        : mode === "image-selection"
-          ? "/private/tmp/chroma-relay-image-selection"
-        : "/private/tmp/chroma-relay-i07-host";
+let temporaryRoot = null;
 const APPLY_RGBA = [0.75, 0.5, 0.25, 1];
 const MUTATION_COLORS = [
   { id: "a", rgba: [1, 0, 0, 1] },
@@ -49,80 +44,20 @@ const MUTATION_COLORS = [
   { id: "c", rgba: [0, 0, 1, 1] },
   { id: "d", rgba: [1, 1, 0, 1] },
 ];
+export const activePaletteItems = (document) => {
+  if (Array.isArray(document?.palettes)) {
+    return document.palettes.find((palette) => palette.id === document.activePaletteId)?.colors ?? [];
+  }
+  return Array.isArray(document?.colors) ? document.colors : [];
+};
+export const colorSelectionResult = (lastHostResult) =>
+  lastHostResult?.selection?.colors ?? lastHostResult;
 const IMAGE_FIXTURES = ["png", "jpg"].map((format) => ({
   format,
   path: resolve(REPO_ROOT, `tests/fixtures/image-extraction/fixture.${format}`),
 }));
 const IMAGE_PRESETS = ["balanced", "tonal", "contrast"];
 const COLOR_FIXTURE_SETUP_PATH = resolve(REPO_ROOT, "scripts/ae-i07-i08-setup.jsx");
-
-class CDPClient {
-  constructor(url) {
-    this.url = url;
-    this.nextId = 1;
-    this.pending = new Map();
-    this.events = [];
-  }
-
-  async connect() {
-    this.socket = new WebSocket(this.url);
-    this.socket.addEventListener("message", ({ data }) => {
-      const message = JSON.parse(data);
-      if (!message.id) {
-        this.events.push(message);
-        return;
-      }
-      const pending = this.pending.get(message.id);
-      if (!pending) return;
-      this.pending.delete(message.id);
-      if (message.error) pending.reject(new Error(message.error.message || "CDP error"));
-      else pending.resolve(message.result);
-    });
-    await new Promise((resolveOpen, rejectOpen) => {
-      this.socket.addEventListener("open", resolveOpen, { once: true });
-      this.socket.addEventListener("error", rejectOpen, { once: true });
-    });
-  }
-
-  send(method, params = {}) {
-    return new Promise((resolveResult, rejectResult) => {
-      const id = this.nextId++;
-      const timer = setTimeout(() => {
-        this.pending.delete(id);
-        rejectResult(new Error(`${method} timed out`));
-      }, 8000);
-      this.pending.set(id, {
-        resolve: (result) => {
-          clearTimeout(timer);
-          resolveResult(result);
-        },
-        reject: (error) => {
-          clearTimeout(timer);
-          rejectResult(error);
-        },
-      });
-      this.socket.send(JSON.stringify({ id, method, params }));
-    });
-  }
-
-  async evaluate(expression) {
-    const result = await this.send("Runtime.evaluate", {
-      expression,
-      awaitPromise: true,
-      returnByValue: true,
-    });
-    if (result.exceptionDetails) {
-      throw new Error(
-        result.exceptionDetails.exception?.description || result.exceptionDetails.text
-      );
-    }
-    return result.result?.value;
-  }
-
-  close() {
-    if (this.socket) this.socket.close();
-  }
-}
 
 const delay = (milliseconds) => new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
 const debugCall = (callback) => `(() => {
@@ -296,6 +231,30 @@ const cleanupImageSelectionFixturesSource = `(function () {
   removeMatching(true);
   removeMatching(false);
   return JSON.stringify({ removed: removed });
+})()`;
+
+const imageSelectionProjectStateSource = `(function () {
+  if (!app.project) return JSON.stringify({ exists: false });
+  return JSON.stringify({
+    exists: true,
+    projectPath: app.project.file ? app.project.file.fsName : null,
+    dirty: app.project.dirty,
+    numItems: app.project.numItems
+  });
+})()`;
+
+const resetOwnedEmptyProjectSource = `(function () {
+  if (!app.project || app.project.file || app.project.numItems !== 0) {
+    return JSON.stringify({ reset: false, reason: "project-not-empty-unsaved" });
+  }
+  app.project.close(CloseOptions.DO_NOT_SAVE_CHANGES);
+  app.newProject();
+  return JSON.stringify({
+    reset: true,
+    projectPath: app.project.file ? app.project.file.fsName : null,
+    dirty: app.project.dirty,
+    numItems: app.project.numItems
+  });
 })()`;
 
 const setupColorFixtureSource = `(function () {
@@ -649,10 +608,15 @@ const getConsoleEvidence = (events) => ({
 
 const run = async () => {
   let client;
+  let configRun;
   let imageSelectionCleanupRequired = false;
+  let imageSelectionProjectResetRequired = false;
+  let imageSelectionProjectResetError = null;
   await mkdir(outputDirectory, { recursive: true });
-  await rm(temporaryRoot, { recursive: true, force: true });
-  await mkdir(temporaryRoot, { recursive: true });
+  configRun = await createOwnedTemporaryConfigDirectory({
+    tokenPrefix: `chroma-relay-functional-${mode}`,
+  });
+  temporaryRoot = configRun.path;
   const initialDocument = {
     schemaVersion: 1,
     revision: 0,
@@ -692,7 +656,7 @@ const run = async () => {
         target.type === "page" && new URL(target.url).pathname.endsWith("/main/index.html")
     );
     if (matches.length !== 1) throw new Error(`Expected one Main target, found ${matches.length}`);
-    client = new CDPClient(matches[0].webSocketDebuggerUrl);
+    client = new CdpClient(matches[0].webSocketDebuggerUrl);
     await client.connect();
     await Promise.all([
       client.send("Runtime.enable"),
@@ -712,9 +676,16 @@ const run = async () => {
       const initialSnapshot = await client.evaluate(
         debugCall("(api) => ({ state: api.getState(), counters: api.getCounters() })")
       );
-      await client.evaluate(debugCall('(api) => api.dispatchClick("remove-b")'));
+      const removeDispatched = await client.evaluate(`(() => {
+        const swatch = document.querySelector("[data-testid=swatch-b]");
+        if (!swatch) return false;
+        return swatch.dispatchEvent(
+          new MouseEvent("click", { altKey: true, bubbles: true, cancelable: true })
+        );
+      })()`);
       const afterRemove = await waitForMutationRevision(client, 1);
       if (
+        removeDispatched !== true ||
         afterRemove.state.palette.map((color) => color.id).join(",") !== "a,c,d" ||
         afterRemove.counters.diskWrites !== 1 ||
         afterRemove.counters.hostCalls !== 0
@@ -745,61 +716,117 @@ const run = async () => {
         throw new Error(`Keyboard reorder failed: ${JSON.stringify(afterKeyboardReorder)}`);
       }
 
-      const dragDispatched = await client.evaluate(`(() => {
+      const dragStartDispatched = await client.evaluate(`(() => {
         const source = document.querySelector("[data-testid=swatch-a]");
+        if (!source) return false;
+        window.__chromaRelayMutationTransfer = new DataTransfer();
+        const bounds = source.getBoundingClientRect();
+        source.dispatchEvent(new DragEvent("dragstart", {
+          bubbles: true,
+          cancelable: true,
+          clientX: bounds.left + bounds.width / 2,
+          clientY: bounds.top + bounds.height / 2,
+          dataTransfer: window.__chromaRelayMutationTransfer
+        }));
+        return true;
+      })()`);
+      await afterRender(client);
+      const dragOverDispatched = await client.evaluate(`(() => {
         const target = document.querySelector("[data-testid=swatch-c]");
-        const transfer = new DataTransfer();
-        const options = { bubbles: true, cancelable: true, dataTransfer: transfer };
-        source.dispatchEvent(new DragEvent("dragstart", options));
-        target.dispatchEvent(new DragEvent("dragover", options));
-        target.dispatchEvent(new DragEvent("drop", options));
-        source.dispatchEvent(new DragEvent("dragend", options));
+        if (!target || !window.__chromaRelayMutationTransfer) return false;
+        const bounds = target.getBoundingClientRect();
+        target.dispatchEvent(new DragEvent("dragover", {
+          bubbles: true,
+          cancelable: true,
+          clientX: bounds.right - 1,
+          clientY: bounds.top + bounds.height / 2,
+          dataTransfer: window.__chromaRelayMutationTransfer
+        }));
+        return true;
+      })()`);
+      await afterRender(client);
+      const dropDispatched = await client.evaluate(`(() => {
+        const target = document.querySelector("[data-testid=swatch-c]");
+        if (!target || !window.__chromaRelayMutationTransfer) return false;
+        const bounds = target.getBoundingClientRect();
+        target.dispatchEvent(new DragEvent("drop", {
+          bubbles: true,
+          cancelable: true,
+          clientX: bounds.right - 1,
+          clientY: bounds.top + bounds.height / 2,
+          dataTransfer: window.__chromaRelayMutationTransfer
+        }));
         return true;
       })()`);
       const afterDrag = await waitForMutationRevision(client, 3);
+      await client.evaluate(`(() => {
+        const source = document.querySelector("[data-testid=swatch-a]");
+        if (source && window.__chromaRelayMutationTransfer) {
+          source.dispatchEvent(new DragEvent("dragend", {
+            bubbles: true,
+            cancelable: true,
+            dataTransfer: window.__chromaRelayMutationTransfer
+          }));
+        }
+        delete window.__chromaRelayMutationTransfer;
+        return true;
+      })()`);
       if (
-        dragDispatched !== true ||
+        dragStartDispatched !== true ||
+        dragOverDispatched !== true ||
+        dropDispatched !== true ||
         afterDrag.state.palette.map((color) => color.id).join(",") !== "d,c,a" ||
         afterDrag.counters.diskWrites !== 3 ||
         afterDrag.counters.hostCalls !== 0
       ) {
-        throw new Error(`Drag reorder failed: ${JSON.stringify({ dragDispatched, afterDrag })}`);
+        throw new Error(
+          `Drag reorder failed: ${JSON.stringify({
+            dragStartDispatched,
+            dragOverDispatched,
+            dropDispatched,
+            afterDrag,
+          })}`
+        );
       }
 
       const keyboardFocusProof = await client.evaluate(`(() => {
         const swatch = document.querySelector("[data-testid=swatch-d]");
-        const remove = document.querySelector("[data-testid=remove-d]");
         swatch.focus();
-        const adjacentInTabOrder = swatch.nextElementSibling === remove;
-        remove.focus();
         return {
-          adjacentInTabOrder,
           swatchTabIndex: swatch.tabIndex,
-          removeTabIndex: remove.tabIndex,
           activeTestId: document.activeElement.dataset.testid || null
         };
       })()`);
-      const spaceDispatched = await client.evaluate(`(() => {
-        const remove = document.querySelector("[data-testid=remove-d]");
-        return remove.dispatchEvent(
-          new KeyboardEvent("keydown", { key: " ", code: "Space", bubbles: true, cancelable: true })
+      const keyboardRemoveDispatched = await client.evaluate(`(() => {
+        const swatch = document.querySelector("[data-testid=swatch-d]");
+        return swatch.dispatchEvent(
+          new KeyboardEvent("keydown", {
+            key: "Enter",
+            code: "Enter",
+            altKey: true,
+            bubbles: true,
+            cancelable: true
+          })
         );
       })()`);
       const afterKeyboardRemove = await waitForMutationRevision(client, 4);
+      const keyboardRemovalFocus = await client.evaluate(
+        "document.activeElement?.dataset?.testid || null"
+      );
       if (
-        keyboardFocusProof.adjacentInTabOrder !== true ||
         keyboardFocusProof.swatchTabIndex !== 0 ||
-        keyboardFocusProof.removeTabIndex !== 0 ||
-        keyboardFocusProof.activeTestId !== "remove-d" ||
-        spaceDispatched !== false ||
+        keyboardFocusProof.activeTestId !== "swatch-d" ||
+        keyboardRemoveDispatched !== false ||
+        keyboardRemovalFocus !== "swatch-c" ||
         afterKeyboardRemove.state.palette.map((color) => color.id).join(",") !== "c,a" ||
         afterKeyboardRemove.counters.diskWrites !== 4 ||
         afterKeyboardRemove.counters.hostCalls !== 0
       ) {
         throw new Error(
-          `Tab/Space single-action removal failed: ${JSON.stringify({
+          `Alt+Enter single-action removal failed: ${JSON.stringify({
             keyboardFocusProof,
-            spaceDispatched,
+            keyboardRemoveDispatched,
+            keyboardRemovalFocus,
             afterKeyboardRemove,
           })}`
         );
@@ -820,7 +847,7 @@ const run = async () => {
       const stored = JSON.parse(await readFile(resolve(temporaryRoot, "palette.json"), "utf8"));
       if (
         stored.revision !== 4 ||
-        stored.colors.map((color) => color.id).join(",") !== "c,a"
+        activePaletteItems(stored).map((color) => color.id).join(",") !== "c,a"
       ) {
         throw new Error(`Persisted mutation order is wrong: ${JSON.stringify(stored)}`);
       }
@@ -861,12 +888,16 @@ const run = async () => {
         mode,
         temporaryRoot,
         initialSnapshot,
+        removeDispatched,
         afterRemove,
         afterKeyboardReorder,
-        dragDispatched,
+        dragStartDispatched,
+        dragOverDispatched,
+        dropDispatched,
         afterDrag,
         keyboardFocusProof,
-        spaceDispatched,
+        keyboardRemoveDispatched,
+        keyboardRemovalFocus,
         afterKeyboardRemove,
         clearedNotice,
         stored,
@@ -880,6 +911,18 @@ const run = async () => {
     }
 
     if (mode === "image-selection") {
+      const projectState = await evalHost(client, imageSelectionProjectStateSource);
+      if (
+        projectState.exists !== true ||
+        projectState.projectPath !== null ||
+        projectState.dirty !== false ||
+        projectState.numItems !== 0
+      ) {
+        throw new Error(
+          `Image-selection requires an empty clean unsaved project: ${JSON.stringify(projectState)}`
+        );
+      }
+      imageSelectionProjectResetRequired = true;
       imageSelectionCleanupRequired = true;
       const staleCleanup = await evalHost(client, cleanupImageSelectionFixturesSource);
       const pngFixture = IMAGE_FIXTURES.find((fixture) => fixture.format === "png");
@@ -959,7 +1002,7 @@ const run = async () => {
         layerSource.snapshot.counters.diskWrites !== 1 ||
         layerSource.state.palette.length !== 5 ||
         layerSource.stored.revision !== 1 ||
-        layerSource.stored.colors.length !== 5
+        activePaletteItems(layerSource.stored).length !== 5
       ) {
         throw new Error(`Selected-layer source case failed: ${JSON.stringify(layerSource)}`);
       }
@@ -1184,8 +1227,8 @@ const run = async () => {
               result.extraction.uniqueColorCount <= 5 ||
               state.palette.length !== 5 ||
               stored.revision !== 1 ||
-              stored.colors.length !== 5 ||
-              !state.lastResult?.includes(imported.name)
+              activePaletteItems(stored).length !== 5 ||
+              state.lastResult !== null
             ) {
               throw new Error(
                 `Image extraction assertion failed: ${JSON.stringify({
@@ -1422,18 +1465,27 @@ const run = async () => {
     const stored = JSON.parse(await readFile(resolve(temporaryRoot, "palette.json"), "utf8"));
     const after = await evalHost(client, hostSnapshotSource);
     const hostResult = collectedState.lastHostResult;
+    const selectionColors = colorSelectionResult(hostResult);
+    const storedItems = activePaletteItems(stored);
     if (
       rapidAccepted[0] !== true ||
       rapidAccepted[1] !== true ||
       collectedSnapshot.counters.hostCalls !== 1 ||
       collectedSnapshot.counters.diskWrites !== 1 ||
-      hostResult.status !== "ok" ||
-      hostResult.colors.length !== 1 ||
-      hostResult.unsupportedGradientCount !== 1 ||
-      hostResult.unsupportedTextCount !== 1 ||
-      JSON.stringify(hostResult.colors[0]) !== JSON.stringify(before.fillA) ||
+      selectionColors.status !== "ok" ||
+      selectionColors.colors.length !== 1 ||
+      selectionColors.unsupportedGradientCount !== 0 ||
+      selectionColors.unmodifiedGradientCount !== 1 ||
+      selectionColors.unsupportedTextCount !== 1 ||
+      !Array.isArray(hostResult.gradients) ||
+      hostResult.gradients.length !== 0 ||
+      JSON.stringify(selectionColors.colors[0]) !== JSON.stringify(before.fillA) ||
+      collectedState.palette.length !== 2 ||
       JSON.stringify(collectedState.palette[0].rgba) !== JSON.stringify(before.fillA) ||
-      JSON.stringify(stored.colors[0].rgba) !== JSON.stringify(before.fillA) ||
+      stored.revision !== 1 ||
+      storedItems.length !== 2 ||
+      JSON.stringify(storedItems[0].rgba) !== JSON.stringify(before.fillA) ||
+      !storedItems[1]?.gradient ||
       JSON.stringify(before) !== JSON.stringify(after)
     ) {
       throw new Error(
@@ -1455,11 +1507,12 @@ const run = async () => {
     const groupSnapshot = await client.evaluate(
       debugCall("(api) => ({ state: api.getState(), counters: api.getCounters() })")
     );
+    const groupColors = colorSelectionResult(groupState.lastHostResult);
     if (
       groupSelection.selected !== 1 ||
-      groupState.lastHostResult.status !== "ok" ||
-      groupState.lastHostResult.colors.length !== 1 ||
-      groupState.lastHostResult.unsupportedGradientCount !== 0 ||
+      groupColors.status !== "ok" ||
+      groupColors.colors.length !== 1 ||
+      groupColors.unsupportedGradientCount !== 0 ||
       groupSnapshot.counters.diskWrites !== 1
     ) {
       throw new Error(
@@ -1478,10 +1531,11 @@ const run = async () => {
     const wholeLayerSnapshot = await client.evaluate(
       debugCall("(api) => ({ state: api.getState(), counters: api.getCounters() })")
     );
-    const wholeLayerColors = wholeLayerState.lastHostResult.colors;
+    const wholeLayerResult = colorSelectionResult(wholeLayerState.lastHostResult);
+    const wholeLayerColors = wholeLayerResult.colors;
     if (
       wholeLayerSelection.selectedLayers !== 2 ||
-      wholeLayerState.lastHostResult.status !== "ok" ||
+      wholeLayerResult.status !== "ok" ||
       wholeLayerColors.length < 2 ||
       !wholeLayerColors.some((color) => JSON.stringify(color) === JSON.stringify(before.fillA)) ||
       !wholeLayerColors.some(
@@ -1550,10 +1604,11 @@ const run = async () => {
     const disabledIncludedSnapshot = await client.evaluate(
       debugCall("(api) => ({ state: api.getState(), counters: api.getCounters() })")
     );
+    const disabledIncludedColors = colorSelectionResult(disabledIncludedState.lastHostResult);
     if (
       disabledIncludedSnapshot.state.settings.includeDisabledColors !== true ||
-      disabledIncludedState.lastHostResult.status !== "ok" ||
-      !disabledIncludedState.lastHostResult.colors.some(
+      disabledIncludedColors.status !== "ok" ||
+      !disabledIncludedColors.colors.some(
         (color) => JSON.stringify(color) === JSON.stringify(disabledIncludedSelection.color)
       ) ||
       disabledIncludedSnapshot.counters.diskWrites !== 1
@@ -1571,7 +1626,7 @@ const run = async () => {
     );
     if (
       finalStored.revision !== 3 ||
-      !finalStored.colors.some(
+      !activePaletteItems(finalStored).some(
         (color) => JSON.stringify(color.rgba) === JSON.stringify(before.disabledColor)
       )
     ) {
@@ -1667,18 +1722,36 @@ const run = async () => {
           // Continue restoring the panel if AE or the panel closed during failure cleanup.
         }
       }
+      if (imageSelectionProjectResetRequired) {
+        try {
+          const reset = await evalHost(client, resetOwnedEmptyProjectSource);
+          if (
+            reset.reset !== true ||
+            reset.projectPath !== null ||
+            reset.dirty !== false ||
+            reset.numItems !== 0
+          ) {
+            throw new Error(`Image-selection project reset failed: ${JSON.stringify(reset)}`);
+          }
+        } catch (error) {
+          imageSelectionProjectResetError = error;
+        }
+      }
       try {
         await client.evaluate(debugCall("(api) => api.setTemporaryConfigRoot(null)"));
       } catch {
         // Cleanup continues if the panel was reloaded or closed.
       }
-      client.close();
+      await client.close();
     }
-    await rm(temporaryRoot, { recursive: true, force: true });
+    if (imageSelectionProjectResetError) throw imageSelectionProjectResetError;
+    if (configRun) await removeOwnedRunDirectory(configRun);
   }
 };
 
-run().catch((error) => {
-  console.error(error instanceof Error ? error.stack || error.message : error);
-  process.exitCode = 1;
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  run().catch((error) => {
+    console.error(error instanceof Error ? error.stack || error.message : error);
+    process.exitCode = 1;
+  });
+}

@@ -7,7 +7,7 @@ import { pathToFileURL } from "node:url";
 import { CdpClient } from "./lib/cdp-client.mjs";
 import {
   createOwnedRunDirectory,
-  createOwnedScratchDirectory,
+  createOwnedTemporaryConfigDirectory,
   parseRunnerArgs,
   removeOwnedRunDirectory,
 } from "./lib/live-runner-policy.mjs";
@@ -111,16 +111,16 @@ const activePalette = (document) =>
 
 const activeColors = (document) => activePalette(document)?.colors ?? [];
 
-const run = async (outputDirectory, parentRun) => {
+const run = async (outputDirectory) => {
   const clients = new Map();
-  let scratch = await createOwnedScratchDirectory(parentRun);
+  let scratch = await createOwnedTemporaryConfigDirectory({ tokenPrefix: "chroma-relay-persistence" });
   let temporaryRoot = scratch.path;
   let primaryError = null;
   const cleanupErrors = [];
   await mkdir(outputDirectory, { recursive: true });
   const resetRoot = async () => {
     await removeOwnedRunDirectory(scratch);
-    scratch = await createOwnedScratchDirectory(parentRun);
+    scratch = await createOwnedTemporaryConfigDirectory({ tokenPrefix: "chroma-relay-persistence" });
     temporaryRoot = scratch.path;
     await Promise.all(
       [...clients.values()].map(async (client) => {
@@ -138,6 +138,8 @@ const run = async (outputDirectory, parentRun) => {
     for (const panel of PANELS) {
       const client = await connectPanel(panel);
       clients.set(panel.page, client);
+      await client.evaluate(debugCall("(api) => api.resetTestState()"));
+      await afterRender(client);
       await client.evaluate(
         debugCall(`(api) => api.setTemporaryConfigRoot(${JSON.stringify(temporaryRoot)})`)
       );
@@ -158,6 +160,7 @@ const run = async (outputDirectory, parentRun) => {
     const exactRaw = `${JSON.stringify(exact, null, 2)}\n`;
     await writeFile(resolve(temporaryRoot, "palette.json"), exactRaw);
     cases.valid = await main.evaluate(debugCall("(api) => api.reloadPalette()"));
+    await afterRender(main);
     const unchangedLegacyRaw = await readFile(resolve(temporaryRoot, "palette.json"), "utf8");
     if (
       cases.valid.document.schemaVersion !== contract.schemas.palette ||
@@ -378,7 +381,7 @@ const cli = async () => {
   const options = parseRunnerArgs(process.argv.slice(2), { allowed: ["output"] });
   const root = options.output || "evidence/i06/persistence-smoke";
   const owned = await createOwnedRunDirectory(resolve(REPO_ROOT, root));
-  return run(owned.path, owned);
+  return run(owned.path);
 };
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

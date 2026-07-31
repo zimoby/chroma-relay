@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -11,6 +11,17 @@ test("formal runner is import-safe and exposes only the exact no-argument CLI en
   const source = await readFile(new URL("../scripts/run-live-ae-tests.mjs", import.meta.url), "utf8");
   assert.match(source, /export\s+(?:const|async function)\s+runFormalTrackB/);
   assert.match(source, /process\.argv\.length\s*===\s*2/);
+  assert.doesNotMatch(source, /\bcontract\.compatibility\b/);
+  assert.match(source, /productContract\.compatibility\.storageDirectory/);
+  assert.match(source, /const RUN_TOKEN = `chroma-relay-track-b-/);
+  assert.match(source, /const TEMPORARY_PARENT = "\/private\/tmp"/);
+  assert.doesNotMatch(source, /resultEvents\[0\]\.message === snapshot\.state\.lastResult/);
+  assert.match(source, /`Applied \$\{PALETTE\.length\}-color native gradient`/);
+  assert.doesNotMatch(source, /current\.dirty !== false \|\|\s*current\.projectPath/);
+  assert.match(source, /app\.project\.close\(CloseOptions\.DO_NOT_SAVE_CHANGES\);\s*app\.open\(previous\)/);
+  assert.match(source, /const RESULT_HARNESS_PROPERTIES = Object\.freeze/);
+  assert.match(source, /JSON\.stringify\(RESULT_HARNESS_PROPERTIES\)/);
+  assert.match(source, /readPaletteResultEvents\(client, \{ allowAbsent: true \}\)/);
   assert.match(source, /import\.meta\.url/);
   assert.doesNotMatch(source, /main\(\)\.catch\(/);
 });
@@ -27,6 +38,7 @@ test("formal preconditions are read-only and reject stale ownership, non-product
       exact: true,
       panelId: "com.zimoby.chroma-relay.main",
       production: true,
+      canonicalUrlVerified: true,
       harnessOwners: {},
     },
     reviewedInputs: {
@@ -66,6 +78,7 @@ test("formal preconditions reject falsy presence of every foreign harness owner"
         url: "file:///repo/dist/cep/main/index.html",
         exact: true,
         production: true,
+        canonicalUrlVerified: true,
         panelId: "com.zimoby.chroma-relay.main",
         harnessOwners: { __CP_TRACK_B_RESULT_OWNER__: null },
       },
@@ -106,6 +119,57 @@ test("owned event policy accepts product null request IDs only when explicitly e
   ]) {
     assert.throws(() => validateOwnedEventTokens(events, "run-token-1234567890", 1), /token|event/i);
   }
+});
+
+test("formal target preflight accepts only file URLs resolving to the canonical production page", async () => {
+  const { verifyCanonicalTargetUrl } = await import("../scripts/run-live-ae-tests.mjs");
+  const canonical = join(tmpdir(), "repo", "dist", "cep", "main", "index.html");
+  const installed = join(
+    tmpdir(),
+    "installed",
+    "com.zimoby.chroma-relay",
+    "main",
+    "index.html",
+  );
+  const installedUrl = pathToFileURL(installed).href;
+  const realpathFn = async (path) => (path === installed ? canonical : path);
+  assert.equal(
+    await verifyCanonicalTargetUrl(installedUrl, canonical, { realpathFn }),
+    installedUrl,
+  );
+  const encodedInstalled = join(tmpdir(), "installed", "with?#mark", "index.html");
+  const encodedCanonical = join(tmpdir(), "repo", "with?#mark", "index.html");
+  const encodedUrl = pathToFileURL(encodedInstalled).href;
+  assert.equal(
+    await verifyCanonicalTargetUrl(encodedUrl, encodedCanonical, {
+      realpathFn: async (path) => (path === encodedInstalled ? encodedCanonical : path),
+    }),
+    encodedUrl,
+  );
+  for (const suffix of ["?", "#", "?#", "?baseline=1", "#kept-state", "?baseline=1#kept-state"]) {
+    await assert.rejects(
+      verifyCanonicalTargetUrl(`${installedUrl}${suffix}`, canonical, { realpathFn }),
+      /query or fragment/i,
+    );
+  }
+  await assert.rejects(
+    verifyCanonicalTargetUrl(
+      pathToFileURL(join(tmpdir(), "other", "main", "index.html")).href,
+      canonical,
+      { realpathFn },
+    ),
+    /canonical production page/i,
+  );
+  await assert.rejects(
+    verifyCanonicalTargetUrl("https://example.com/main/index.html", canonical, { realpathFn }),
+    /file URL|invalid/i,
+  );
+});
+
+test("formal gradient readback accepts AE eight-decimal serialization but rejects wider drift", async () => {
+  const { assertNear } = await import("../scripts/run-live-ae-tests.mjs");
+  assert.doesNotThrow(() => assertNear(0.89999998, Math.fround(0.9), "AE readback"));
+  assert.throws(() => assertNear(Math.fround(0.9) + 2e-8, Math.fround(0.9), "drift"), /drift/);
 });
 
 test("build provenance and reviewed input equality reject stale or changed bytes", async () => {
@@ -296,6 +360,41 @@ test("reviewed manifest binds commit, contract, assets, fixture bytes, and exact
   assert.equal(manifest.assets[0].size, 4);
   assert.match(manifest.assets[0].sha256, /^[a-f0-9]{64}$/);
   assert.equal(manifest.templates[0].size, 3);
+});
+
+test("reviewed FFX inputs bind to the exact built AE family instead of the first basename", async () => {
+  const { findBuiltTemplateForReviewedSource } = await import("../scripts/run-live-ae-tests.mjs");
+  const files = [
+    {
+      relativePath: "assets/native-gradient/ae22-6/fill-template.ffx",
+      size: 22,
+      sha256: "2".repeat(64),
+    },
+    {
+      relativePath: "assets/native-gradient/ae25-6/fill-template.ffx",
+      size: 25,
+      sha256: "5".repeat(64),
+    },
+  ];
+
+  assert.equal(
+    findBuiltTemplateForReviewedSource(
+      files,
+      "C:\\workspace\\node_modules\\@zimoby\\ae-native-gradient\\templates\\ae25-6\\fill.ffx",
+    ),
+    files[1],
+  );
+  assert.equal(
+    findBuiltTemplateForReviewedSource(
+      files,
+      "C:\\workspace\\node_modules\\@zimoby\\ae-native-gradient\\fixtures\\native-gradient\\ae25-6\\fill-template.ffx",
+    ),
+    files[1],
+  );
+  assert.throws(
+    () => findBuiltTemplateForReviewedSource(files, "/package/templates/ae26-3/fill.ffx"),
+    /exactly one|ae26-3/i,
+  );
 });
 
 test("cleanup only applies current owned children and never removes the caller root", async () => {

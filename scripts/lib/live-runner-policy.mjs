@@ -1,6 +1,7 @@
 import { lstat, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { isAbsolute, join, parse, relative, resolve, sep } from "node:path";
 import { randomBytes } from "node:crypto";
+import { tmpdir } from "node:os";
 import contract from "../../src/shared/product-contract.json" with { type: "json" };
 
 export class RunnerPolicyError extends Error {
@@ -65,6 +66,25 @@ const trustedPosixSymlinkTargets = new Map([
   ["/tmp", "/private/tmp"],
   ["/var", "/private/var"],
 ]);
+
+const canonicalizeTrustedPosixRoot = async (
+  value,
+  fs,
+  pathApi = { resolve, sep }
+) => {
+  const root = pathApi.resolve(value);
+  const trustedTarget = pathApi.sep === "/" ? trustedPosixSymlinkTargets.get(root) : undefined;
+  if (!trustedTarget) return root;
+  const stat = await fs.lstat(root);
+  if (!stat.isSymbolicLink?.()) return root;
+  const actualTarget = await fs.realpath(root);
+  if (pathApi.resolve(actualTarget) !== pathApi.resolve(trustedTarget)) {
+    throw new RunnerPolicyError("Output root escapes through a symlink");
+  }
+  return pathApi.resolve(actualTarget);
+};
+
+export const canonicalizeTemporaryDirectoryForTest = canonicalizeTrustedPosixRoot;
 
 const rejectSymlinkComponents = async (
   path,
@@ -205,6 +225,24 @@ export const createOwnedRunDirectory = async (outputRoot, options = {}) => {
   return createMarkedChild(root, options);
 };
 
+export const createOwnedTemporaryConfigDirectory = async (options = {}) => {
+  const {
+    temporaryDirectory = tmpdir(),
+    tokenPrefix = "chroma-relay-run",
+    ...directoryOptions
+  } = options;
+  if (!/^chroma-relay-[a-zA-Z0-9._-]+$/.test(tokenPrefix)) {
+    throw new RunnerPolicyError("Temporary config token prefix must start with chroma-relay-");
+  }
+  const fs = directoryOptions.fs || defaultFs;
+  const canonicalTemporaryDirectory = await canonicalizeTrustedPosixRoot(temporaryDirectory, fs);
+  return createOwnedRunDirectory(canonicalTemporaryDirectory, {
+    ...directoryOptions,
+    tokenFactory: () =>
+      `${tokenPrefix}-${Date.now().toString(36)}-${randomBytes(8).toString("hex")}`,
+  });
+};
+
 const readJsonMarker = async (markerPath, fs) => {
   try {
     return JSON.parse(await fs.readFile(markerPath, "utf8"));
@@ -268,7 +306,12 @@ export const createOwnedScratchDirectory = async (parentRun, options = {}) => {
 
 export const removeOwnedRunDirectory = async (run, { fs = defaultFs } = {}) => {
   const verified = await assertOwnedRun(run, fs);
-  await fs.rm(verified.childPath, { recursive: true, force: false });
+  await fs.rm(verified.childPath, {
+    recursive: true,
+    force: false,
+    maxRetries: 10,
+    retryDelay: 100,
+  });
 };
 
 export const validateOutputRootForTest = validateOutputRoot;

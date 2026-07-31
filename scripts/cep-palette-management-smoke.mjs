@@ -6,7 +6,7 @@ import { pathToFileURL } from "node:url";
 import { CdpClient } from "./lib/cdp-client.mjs";
 import {
   createOwnedRunDirectory,
-  createOwnedScratchDirectory,
+  createOwnedTemporaryConfigDirectory,
   parseRunnerArgs,
   removeOwnedRunDirectory,
 } from "./lib/live-runner-policy.mjs";
@@ -128,6 +128,12 @@ const click = async (client, testId) => {
   assert.equal(clicked, true, `${client.page}: ${testId} should be clickable`);
 };
 
+const selectPaletteOption = async (client, paletteId) => {
+  await click(client, "palette-select");
+  await settle(client);
+  await click(client, `palette-option-${paletteId}`);
+};
+
 const setInputValue = async (client, testId, value, { commit = true } = {}) => {
   const focused = await client.evaluate(`(() => {
     const input = document.querySelector('[data-testid="${testId}"]');
@@ -154,18 +160,6 @@ const setInputValue = async (client, testId, value, { commit = true } = {}) => {
     windowsVirtualKeyCode: 13,
     nativeVirtualKeyCode: 13,
   });
-};
-
-const setSelectValue = async (client, testId, value) => {
-  const changed = await client.evaluate(`(() => {
-    const select = document.querySelector('[data-testid="${testId}"]');
-    if (!(select instanceof HTMLSelectElement)) return false;
-    const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value").set;
-    setter.call(select, ${JSON.stringify(value)});
-    select.dispatchEvent(new Event("change", { bubbles: true }));
-    return true;
-  })()`);
-  assert.equal(changed, true, `${testId}: select should accept ${value}`);
 };
 
 // HTML5 drag semantics against the real Settings UI. Each phase runs in its
@@ -404,8 +398,8 @@ export const runPaletteManagementLifecycle = async ({
   return result;
 };
 
-const run = async (outputDirectory, parentRun) => {
-  const scratch = await createOwnedScratchDirectory(parentRun);
+const run = async (outputDirectory) => {
+  const scratch = await createOwnedTemporaryConfigDirectory({ tokenPrefix: "chroma-relay-palette" });
   const paths = pathsFor(scratch.path);
   await mkdir(outputDirectory, { recursive: true });
   await mkdir(REDESIGN_EVIDENCE_DIRECTORY, { recursive: true });
@@ -465,7 +459,7 @@ const run = async (outputDirectory, parentRun) => {
     const emptyMessage = await settings.evaluate(
       `document.querySelector(".palette-empty")?.textContent.trim()`
     );
-    assert.equal(emptyMessage, "Add a color here or collect from the Main panel.");
+    assert.equal(emptyMessage, "Add a color here or collect colors and gradients from Main.");
     await screenshot(settings, "empty-palette.png", outputDirectory);
     await copyFile(
       resolve(outputDirectory, "empty-palette.png"),
@@ -505,7 +499,7 @@ const run = async (outputDirectory, parentRun) => {
     assert.equal(snapshots[0].activePalette.name, "Project Warm");
     assert.equal(snapshots[1].activePalette.name, "Project Warm");
 
-    await setSelectValue(settings, "palette-select", "palette-default");
+    await selectPaletteOption(settings, "palette-default");
     snapshots = await waitForRevision(clients, 5, "select default palette");
     assert.equal(snapshots[0].activePalette.id, "palette-default");
     assert.deepEqual(snapshots[0].palette.map((color) => color.id), ["a", "b", "c"]);
@@ -593,7 +587,7 @@ const run = async (outputDirectory, parentRun) => {
     assert.deepEqual(snapshots[0].palette.map((color) => color.id), ["a", "c"]);
     assert.deepEqual(snapshots[1].palette.map((color) => color.id), ["a", "c"]);
 
-    await setSelectValue(settings, "palette-select", "palette-1");
+    await selectPaletteOption(settings, "palette-1");
     snapshots = await waitForRevision(clients, 9, "select second palette");
     assert.equal(snapshots[0].activePalette.name, "Project Warm");
 
@@ -894,7 +888,7 @@ const cli = async () => {
   const options = parseRunnerArgs(process.argv.slice(2), { allowed: ["output"] });
   const root = options.output || "evidence/local/palette-management/management-smoke";
   const runDirectory = await createOwnedRunDirectory(resolve(process.cwd(), root));
-  return run(runDirectory.path, runDirectory);
+  return run(runDirectory.path);
 };
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

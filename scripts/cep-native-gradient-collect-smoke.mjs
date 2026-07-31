@@ -8,7 +8,7 @@ import { pathToFileURL } from "node:url";
 import { CdpClient } from "./lib/cdp-client.mjs";
 import {
   createOwnedRunDirectory,
-  createOwnedScratchDirectory,
+  createOwnedTemporaryConfigDirectory,
   parseRunnerArgs,
   removeOwnedRunDirectory,
 } from "./lib/live-runner-policy.mjs";
@@ -142,10 +142,42 @@ const openFixtureSource = (fixtureCopy) => `(function () {
   });
 })()`;
 
-const restoreProjectSource = (projectPath, restoreEmptyProject) => `(function () {
-  if (!app.project || app.project.dirty !== false) {
-    return JSON.stringify({ restored: false, reason: "fixture-project-dirty" });
+const saveConvertedFixtureSource = (runtimeFixture) => `(function () {
+  if (!app.project || app.project.file || app.project.dirty !== true) {
+    return JSON.stringify({ ok: false, reason: "converted-project-state-mismatch" });
   }
+  var comp = app.project.activeItem;
+  if (!(comp instanceof CompItem) || comp.id !== 1 || comp.name !== "A3 Exact Identity Mixed AE25" ||
+      comp.numLayers !== 2 || comp.layer(1).id !== 14 || comp.layer(2).id !== 13) {
+    return JSON.stringify({ ok: false, reason: "converted-project-ownership-mismatch" });
+  }
+  var destination = new File(${JSON.stringify(runtimeFixture)});
+  if (destination.exists) return JSON.stringify({ ok: false, reason: "runtime-fixture-already-exists" });
+  app.project.save(destination);
+  return JSON.stringify({
+    ok: app.project.file && app.project.file.fsName === destination.fsName && app.project.dirty === false,
+    version: app.version,
+    projectPath: app.project.file ? app.project.file.fsName : null,
+    dirty: app.project.dirty,
+    compId: comp.id,
+    selectedLayers: comp.selectedLayers.length,
+    selectedProperties: comp.layer(1).selectedProperties.length + comp.layer(2).selectedProperties.length
+  });
+})()`;
+
+const restoreProjectSource = (projectPath, restoreEmptyProject, fixtureCopy, runtimeFixture) => `(function () {
+  if (!app.project) return JSON.stringify({ restored: false, reason: "fixture-project-missing" });
+  var active = app.project.activeItem;
+  var ownedSavedCopy = app.project.file &&
+    (app.project.file.fsName === ${JSON.stringify(fixtureCopy)} ||
+      app.project.file.fsName === ${JSON.stringify(runtimeFixture)});
+  var ownedConvertedCopy = !app.project.file &&
+    active instanceof CompItem && active.id === 1 && active.name === "A3 Exact Identity Mixed AE25" &&
+    active.numLayers === 2 && active.layer(1).id === 14 && active.layer(2).id === 13;
+  if (!ownedSavedCopy && !ownedConvertedCopy) {
+    return JSON.stringify({ restored: false, reason: "fixture-project-ownership-mismatch" });
+  }
+  app.project.close(CloseOptions.DO_NOT_SAVE_CHANGES);
   if (${restoreEmptyProject === true ? "true" : "false"}) {
     app.newProject();
     return JSON.stringify({
@@ -165,6 +197,53 @@ const restoreProjectSource = (projectPath, restoreEmptyProject) => `(function ()
   });
 })()`;
 
+const aeMajor = (version) => {
+  const match = /^(\d+)(?:\.|x|$)/.exec(String(version || ""));
+  return match ? Number(match[1]) : null;
+};
+
+const MIN_SUPPORTED_AE_MAJOR = 22;
+const MAX_SUPPORTED_AE_MAJOR = 26;
+
+export const canLoadReviewedNativeGradientFixture = (runtimeVersion, expectedVersion) => {
+  const runtimeMajor = aeMajor(runtimeVersion);
+  const expectedMajor = aeMajor(expectedVersion);
+  const supportedRuntime =
+    runtimeMajor !== null &&
+    runtimeMajor >= MIN_SUPPORTED_AE_MAJOR &&
+    runtimeMajor <= MAX_SUPPORTED_AE_MAJOR;
+  return (
+    supportedRuntime &&
+    (String(runtimeVersion || "") === String(expectedVersion || "") ||
+      (expectedMajor !== null && runtimeMajor > expectedMajor))
+  );
+};
+
+export const classifyNativeGradientFixtureLoad = ({ setup, expectedVersion, fixtureCopy }) => {
+  const runtimeMajor = aeMajor(setup?.version);
+  const expectedMajor = aeMajor(expectedVersion);
+  const commonIdentity =
+    setup?.ok === true &&
+    runtimeMajor !== null &&
+    runtimeMajor >= MIN_SUPPORTED_AE_MAJOR &&
+    runtimeMajor <= MAX_SUPPORTED_AE_MAJOR &&
+    setup.compId === 1 &&
+    setup.selectedLayers === 2 &&
+    setup.selectedProperties === 0;
+  const exact =
+    commonIdentity &&
+    setup.version === expectedVersion &&
+    setup.projectPath === fixtureCopy &&
+    setup.dirty === false;
+  const converted =
+    commonIdentity &&
+    expectedMajor !== null &&
+    runtimeMajor > expectedMajor &&
+    setup.projectPath === null &&
+    setup.dirty === true;
+  return { accepted: exact || converted, exact, converted, runtimeMajor, expectedMajor };
+};
+
 const consoleEvidence = (events) => ({
   console: events
     .filter((event) => event.method === "Runtime.consoleAPICalled")
@@ -183,6 +262,14 @@ const descriptorProjection = (descriptor) => ({
   layerIndex: descriptor.layerIndex,
   kind: descriptor.kind,
   propertyIndexPath: descriptor.propertyIndexPath,
+  matchNamePath: descriptor.matchNamePath,
+});
+
+const descriptorIdentityProjection = (descriptor) => ({
+  compId: descriptor.compId,
+  layerId: descriptor.layerId,
+  layerIndex: descriptor.layerIndex,
+  kind: descriptor.kind,
   matchNamePath: descriptor.matchNamePath,
 });
 
@@ -208,10 +295,13 @@ export const assessNativeGradientCleanup = ({
   return { report: nextReport, failure: nextFailure, retainScratch };
 };
 
-const main = async (outputDirectory, parentRun) => {
-  const scratch = await createOwnedScratchDirectory(parentRun);
+const main = async (outputDirectory) => {
+  const scratch = await createOwnedTemporaryConfigDirectory({ tokenPrefix: "chroma-relay-native-gradient" });
   const temporaryRoot = scratch.path;
   const fixtureCopy = resolve(temporaryRoot, "exact-identity-ae25.aep");
+  const convertedFixtureCopy = resolve(temporaryRoot, "exact-identity-runtime.aep");
+  let runtimeFixture = fixtureCopy;
+  let runtimeSave = null;
   let client = null;
   let originalProject = null;
   let originalConfigRoot = null;
@@ -273,20 +363,43 @@ const main = async (outputDirectory, parentRun) => {
     if (sourceHash !== sourceExpected.file.sha256 || copyHashBefore !== sourceHash) {
       throw new Error("Fixture hash does not match its reviewed expectation");
     }
+    if (
+      !canLoadReviewedNativeGradientFixture(
+        originalProject.version,
+        sourceExpected.afterEffectsVersion
+      )
+    ) {
+      throw new Error(
+        `AE ${originalProject.version} cannot safely open reviewed fixture ${sourceExpected.afterEffectsVersion}`
+      );
+    }
 
     setupAttempted = true;
     setup = await evalHost(client, openFixtureSource(fixtureCopy));
-    if (
-      setup.ok !== true ||
-      setup.version !== sourceExpected.afterEffectsVersion ||
-      setup.projectPath !== fixtureCopy ||
-      setup.dirty !== false ||
-      setup.compId !== 1 ||
-      setup.selectedLayers !== 2 ||
-      setup.selectedProperties !== 0
-    ) {
+    const fixtureLoad = classifyNativeGradientFixtureLoad({
+      setup,
+      expectedVersion: sourceExpected.afterEffectsVersion,
+      fixtureCopy,
+    });
+    if (!fixtureLoad.accepted) {
       throw new Error(`AE fixture setup failed: ${JSON.stringify(setup)}`);
     }
+    if (fixtureLoad.converted) {
+      runtimeFixture = convertedFixtureCopy;
+      runtimeSave = await evalHost(client, saveConvertedFixtureSource(runtimeFixture));
+      if (
+        runtimeSave.ok !== true ||
+        runtimeSave.version !== setup.version ||
+        runtimeSave.projectPath !== runtimeFixture ||
+        runtimeSave.dirty !== false ||
+        runtimeSave.compId !== 1 ||
+        runtimeSave.selectedLayers !== 2 ||
+        runtimeSave.selectedProperties !== 0
+      ) {
+        throw new Error(`Converted fixture save failed: ${JSON.stringify(runtimeSave)}`);
+      }
+    }
+    const runtimeHashBefore = await sha256(runtimeFixture);
 
     await client.evaluate(debugCall("(api) => api.resetTestState()"));
     await afterRender(client);
@@ -302,46 +415,40 @@ const main = async (outputDirectory, parentRun) => {
     const snapshot = await waitForIdle(client);
     const after = await evalHost(client, projectStateSource);
     const copyHashAfter = await sha256(fixtureCopy);
-    const stored = JSON.parse(await readFile(resolve(temporaryRoot, "palette.json"), "utf8"));
+    const runtimeHashAfter = await sha256(runtimeFixture);
+    let stored = null;
+    try {
+      stored = JSON.parse(await readFile(resolve(temporaryRoot, "palette.json"), "utf8"));
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
     const lastHostResult = snapshot.state.lastHostResult;
     const descriptors = lastHostResult?.selection?.nativeGradients?.descriptors ?? [];
     const entries = lastHostResult?.selection?.colors?.entries ?? [];
-    const gradientColors = lastHostResult?.gradientColors ?? [];
-    const expectedDescriptors = sourceExpected.targets.map(descriptorProjection);
-    const actualDescriptors = descriptors.map(descriptorProjection);
-    const expectedGroups = sourceExpected.targets.map((target) =>
-      target.gradient.colorStops.map((stop) => [
-        Math.fround(stop.rgb[0]),
-        Math.fround(stop.rgb[1]),
-        Math.fround(stop.rgb[2]),
-        1,
-      ])
-    );
-    const expectedSolidColors = [
-      [1, 0, 0, 1],
-      [0, 0, 0, 1],
-    ];
-    const expectedEntries = [
-      { type: "native-gradient", gradientIndex: 0 },
-      { type: "solid", colorIndex: 0 },
-      { type: "native-gradient", gradientIndex: 1 },
-      { type: "solid", colorIndex: 1 },
-      { type: "native-gradient", gradientIndex: 2 },
-      { type: "native-gradient", gradientIndex: 3 },
-    ];
-    const expectedPalette = [];
-    for (const entry of expectedEntries) {
-      if (entry.type === "native-gradient") {
-        expectedPalette.push(...expectedGroups[entry.gradientIndex]);
-      } else {
-        const solid = expectedSolidColors[entry.colorIndex];
-        if (!expectedPalette.some((color) => JSON.stringify(color) === JSON.stringify(solid))) {
-          expectedPalette.push(solid);
-        }
-      }
-    }
-    const storedActive = stored.palettes.find((palette) => palette.id === stored.activePaletteId);
+    const gradients = lastHostResult?.gradients ?? [];
+    const comparisonProjection = fixtureLoad.converted
+      ? descriptorIdentityProjection
+      : descriptorProjection;
+    const expectedDescriptors = sourceExpected.targets.map(comparisonProjection);
+    const actualDescriptors = descriptors.map(comparisonProjection);
+    const expectedGradients = sourceExpected.targets.map((target) => target.gradient);
+    const expectedEntries = expectedGradients.map((_, gradientIndex) => ({
+      type: "native-gradient",
+      gradientIndex,
+    }));
+    const actualEntries = entries.map((entry) => ({
+      type: entry.type,
+      gradientIndex: entry.gradientIndex,
+    }));
+    const expectedPalette = expectedGradients.map((gradient) => [
+      Math.fround(gradient.colorStops[0].rgb[0]),
+      Math.fround(gradient.colorStops[0].rgb[1]),
+      Math.fround(gradient.colorStops[0].rgb[2]),
+      1,
+    ]);
+    const storedActive = stored?.palettes?.find((palette) => palette.id === stored.activePaletteId);
     const storedPalette = storedActive ? storedActive.colors.map((color) => color.rgba) : null;
+    const storedGradients = storedActive ? storedActive.colors.map((color) => color.gradient) : null;
     const statePalette = snapshot.state.palette.map((color) => color.rgba);
 
     if (
@@ -354,16 +461,17 @@ const main = async (outputDirectory, parentRun) => {
       lastHostResult?.selection?.nativeGradients?.status !== "ok" ||
       lastHostResult?.selection?.colors?.unsupportedGradientCount !== 4 ||
       lastHostResult?.selection?.colors?.readErrorCount !== 0 ||
-      JSON.stringify(lastHostResult?.selection?.colors?.colors) !==
-        JSON.stringify(expectedSolidColors) ||
-      JSON.stringify(entries) !== JSON.stringify(expectedEntries) ||
+      JSON.stringify(lastHostResult?.selection?.colors?.colors) !== JSON.stringify([]) ||
+      JSON.stringify(actualEntries) !== JSON.stringify(expectedEntries) ||
       JSON.stringify(actualDescriptors) !== JSON.stringify(expectedDescriptors) ||
-      JSON.stringify(gradientColors) !== JSON.stringify(expectedGroups) ||
+      JSON.stringify(gradients) !== JSON.stringify(expectedGradients) ||
       JSON.stringify(statePalette) !== JSON.stringify(expectedPalette) ||
       JSON.stringify(storedPalette) !== JSON.stringify(expectedPalette) ||
-      snapshot.state.lastResult !== "Added 9 colors" ||
+      JSON.stringify(storedGradients) !== JSON.stringify(expectedGradients) ||
+      snapshot.state.lastResult !== null ||
       JSON.stringify(before) !== JSON.stringify(after) ||
-      copyHashAfter !== copyHashBefore
+      copyHashAfter !== copyHashBefore ||
+      runtimeHashAfter !== runtimeHashBefore
     ) {
       throw new Error(
         `Track A assertion failed: ${JSON.stringify({
@@ -372,13 +480,16 @@ const main = async (outputDirectory, parentRun) => {
           state: snapshot.state,
           actualDescriptors,
           expectedDescriptors,
-          gradientColors,
-          expectedGroups,
+          gradients,
+          expectedGradients,
           storedPalette,
+          storedGradients,
           before,
           after,
           copyHashBefore,
           copyHashAfter,
+          runtimeHashBefore,
+          runtimeHashAfter,
         })}`
       );
     }
@@ -411,6 +522,9 @@ const main = async (outputDirectory, parentRun) => {
       },
       originalProject,
       setup,
+      fixtureLoad,
+      runtimeSave,
+      runtimeFixture,
       before,
       after,
       accepted,
@@ -418,11 +532,14 @@ const main = async (outputDirectory, parentRun) => {
       paletteRevision: snapshot.state.paletteRevision,
       lastResult: snapshot.state.lastResult,
       descriptors: actualDescriptors,
-      gradientColors,
+      gradients,
       palette: statePalette,
       persistedPalette: storedPalette,
+      persistedGradients: storedGradients,
       copyHashBefore,
       copyHashAfter,
+      runtimeHashBefore,
+      runtimeHashAfter,
       console,
       screenshots: ["main-native-gradient-collected.png"],
     };
@@ -459,7 +576,12 @@ const main = async (outputDirectory, parentRun) => {
             originalProject.numItems === 0;
           cleanup.project = await evalHost(
             client,
-            restoreProjectSource(originalProject.projectPath, restoreEmptyProject)
+            restoreProjectSource(
+              originalProject.projectPath,
+              restoreEmptyProject,
+              fixtureCopy,
+              runtimeFixture
+            )
           );
         } catch (error) {
           cleanup.project = { restored: false, error: String(error) };
@@ -525,7 +647,7 @@ const cli = async () => {
   const options = parseRunnerArgs(process.argv.slice(2), { allowed: ["output"] });
   const root = options.output || "evidence/local/native-gradient/track-a-collect-ae25";
   const run = await createOwnedRunDirectory(resolve(REPO_ROOT, root));
-  return main(run.path, run);
+  return main(run.path);
 };
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

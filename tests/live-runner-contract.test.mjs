@@ -1,13 +1,15 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
+import { lstat, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, posix, resolve, sep, win32 } from "node:path";
+import { dirname, join, posix, resolve, sep, win32 } from "node:path";
 import test from "node:test";
 import { CdpClient } from "../scripts/lib/cdp-client.mjs";
 import {
   RunnerPolicyError,
+  canonicalizeTemporaryDirectoryForTest,
   createOwnedRunDirectory,
   createOwnedScratchDirectory,
+  createOwnedTemporaryConfigDirectory,
   parseRunnerArgs,
   rejectSymlinkComponentsForTest,
   removeOwnedRunDirectory,
@@ -90,6 +92,36 @@ test("absolute roots allow only verified macOS system temp aliases", async () =>
   );
 });
 
+test("temporary allocation canonicalizes only verified exact macOS temp aliases", async () => {
+  const trustedFs = {
+    lstat: async () => ({ isSymbolicLink: () => true }),
+    realpath: async (path) => path === "/tmp" ? "/private/tmp" : path,
+  };
+  assert.equal(
+    await canonicalizeTemporaryDirectoryForTest("/tmp", trustedFs, posix),
+    "/private/tmp"
+  );
+  assert.equal(
+    await canonicalizeTemporaryDirectoryForTest(
+      "/private/tmp/chroma-relay-parent",
+      trustedFs,
+      posix
+    ),
+    "/private/tmp/chroma-relay-parent"
+  );
+  await expectReject(
+    canonicalizeTemporaryDirectoryForTest(
+      "/tmp",
+      {
+        ...trustedFs,
+        realpath: async () => "/attacker-controlled-temp",
+      },
+      posix
+    ),
+    /symlink/
+  );
+});
+
 test("owned run directories are exclusive and cleanup cannot remove the caller root", async () => {
   const root = await mkdtemp(join(tmpdir(), "chroma-relay-s4-"));
   const first = await createOwnedRunDirectory(root, {
@@ -105,6 +137,30 @@ test("owned run directories are exclusive and cleanup cannot remove the caller r
   await assert.doesNotReject(() => readFile(second.markerPath, "utf8"));
   await expectReject(removeOwnedRunDirectory(root), /owned run directory/);
   await removeOwnedRunDirectory(second);
+  await rm(root, { recursive: true, force: true });
+});
+
+test("owned cleanup gives transient Windows locks bounded native retries", async () => {
+  const root = await mkdtemp(join(tmpdir(), "chroma-relay-s4-rm-retry-"));
+  const run = await createOwnedRunDirectory(root, { tokenFactory: () => "rm-retry-token" });
+  const calls = [];
+  await removeOwnedRunDirectory(run, {
+    fs: {
+      lstat,
+      realpath,
+      readFile,
+      rm: async (path, options) => {
+        calls.push({ path, options });
+        return rm(path, options);
+      },
+    },
+  });
+  assert.deepEqual(calls, [
+    {
+      path: run.path,
+      options: { recursive: true, force: false, maxRetries: 10, retryDelay: 100 },
+    },
+  ]);
   await rm(root, { recursive: true, force: true });
 });
 
@@ -410,6 +466,7 @@ test("owned runners do not recursively remove fixed scratch roots and await asyn
     "cep-native-gradient-collect-smoke.mjs",
     "cep-cdp.mjs",
     "cep-design-capture.mjs",
+    "cep-functional-smoke.mjs",
     "cep-persistence-smoke.mjs",
     "cep-palette-management-smoke.mjs",
   ]) {
@@ -424,7 +481,8 @@ test("owned runners do not recursively remove fixed scratch roots and await asyn
       assert.match(source, /chroma-relay-design-/);
       assert.doesNotMatch(source, /createOwnedScratchDirectory\(parentRun\)/);
     } else {
-      assert.match(source, /createOwnedScratchDirectory/);
+      assert.match(source, /createOwnedTemporaryConfigDirectory/);
+      assert.doesNotMatch(source, /createOwnedScratchDirectory\(parentRun\)/);
     }
     assert.match(source, /removeOwnedRunDirectory/);
   }
@@ -474,6 +532,69 @@ test("debug config roots accept direct children of canonical macOS temp only", a
       /supported macOS or Windows temp directory/,
     );
   }
+});
+
+test("owned temporary config directories are direct chroma-relay children of the OS temp root", async () => {
+  const run = await createOwnedTemporaryConfigDirectory();
+  try {
+    const canonicalRoot = await realpath(tmpdir());
+    const canonicalChild = await realpath(run.path);
+    assert.equal(dirname(canonicalChild), canonicalRoot);
+    assert.match(canonicalChild.split(sep).at(-1), /^chroma-relay-/);
+    const { normalizeTemporaryConfigRoot } = await import("../src/js/shared/debug-api.ts");
+    assert.equal(normalizeTemporaryConfigRoot(canonicalChild), canonicalChild);
+  } finally {
+    await removeOwnedRunDirectory(run);
+  }
+});
+
+test("CDP selectors normalize Windows paths and inject flyout IDs into browser source", async () => {
+  const { createSettingsFlyoutProbeSource, pathMatchesPageSuffix } = await import(
+    "../scripts/cep-cdp.mjs?s4-windows-targets"
+  );
+  assert.equal(
+    pathMatchesPageSuffix("C:\\Build\\dist\\cep\\main\\index.html", "/main/index.html"),
+    true,
+  );
+  assert.equal(
+    pathMatchesPageSuffix("C:\\Build\\dist\\cep\\settings\\index.html", "/main/index.html"),
+    false,
+  );
+  const source = createSettingsFlyoutProbeSource("com.example.settings");
+  assert.match(source, /extensionId:\s*"com\.example\.settings"/);
+  assert.doesNotMatch(source, /contract\./);
+});
+
+test("functional smoke reads current palette documents and wrapped color-selection results", async () => {
+  const functional = await import("../scripts/cep-functional-smoke.mjs?s4-current-contracts");
+  const colors = [{ id: "current", rgba: [1, 0, 0, 1] }];
+  assert.equal(
+    functional.activePaletteItems({
+      activePaletteId: "active",
+      palettes: [
+        { id: "other", colors: [] },
+        { id: "active", colors },
+      ],
+    }),
+    colors,
+  );
+  assert.deepEqual(functional.activePaletteItems({ colors }), colors);
+  const selection = { status: "ok", colors: [[1, 0, 0, 1]] };
+  assert.equal(functional.colorSelectionResult({ selection: { colors: selection }, gradients: [] }), selection);
+  assert.equal(functional.colorSelectionResult(selection), selection);
+
+  const source = await readFile(
+    new URL("../scripts/cep-functional-smoke.mjs", import.meta.url),
+    "utf8",
+  );
+  assert.doesNotMatch(source, /data-testid=remove-[a-z]/);
+  assert.doesNotMatch(source, /new CDPClient\(/);
+  assert.match(source, /new CdpClient\(/);
+  assert.match(source, /new MouseEvent\("click", \{ altKey: true/);
+  assert.match(source, /key: "Enter"[\s\S]*altKey: true/);
+  assert.match(source, /Image-selection requires an empty clean unsaved project/);
+  assert.match(source, /app\.project\.close\(CloseOptions\.DO_NOT_SAVE_CHANGES\)/);
+  assert.match(source, /if \(imageSelectionProjectResetError\) throw imageSelectionProjectResetError/);
 });
 
 test("design capture can target Settings without weakening the Main compositor gate", async () => {
@@ -644,6 +765,53 @@ test("palette lifecycle fails clearly when cleanup and failure evidence both fai
     "scratch",
     "failure-evidence",
   ]);
+});
+
+test("native-gradient fixture loading accepts exact hosts and owned newer-host conversions only", async () => {
+  const { canLoadReviewedNativeGradientFixture, classifyNativeGradientFixtureLoad } = await import(
+    "../scripts/cep-native-gradient-collect-smoke.mjs?fixture-load"
+  );
+  const fixtureCopy = "/tmp/chroma-relay-native/exact-identity-ae25.aep";
+  const expectedVersion = "25.6.6x4";
+  assert.equal(canLoadReviewedNativeGradientFixture(expectedVersion, expectedVersion), true);
+  assert.equal(canLoadReviewedNativeGradientFixture("26.3x87", expectedVersion), true);
+  assert.equal(canLoadReviewedNativeGradientFixture("25.5x4", expectedVersion), false);
+  assert.equal(canLoadReviewedNativeGradientFixture("25.7x1", expectedVersion), false);
+  assert.equal(canLoadReviewedNativeGradientFixture("27.0", expectedVersion), false);
+  assert.equal(canLoadReviewedNativeGradientFixture("21.0", expectedVersion), false);
+  assert.equal(canLoadReviewedNativeGradientFixture("invalid", "invalid"), false);
+  const identity = { ok: true, compId: 1, selectedLayers: 2, selectedProperties: 0 };
+  assert.deepEqual(
+    classifyNativeGradientFixtureLoad({
+      setup: {
+        ...identity,
+        version: expectedVersion,
+        projectPath: fixtureCopy,
+        dirty: false,
+      },
+      expectedVersion,
+      fixtureCopy,
+    }),
+    { accepted: true, exact: true, converted: false, runtimeMajor: 25, expectedMajor: 25 },
+  );
+  assert.equal(
+    classifyNativeGradientFixtureLoad({
+      setup: { ...identity, version: "26.3x87", projectPath: null, dirty: true },
+      expectedVersion,
+      fixtureCopy,
+    }).converted,
+    true,
+  );
+  for (const setup of [
+    { ...identity, version: "27.0", projectPath: null, dirty: true },
+    { ...identity, version: "26.3x87", projectPath: fixtureCopy, dirty: true },
+    { ...identity, version: "26.3x87", projectPath: null, dirty: true, compId: 99 },
+  ]) {
+    assert.equal(
+      classifyNativeGradientFixtureLoad({ setup, expectedVersion, fixtureCopy }).accepted,
+      false,
+    );
+  }
 });
 
 test("native-gradient cleanup requires panel restoration and retains scratch evidence", async () => {

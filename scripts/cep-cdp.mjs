@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 
 import { mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { pathToFileURL } from "node:url";
 import { CdpClient } from "./lib/cdp-client.mjs";
 import {
   createOwnedRunDirectory,
-  createOwnedScratchDirectory,
+  createOwnedTemporaryConfigDirectory,
   parseRunnerArgs,
   removeOwnedRunDirectory,
 } from "./lib/live-runner-policy.mjs";
@@ -51,15 +52,18 @@ const getTargets = async (port) => {
 
 const targetPath = (target) => {
   try {
-    return fileURLToPath(target.url);
+    return fileURLToPath(target.url).replaceAll("\\", "/");
   } catch {
     return "";
   }
 };
 
+export const pathMatchesPageSuffix = (path, pageSuffix) =>
+  String(path).replaceAll("\\", "/").endsWith(pageSuffix);
+
 const selectTarget = (targets, panel) => {
   const matches = targets.filter(
-    (target) => target.type === "page" && targetPath(target).endsWith(panel.pageSuffix)
+    (target) => target.type === "page" && pathMatchesPageSuffix(targetPath(target), panel.pageSuffix)
   );
   if (matches.length !== 1) {
     throw new Error(
@@ -78,7 +82,10 @@ const assertIdentity = (identity, panel) => {
       `${panel.page} runtime ID mismatch: expected ${panel.extensionId}, got ${identity.extensionId}`
     );
   }
-  if (identity.page !== panel.page || !targetPath({ url: identity.url }).endsWith(panel.pageSuffix)) {
+  if (
+    identity.page !== panel.page ||
+    !pathMatchesPageSuffix(targetPath({ url: identity.url }), panel.pageSuffix)
+  ) {
     throw new Error(`${panel.page} runtime page identity mismatch`);
   }
   if (identity.buildMarker !== EXPECTED_BUILD_MARKER) {
@@ -148,8 +155,31 @@ const captureScreenshot = async (client, path) => {
   await writeFile(path, Buffer.from(screenshot.data, "base64"));
 };
 
-const inspectPanel = async (panel, outputDirectory, parentRun) => {
-  const scratch = await createOwnedScratchDirectory(parentRun);
+export const createSettingsFlyoutProbeSource = (mainPanelId) => `
+  new Promise((resolve) => {
+    const cep = window.__adobe_cep__;
+    const original = cep.requestOpenExtension;
+    let call = null;
+    cep.requestOpenExtension = function (extensionId, startupParams) {
+      call = { extensionId, startupParams };
+      return original.call(cep, extensionId, startupParams);
+    };
+    cep.dispatchEvent({
+      type: "com.adobe.csxs.events.flyoutMenuClicked",
+      scope: "APPLICATION",
+      appId: "AEFT",
+      extensionId: ${JSON.stringify(mainPanelId)},
+      data: JSON.stringify({ menuId: "settings" }),
+    });
+    setTimeout(() => {
+      cep.requestOpenExtension = original;
+      resolve(call);
+    }, 150);
+  })
+`;
+
+const inspectPanel = async (panel, outputDirectory) => {
+  const scratch = await createOwnedTemporaryConfigDirectory({ tokenPrefix: `chroma-relay-${panel.page}` });
   let client;
   let target;
   let report = null;
@@ -351,7 +381,7 @@ const runSelfTest = () => {
   const panel = PANELS[0];
   const exact = {
     type: "page",
-    url: `file:///tmp/example${panel.pageSuffix}`,
+    url: pathToFileURL(resolve(tmpdir(), "example", ...panel.pageSuffix.split("/").filter(Boolean))).href,
     webSocketDebuggerUrl: "ws://example",
   };
   const passed = [
@@ -381,7 +411,7 @@ const runInspect = async (outputDirectory, parentRun, options = {}) => {
     extensionId: options[`${panel.page}-id`] || panel.extensionId,
   }));
   const reports = [];
-  for (const panel of configuredPanels) reports.push(await inspectPanel(panel, outputDirectory, parentRun));
+  for (const panel of configuredPanels) reports.push(await inspectPanel(panel, outputDirectory));
   const summary = {
     capturedAt: new Date().toISOString(),
     passed: true,
@@ -397,8 +427,8 @@ const runInspect = async (outputDirectory, parentRun, options = {}) => {
   console.log(JSON.stringify(summary, null, 2));
 };
 
-const runSettingsSmoke = async (outputDirectory, parentRun) => {
-  const scratch = await createOwnedScratchDirectory(parentRun);
+const runSettingsSmoke = async (outputDirectory) => {
+  const scratch = await createOwnedTemporaryConfigDirectory({ tokenPrefix: "chroma-relay-settings-smoke" });
   const temporaryRoot = scratch.path;
   const clients = new Map();
   let primaryError = null;
@@ -446,28 +476,9 @@ const runSettingsSmoke = async (outputDirectory, parentRun) => {
 
     const main = clients.get("main");
     const settings = clients.get("settings");
-    const flyoutLaunch = await main.evaluate(`
-      new Promise((resolve) => {
-        const cep = window.__adobe_cep__;
-        const original = cep.requestOpenExtension;
-        let call = null;
-        cep.requestOpenExtension = function (extensionId, startupParams) {
-          call = { extensionId, startupParams };
-          return original.call(cep, extensionId, startupParams);
-        };
-        cep.dispatchEvent({
-          type: "com.adobe.csxs.events.flyoutMenuClicked",
-          scope: "APPLICATION",
-          appId: "AEFT",
-          extensionId: contract.product.panelIds.main,
-          data: JSON.stringify({ menuId: "settings" }),
-        });
-        setTimeout(() => {
-          cep.requestOpenExtension = original;
-          resolve(call);
-        }, 150);
-      })
-    `);
+    const flyoutLaunch = await main.evaluate(
+      createSettingsFlyoutProbeSource(contract.product.panelIds.main)
+    );
     if (
       flyoutLaunch?.extensionId !== contract.product.panelIds.settings ||
       flyoutLaunch?.startupParams !== ""
@@ -508,24 +519,27 @@ const runSettingsSmoke = async (outputDirectory, parentRun) => {
         const rect = element.getBoundingClientRect();
         return { width: rect.width, height: rect.height };
       })`);
-    const getAddGeometry = (client) =>
+    const getActionGeometry = (client) =>
       client.evaluate(`(() => {
         const swatches = Array.from(document.querySelectorAll(".palette-swatch-shell"));
         const last = swatches[swatches.length - 1].getBoundingClientRect();
         const add = document.querySelector(".palette-add").getBoundingClientRect();
+        const toggle = document.querySelector(".palette-picker-toggle").getBoundingClientRect();
+        const actions = document.querySelector(".palette-actions").getBoundingClientRect();
         return {
           orientation: document.querySelector(".chroma-relay-panel").dataset.orientation,
-          width: add.width,
-          height: add.height,
-          horizontalGap: add.left - last.right,
-          verticalGap: add.top - last.bottom
+          actions: { width: actions.width, height: actions.height },
+          add: { width: add.width, height: add.height },
+          toggle: { width: toggle.width, height: toggle.height },
+          stageGap: actions.left - last.right,
+          buttonGap: toggle.top - add.bottom
         };
       })()`);
     const fixed = {
       main: await snapshot(main),
       settings: await snapshot(settings),
       swatches: await getSwatches(main),
-      add: await getAddGeometry(main),
+      actions: await getActionGeometry(main),
     };
     if (
       fixed.main.state.settings.layoutMode !== "fixed" ||
@@ -546,11 +560,14 @@ const runSettingsSmoke = async (outputDirectory, parentRun) => {
     if (
       fixed.swatches.length !== 5 ||
       fixed.swatches.some((rect) => rect.width !== 32 || rect.height !== 32) ||
-      fixed.add.width !== 32 ||
-      fixed.add.height !== 32 ||
+      fixed.actions.actions.width !== 32 ||
+      fixed.actions.actions.height !== 32 ||
+      fixed.actions.add.width !== 32 ||
+      fixed.actions.toggle.width !== 32 ||
       Math.abs(
-        (fixed.add.orientation === "vertical" ? fixed.add.verticalGap : fixed.add.horizontalGap) - 2
-      ) > 0.5
+        fixed.actions.add.height + fixed.actions.toggle.height + fixed.actions.buttonGap - 32
+      ) > 0.5 ||
+      Math.abs(fixed.actions.stageGap - 2) > 0.5
     ) {
       throw new Error(`Fixed 32 px rail geometry was wrong: ${JSON.stringify(fixed)}`);
     }
@@ -578,7 +595,7 @@ const runSettingsSmoke = async (outputDirectory, parentRun) => {
       main: await snapshot(main),
       settings: await snapshot(settings),
       swatches: await getSwatches(main),
-      add: await getAddGeometry(main),
+      actions: await getActionGeometry(main),
     };
     if (
       resized.main.state.settings.swatchSize !== 40 ||
@@ -598,11 +615,14 @@ const runSettingsSmoke = async (outputDirectory, parentRun) => {
     }
     if (
       resized.swatches.some((rect) => rect.width !== 40 || rect.height !== 40) ||
-      resized.add.width !== 40 ||
-      resized.add.height !== 40 ||
+      resized.actions.actions.width !== 40 ||
+      resized.actions.actions.height !== 40 ||
+      resized.actions.add.width !== 40 ||
+      resized.actions.toggle.width !== 40 ||
       Math.abs(
-        (resized.add.orientation === "vertical" ? resized.add.verticalGap : resized.add.horizontalGap) - 2
-      ) > 0.5
+        resized.actions.add.height + resized.actions.toggle.height + resized.actions.buttonGap - 40
+      ) > 0.5 ||
+      Math.abs(resized.actions.stageGap - 2) > 0.5
     ) {
       throw new Error(`Fixed 40 px rail geometry was wrong: ${JSON.stringify(resized)}`);
     }
@@ -844,7 +864,7 @@ const main = async () => {
   const root = options.output || (command === "inspect" ? "evidence/i05/inspect" : "evidence/i05/settings-smoke");
   const run = await createOwnedRunDirectory(resolve(REPO_ROOT, root));
   if (command === "inspect") return runInspect(run.path, run, options);
-  return runSettingsSmoke(run.path, run);
+  return runSettingsSmoke(run.path);
 };
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {

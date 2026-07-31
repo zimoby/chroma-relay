@@ -66,10 +66,10 @@ const REVIEWED_INPUTS = Object.freeze({
     sha256: "cb1ffe6195604834203a950433a83dd7097e971f8477567fdc2c32e3c34ed9dd",
   },
 });
-const RUN_TOKEN = `track-b-${Date.now().toString(36)}-${randomBytes(8).toString("hex")}`;
+const RUN_TOKEN = `chroma-relay-track-b-${Date.now().toString(36)}-${randomBytes(8).toString("hex")}`;
 const EVIDENCE_ROOT = resolve(REPO_ROOT, "evidence/local/native-gradient/track-b-apply-ae25");
 const OUTPUT_DIRECTORY = resolve(EVIDENCE_ROOT, RUN_TOKEN);
-const TEMPORARY_PARENT = "/private/tmp/chroma-relay-native-gradient-apply";
+const TEMPORARY_PARENT = "/private/tmp";
 const TEMPORARY_ROOT = resolve(TEMPORARY_PARENT, RUN_TOKEN);
 const LOCK_PATH = "/private/tmp/chroma-relay-native-gradient-apply.lock";
 const BUILD_ROOT = resolve(REPO_ROOT, "dist/cep");
@@ -156,6 +156,62 @@ const describeBytes = (path, bytes) => ({
 });
 const describeFile = async (path) => describeBytes(path, await readFile(path));
 
+export const findBuiltTemplateForReviewedSource = (buildFiles, reviewedSourcePath) => {
+  const normalizedSource = reviewedSourcePath.replaceAll("\\", "/");
+  const sourceMatch =
+    normalizedSource.match(/\/templates\/([^/]+)\/(fill|stroke)\.ffx$/i) ||
+    normalizedSource.match(
+      /\/fixtures\/native-gradient\/([^/]+)\/(fill|stroke)-template\.ffx$/i
+    );
+  requireCondition(
+    sourceMatch,
+    `Reviewed FFX/template source path has an unsupported layout: ${reviewedSourcePath}`,
+  );
+  const expectedRelativePath =
+    `assets/native-gradient/${sourceMatch[1]}/${sourceMatch[2].toLowerCase()}-template.ffx`;
+  const matches = buildFiles.filter(
+    (entry) => String(entry.relativePath || entry.path).replaceAll("\\", "/") === expectedRelativePath,
+  );
+  requireCondition(
+    matches.length === 1,
+    `Expected exactly one built FFX/template asset at ${expectedRelativePath}; found ${matches.length}`,
+  );
+  return matches[0];
+};
+
+export const verifyCanonicalTargetUrl = async (
+  targetUrl,
+  expectedPath,
+  { realpathFn = realpath } = {}
+) => {
+  let parsed;
+  let targetPath;
+  try {
+    parsed = new URL(targetUrl);
+  } catch {
+    throw new RunnerPolicyError(`Main target URL is invalid: ${targetUrl}`);
+  }
+  requireCondition(parsed.protocol === "file:", `Main target URL is not a file URL: ${targetUrl}`);
+  requireCondition(
+    parsed.search === "" && parsed.hash === "" && !/[?#]/.test(targetUrl),
+    `Main target URL contains an unexpected query or fragment: ${targetUrl}`,
+  );
+  try {
+    targetPath = fileURLToPath(parsed);
+  } catch {
+    throw new RunnerPolicyError(`Main target URL is invalid: ${targetUrl}`);
+  }
+  const [canonicalTarget, canonicalExpected] = await Promise.all([
+    realpathFn(targetPath),
+    realpathFn(expectedPath),
+  ]);
+  requireCondition(
+    canonicalTarget === canonicalExpected,
+    `Main target does not resolve to the canonical production page: ${targetUrl}`
+  );
+  return targetUrl;
+};
+
 const KNOWN_HARNESS_PROPERTIES = Object.freeze([
   "__CP_TRACK_B_RUN_TOKEN__",
   "__CP_TRACK_B_INJECTION_OWNER__",
@@ -171,6 +227,13 @@ const KNOWN_HARNESS_PROPERTIES = Object.freeze([
   "injection",
   "listener",
   "project",
+]);
+const RESULT_HARNESS_PROPERTIES = Object.freeze([
+  "__CP_TRACK_B_RESULT_OWNER__",
+  "__CP_TRACK_B_RESULT_CSI__",
+  "__CP_TRACK_B_RESULT_HANDLER__",
+  "__CP_TRACK_B_RESULT_EVENTS__",
+  "__CP_TRACK_B_RESULT_TOKENS__",
 ]);
 
 const hasProperty = (value, property) =>
@@ -391,9 +454,7 @@ export const createReviewedInputManifest = async (input = {}) => {
   const templates = [];
   for (const inputEntry of Object.values(REVIEWED_INPUTS).slice(2)) templates.push(await describeFile(inputEntry.path));
   for (const template of templates) {
-    const templateParts = template.path.split(sep);
-    const templateName = templateParts[templateParts.length - 1];
-    const built = build.files.find((entry) => entry.path.endsWith(`/${templateName}`));
+    const built = findBuiltTemplateForReviewedSource(build.files, template.path);
     requireCondition(
       built?.size === template.size && built?.sha256 === template.sha256,
       `Built FFX/template asset does not match the reviewed source: ${template.path}`
@@ -458,8 +519,7 @@ export const validateFormalPreconditions = async ({
     target.exact !== true ||
     target.production !== true ||
     target.panelId !== productContract.product.panelIds.main ||
-    target.url !== "file:///repo/dist/cep/main/index.html" &&
-    target.url !== pathToFileURL(MAIN_PAGE).href
+    target.canonicalUrlVerified !== true
   ) failPrecondition("target is not the exact production Main panel");
   const owners = target.harnessOwners || {};
   assertNoHarnessProperties(owners);
@@ -1280,13 +1340,12 @@ const restoreProjectSource = (originalProject, ownedFixturePaths) => `(function 
     return JSON.stringify({ restored: true, alreadyRestored: true, state: current });
   }
   if (
-    current.dirty !== false ||
     current.projectPath === null ||
     !containsExact(ownedPaths, current.projectPath)
   ) {
     return JSON.stringify({
       restored: false,
-      reason: "refusing-to-replace-foreign-or-dirty-project",
+      reason: "refusing-to-replace-foreign-project",
       state: current
     });
   }
@@ -1295,6 +1354,7 @@ const restoreProjectSource = (originalProject, ownedFixturePaths) => `(function 
   if (!previous.exists) {
     return JSON.stringify({ restored: false, reason: "previous-project-missing" });
   }
+  app.project.close(CloseOptions.DO_NOT_SAVE_CHANGES);
   app.open(previous);
 
   var active = null;
@@ -1409,7 +1469,7 @@ const installPaletteResultListener = (client) =>
     if (!bridge || typeof bridge.addEventListener !== "function") {
       throw new Error("CEP application event API unavailable");
     }
-    const names = ${JSON.stringify(KNOWN_HARNESS_PROPERTIES)};
+    const names = ${JSON.stringify(RESULT_HARNESS_PROPERTIES)};
     if (names.some((name) => name in window && name !== "__CP_TRACK_B_RUN_TOKEN__")) {
       throw new Error("Track B result listener already installed");
     }
@@ -1461,15 +1521,17 @@ const dispatchBusyPaletteCommand = (client, baseRevision) =>
     return true;
   })()`);
 
-const readPaletteResultEvents = (client) =>
+const readPaletteResultEvents = (client, { allowAbsent = false } = {}) =>
   client.evaluate(`(() => {
-    const names = ${JSON.stringify(KNOWN_HARNESS_PROPERTIES)};
+    const names = ${JSON.stringify(RESULT_HARNESS_PROPERTIES)};
     const owner = window.__CP_TRACK_B_RESULT_OWNER__;
     const csi = window.__CP_TRACK_B_RESULT_CSI__;
     const handler = window.__CP_TRACK_B_RESULT_HANDLER__;
     const results = window.__CP_TRACK_B_RESULT_EVENTS__ || [];
     const tokens = window.__CP_TRACK_B_RESULT_TOKENS__ || [];
-    if (names.some((name) => name in window && name !== "__CP_TRACK_B_RUN_TOKEN__") && owner !== ${JSON.stringify(RUN_TOKEN)}) {
+    const present = names.some((name) => name in window);
+    if (!present && ${JSON.stringify(allowAbsent)}) return { results: [], tokens: [], installed: false };
+    if (present && owner !== ${JSON.stringify(RUN_TOKEN)}) {
       throw new Error("Refusing to remove a foreign Track B result listener");
     }
     if (owner !== ${JSON.stringify(RUN_TOKEN)} || !csi || typeof handler !== "function") {
@@ -1481,7 +1543,7 @@ const readPaletteResultEvents = (client) =>
     delete window.__CP_TRACK_B_RESULT_HANDLER__;
     delete window.__CP_TRACK_B_RESULT_EVENTS__;
     delete window.__CP_TRACK_B_RESULT_TOKENS__;
-    return { results, tokens };
+    return { results, tokens, installed: true };
   })()`);
 
 const removeUnknownCompletionInjection = (client) =>
@@ -1574,9 +1636,9 @@ const expectedAppliedGradient = () => ({
   })),
 });
 
-const assertNear = (actual, expected, label) => {
+export const assertNear = (actual, expected, label) => {
   requireCondition(
-    typeof actual === "number" && actual === expected,
+    typeof actual === "number" && Math.abs(actual - expected) <= 1e-8,
     `${label}: expected ${expected}, received ${actual}`
   );
 };
@@ -1797,9 +1859,8 @@ const main = async () => {
     reviewedInputsStart = await verifyReviewedInputs();
     requireCondition(reviewedInputsStart.gitClean === true, "Formal Track B requires a clean Git worktree");
     const target = await exactMainTarget();
-    const productionUrl = pathToFileURL(await realpath(MAIN_PAGE)).href;
     requireCondition(target.type === "page", "Exact Main target is not a page");
-    requireCondition(target.url === productionUrl, `Main target was not at the canonical production URL: ${target.url}`);
+    const productionUrl = await verifyCanonicalTargetUrl(target.url, MAIN_PAGE);
     requireCondition(target.webSocketDebuggerUrl, "Exact Main target has no debugger endpoint");
     await inspectPreflightPaths();
 
@@ -1830,7 +1891,7 @@ const main = async () => {
     );
     realConfigRoot = resolve(
       String(userData).startsWith("file:") ? fileURLToPath(String(userData)) : String(userData),
-      contract.compatibility.storageDirectory
+      productContract.compatibility.storageDirectory
     );
     realStorageBefore = await snapshotStorage(realConfigRoot);
     const sourceExpected = JSON.parse(await readFile(EXPECTED_SOURCE, "utf8"));
@@ -1864,6 +1925,7 @@ const main = async () => {
       target: {
         exact: true,
         production: true,
+        canonicalUrlVerified: true,
         panelId: productContract.product.panelIds.main,
         url: productionUrl,
         harnessProperties: staleHarnessState,
@@ -2039,7 +2101,7 @@ const main = async () => {
         resultEvents.length === 1 &&
           resultEvents[0].requestId === null &&
           resultEvents[0].ok === true &&
-          resultEvents[0].message === snapshot.state.lastResult &&
+          resultEvents[0].message === `Applied ${PALETTE.length}-color native gradient` &&
           sameJson(resultEvents[0].document, storageBefore.palette),
         `${kind} delivered result event drifted: ${JSON.stringify(resultEvents)}`
       );
@@ -2448,7 +2510,7 @@ const main = async () => {
     if (client) {
       if (originalPanel) {
       try {
-      const orphanedResultBatch = await readPaletteResultEvents(client);
+      const orphanedResultBatch = await readPaletteResultEvents(client, { allowAbsent: true });
       if (orphanedResultBatch.results.length > 0) {
         const orphanedTokens = validateOwnedEventTokens(orphanedResultBatch.results, RUN_TOKEN, orphanedResultBatch.results.length);
         observedResultRequestIds.push(...orphanedTokens.tokens);
