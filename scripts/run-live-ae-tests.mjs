@@ -29,6 +29,8 @@ import productContract from "../src/shared/product-contract.json" with { type: "
 import { CDPClient } from "./lib/cdp-client.mjs";
 import {
   createOwnedRunDirectory,
+  guardClientEvaluations,
+  isDirectCliInvocation,
   removeOwnedRunDirectory,
   RunnerPolicyError,
 } from "./lib/live-runner-policy.mjs";
@@ -210,6 +212,15 @@ export const verifyCanonicalTargetUrl = async (
     `Main target does not resolve to the canonical production page: ${targetUrl}`
   );
   return targetUrl;
+};
+
+export const createTrackBPanelNavigation = (productionUrl, runToken) => {
+  const development = new URL(productionUrl);
+  development.searchParams.set("track-b", runToken);
+  return {
+    productionUrl,
+    developmentUrl: development.href,
+  };
 };
 
 const KNOWN_HARNESS_PROPERTIES = Object.freeze([
@@ -721,20 +732,26 @@ const exactMainTarget = async () => {
   requireCondition(matches.length === 1, `Expected one exact Main target, found ${matches.length}`);
   return matches[0];
 };
-const waitForRuntime = async (client, expectedUrl, expectedDebug) =>
-  waitUntil(async () => {
-    const identity = await runtimeIdentity(client);
-    return identity.readyState === "complete" &&
-      identity.url === expectedUrl &&
-      identity.extensionId === productContract.product.panelIds.main &&
-      identity.debugApi === (expectedDebug ? "object" : "undefined")
-      ? identity
-      : false;
-  }, 12_000, expectedDebug ? "instrumented Main runtime" : "production Main runtime");
-const navigateMain = async (client, url, expectedDebug) => {
+const waitForRuntime = async (client, expectedUrl, expectedDebug, operationGuard) => {
+  try {
+    return await waitUntil(async () => {
+      const identity = await runtimeIdentity(client);
+      return identity.readyState === "complete" &&
+        identity.url === expectedUrl &&
+        identity.extensionId === productContract.product.panelIds.main &&
+        identity.debugApi === (expectedDebug ? "object" : "undefined")
+        ? identity
+        : false;
+    }, 12_000, expectedDebug ? "instrumented Main runtime" : "production Main runtime");
+  } catch (error) {
+    operationGuard?.quarantine();
+    throw error;
+  }
+};
+const navigateMain = async (client, url, expectedDebug, operationGuard) => {
   const navigation = await client.send("Page.navigate", { url });
   requireCondition(!navigation.errorText, `Main navigation failed: ${navigation.errorText}`);
-  return waitForRuntime(client, url, expectedDebug);
+  return waitForRuntime(client, url, expectedDebug, operationGuard);
 };
 const writeDurableJson = async (path, value, { overwrite = false } = {}) => {
   const temporaryPath = `${path}.${RUN_TOKEN}.tmp`;
@@ -845,6 +862,7 @@ const projectIdentity = (state) => ({
   activeItem: state.activeItem,
   items: state.items,
   selection: state.selection,
+  topology: state.topology,
 });
 const canonicalSelection = (selection) =>
   selection
@@ -940,7 +958,7 @@ const clearHarnessRunToken = (client) =>
     return true;
   })()`);
 
-const waitForDebug = async (client) => {
+const waitForDebug = async (client, operationGuard) => {
   let stable = 0;
   let previousState = null;
   for (let attempt = 0; attempt < 160; attempt += 1) {
@@ -952,7 +970,10 @@ const waitForDebug = async (client) => {
     stable = currentState && currentState === previousState ? stable + 1 : 0;
     previousState = currentState;
     if (stable === 20) return;
-    if (attempt === 159) fail("Main debug API and state did not stabilize");
+    if (attempt === 159) {
+      operationGuard?.quarantine();
+      fail("Main debug API and state did not stabilize; renderer completion quarantined");
+    }
     await delay(50);
   }
 };
@@ -960,7 +981,7 @@ const waitForDebug = async (client) => {
 const afterRender = (client) =>
   client.evaluate("new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
 
-const waitForIdle = async (client) => {
+const waitForIdle = async (client, operationGuard) => {
   for (let attempt = 0; attempt < 160; attempt += 1) {
     const snapshot = await client.evaluate(
       debugCall("(api) => ({ state: api.getState(), counters: api.getCounters() })")
@@ -974,7 +995,10 @@ const waitForIdle = async (client) => {
         debugCall("(api) => ({ state: api.getState(), counters: api.getCounters() })")
       );
     }
-    if (attempt === 159) fail("Native-gradient application did not become idle");
+    if (attempt === 159) {
+      operationGuard?.quarantine();
+      fail("Native-gradient application did not become idle; renderer completion quarantined");
+    }
     await delay(50);
   }
 };
@@ -1095,13 +1119,138 @@ const selectionHelpers = `
     }
     return result;
   }
+  function stableValue(value) {
+    if (value === null || value === undefined) return value === null ? null : "undefined";
+    if (value instanceof Array) {
+      var values = [];
+      for (var valueIndex = 0; valueIndex < value.length; valueIndex += 1) {
+        values.push(stableValue(value[valueIndex]));
+      }
+      return values;
+    }
+    if (typeof value !== "object") return value;
+    var result = { display: String(value) };
+    try { if (typeof value.toSource === "function") result.source = value.toSource(); } catch (_) {}
+    var fields = ["text", "closed", "vertices", "inTangents", "outTangents"];
+    for (var fieldIndex = 0; fieldIndex < fields.length; fieldIndex += 1) {
+      var field = fields[fieldIndex];
+      try { if (value[field] !== undefined) result[field] = stableValue(value[field]); } catch (_) {}
+    }
+    return result;
+  }
+  function temporalEaseSnapshot(values) {
+    var result = [];
+    for (var index = 0; index < values.length; index += 1) {
+      result.push({ speed: values[index].speed, influence: values[index].influence });
+    }
+    return result;
+  }
+  function keySnapshot(property, keyIndex) {
+    var result = {
+      time: property.keyTime(keyIndex),
+      value: stableValue(property.keyValue(keyIndex))
+    };
+    try { result.inInterpolationType = String(property.keyInInterpolationType(keyIndex)); } catch (_) {}
+    try { result.outInterpolationType = String(property.keyOutInterpolationType(keyIndex)); } catch (_) {}
+    try { result.inTemporalEase = temporalEaseSnapshot(property.keyInTemporalEase(keyIndex)); } catch (_) {}
+    try { result.outTemporalEase = temporalEaseSnapshot(property.keyOutTemporalEase(keyIndex)); } catch (_) {}
+    try { result.temporalAutoBezier = property.keyTemporalAutoBezier(keyIndex); } catch (_) {}
+    try { result.temporalContinuous = property.keyTemporalContinuous(keyIndex); } catch (_) {}
+    try { result.roving = property.keyRoving(keyIndex); } catch (_) {}
+    try { result.spatialAutoBezier = property.keySpatialAutoBezier(keyIndex); } catch (_) {}
+    try { result.spatialContinuous = property.keySpatialContinuous(keyIndex); } catch (_) {}
+    try { result.inSpatialTangent = stableValue(property.keyInSpatialTangent(keyIndex)); } catch (_) {}
+    try { result.outSpatialTangent = stableValue(property.keyOutSpatialTangent(keyIndex)); } catch (_) {}
+    return result;
+  }
+  function propertyTopology(property) {
+    var result = {
+      index: property.propertyIndex,
+      name: property.name,
+      matchName: property.matchName,
+      propertyType: property.propertyType,
+      numProperties: property.numProperties || 0
+    };
+    if (result.numProperties > 0) {
+      result.children = [];
+      for (var childIndex = 1; childIndex <= result.numProperties; childIndex += 1) {
+        result.children.push(propertyTopology(property.property(childIndex)));
+      }
+      return result;
+    }
+    try { result.value = stableValue(property.value); } catch (_) { result.value = "<unreadable>"; }
+    try { result.expression = property.canSetExpression ? property.expression : null; } catch (_) {}
+    try { result.expressionEnabled = property.canSetExpression ? property.expressionEnabled : null; } catch (_) {}
+    result.keys = [];
+    try {
+      for (var keyIndex = 1; keyIndex <= property.numKeys; keyIndex += 1) {
+        result.keys.push(keySnapshot(property, keyIndex));
+      }
+    } catch (_) {}
+    return result;
+  }
+  function itemTopology(item) {
+    var result = {
+      id: item.id,
+      name: item.name,
+      typeName: item.typeName,
+      kind: item instanceof CompItem ? "comp" : item instanceof FootageItem ? "footage" : "unsupported",
+      comment: item.comment,
+      label: item.label
+    };
+    if (!(item instanceof CompItem)) {
+      try { result.file = item.mainSource && item.mainSource.file ? item.mainSource.file.fsName : null; } catch (_) {}
+      return result;
+    }
+    result.width = item.width;
+    result.height = item.height;
+    result.pixelAspect = item.pixelAspect;
+    result.duration = item.duration;
+    result.frameRate = item.frameRate;
+    result.bgColor = stableValue(item.bgColor);
+    result.layers = [];
+    for (var layerIndex = 1; layerIndex <= item.numLayers; layerIndex += 1) {
+      var layer = item.layer(layerIndex);
+      var layerResult = {
+        id: layer.id,
+        index: layer.index,
+        name: layer.name,
+        matchName: layer.matchName,
+        comment: layer.comment,
+        label: layer.label,
+        sourceId: layer.source ? layer.source.id : null,
+        parentId: layer.parent ? layer.parent.id : null,
+        enabled: layer.enabled,
+        locked: layer.locked,
+        shy: layer.shy,
+        solo: layer.solo,
+        adjustmentLayer: layer.adjustmentLayer,
+        guideLayer: layer.guideLayer,
+        threeDLayer: layer.threeDLayer,
+        blendingMode: String(layer.blendingMode),
+        trackMatteType: String(layer.trackMatteType),
+        startTime: layer.startTime,
+        inPoint: layer.inPoint,
+        outPoint: layer.outPoint,
+        stretch: layer.stretch,
+        properties: []
+      };
+      for (var propertyIndex = 1; propertyIndex <= layer.numProperties; propertyIndex += 1) {
+        layerResult.properties.push(propertyTopology(layer.property(propertyIndex)));
+      }
+      result.layers.push(layerResult);
+    }
+    return result;
+  }
   function projectSnapshot() {
     var active = app.project ? app.project.activeItem : null;
     var items = [];
+    var topology = [];
     if (app.project) {
       for (var itemIndex = 1; itemIndex <= app.project.numItems; itemIndex += 1) {
         var item = app.project.item(itemIndex);
         items.push({ id: item.id, selected: item.selected === true });
+        topology.push(itemTopology(item));
       }
     }
     return {
@@ -1115,7 +1264,8 @@ const selectionHelpers = `
         kind: active instanceof CompItem ? "comp" : active instanceof FootageItem ? "footage" : "unsupported"
       } : null,
       items: items,
-      selection: active instanceof CompItem ? selectionSnapshot(active) : []
+      selection: active instanceof CompItem ? selectionSnapshot(active) : [],
+      topology: topology
     };
   }
   function resolvePropertyPath(layer, path) {
@@ -1323,7 +1473,7 @@ const undoProjectSource = (fixturePath) => `(function () {
   });
 })()`;
 
-const restoreProjectSource = (originalProject, ownedFixturePaths) => `(function () {
+const restoreProjectSource = (originalProject, ownedFixturePaths, expectedOwnedProject) => `(function () {
   ${selectionHelpers}
   if ($.global.__CP_TRACK_B_PROJECT_OWNER__ !== ${JSON.stringify(RUN_TOKEN)}) {
     return JSON.stringify({ restored: false, reason: "project-owner-not-confirmed" });
@@ -1331,6 +1481,7 @@ const restoreProjectSource = (originalProject, ownedFixturePaths) => `(function 
   var original = ${JSON.stringify(originalProject)};
   var ownedPaths = ${JSON.stringify(ownedFixturePaths)};
   var originalIdentity = ${JSON.stringify(projectIdentity(originalProject))};
+  var expectedOwnedIdentity = ${JSON.stringify(expectedOwnedProject)};
   if (typeof original.projectPath !== "string" || original.projectPath.length === 0) {
     return JSON.stringify({ restored: false, reason: "unsaved-original-project-unsupported" });
   }
@@ -1349,12 +1500,27 @@ const restoreProjectSource = (originalProject, ownedFixturePaths) => `(function 
       state: current
     });
   }
+  if (
+    current.dirty !== false ||
+    !expectedOwnedIdentity ||
+    JSON.stringify(current) !== JSON.stringify(expectedOwnedIdentity)
+  ) {
+    return JSON.stringify({
+      restored: false,
+      reason: "owned-project-topology-drift",
+      expected: expectedOwnedIdentity,
+      state: current
+    });
+  }
 
   var previous = new File(original.projectPath);
   if (!previous.exists) {
     return JSON.stringify({ restored: false, reason: "previous-project-missing" });
   }
-  app.project.close(CloseOptions.DO_NOT_SAVE_CHANGES);
+  var closed = app.project.close(CloseOptions.SAVE_CHANGES);
+  if (closed !== true) {
+    return JSON.stringify({ restored: false, reason: "owned-project-close-refused" });
+  }
   app.open(previous);
 
   var active = null;
@@ -1812,6 +1978,8 @@ const triggerGradientAction = (client) =>
 
 const main = async () => {
   let client = null;
+  let operationGuard = null;
+  const cleanupErrors = [];
   let lockHandle = null;
   let evidenceRun = null;
   let temporaryRun = null;
@@ -1821,14 +1989,18 @@ const main = async () => {
   let realConfigRoot = null;
   let realStorageBefore = null;
   let expectedProjectPredecessor = null;
+  let expectedFinalOwnedProject = null;
+  let expectedFinalOwnedProjectHash = null;
   let projectRegistrationAttempted = false;
   let projectRegistrationConfirmed = false;
   let rendererCleanupVerified = true;
+  let hostActionCompletionKnown = true;
   let injectionAttempted = false;
   let productionRestoreRequired = false;
   let productionBaseline = null;
   let devBuildEvidence = null;
   let productionBuildEvidence = null;
+  let panelNavigation = null;
   let reviewedInputsStart = null;
   let reviewedInputsEnd = null;
   let lastRendererReport = null;
@@ -1861,6 +2033,7 @@ const main = async () => {
     const target = await exactMainTarget();
     requireCondition(target.type === "page", "Exact Main target is not a page");
     const productionUrl = await verifyCanonicalTargetUrl(target.url, MAIN_PAGE);
+    panelNavigation = createTrackBPanelNavigation(productionUrl, RUN_TOKEN);
     requireCondition(target.webSocketDebuggerUrl, "Exact Main target has no debugger endpoint");
     await inspectPreflightPaths();
 
@@ -1871,9 +2044,15 @@ const main = async () => {
       client.send("Log.enable"),
       client.send("Page.enable"),
     ]);
+    operationGuard = guardClientEvaluations(client, "formal Track B Main");
     client.events = [];
     const productionManifestBefore = await createBuildManifest("production-pre-run");
-    const productionRuntimeBefore = await waitForRuntime(client, productionUrl, false);
+    const productionRuntimeBefore = await waitForRuntime(
+      client,
+      productionUrl,
+      false,
+      operationGuard
+    );
     await assertRuntimeBuild(productionRuntimeBefore, productionManifestBefore, false);
     requireCondition(
       sameJson(productionManifestBefore.files, reviewedInputsStart.build.files),
@@ -1947,10 +2126,10 @@ const main = async () => {
     productionRestoreRequired = true;
     buildOutputs.push(await runCanonicalBuild("build:dev"));
     const devManifest = await createBuildManifest("instrumented-dev");
-    const devUrl = `${productionUrl}?track-b=${encodeURIComponent(RUN_TOKEN)}`;
-    const devRuntime = await navigateMain(client, devUrl, true);
+    const devUrl = panelNavigation.developmentUrl;
+    const devRuntime = await navigateMain(client, devUrl, true, operationGuard);
     reloadCounts.debug += 1;
-    await waitForDebug(client);
+    await waitForDebug(client, operationGuard);
     await installHarnessRunToken(client);
     await afterRender(client);
     devBuildEvidence = await assertRuntimeBuild(devRuntime, devManifest, true);
@@ -2008,7 +2187,7 @@ const main = async () => {
     await client.evaluate(
       debugCall(`(api) => api.persistPalette(${JSON.stringify(PALETTE)})`)
     );
-    await waitForIdle(client);
+    await waitForIdle(client, operationGuard);
     const temporaryStorageBaseline = await snapshotStorage(TEMPORARY_ROOT);
     requireCondition(
       temporaryStorageBaseline.palette !== null,
@@ -2070,6 +2249,7 @@ const main = async () => {
       const storageBefore = await snapshotStorage(TEMPORARY_ROOT);
       await installPaletteResultListener(client);
       rendererCleanupVerified = false;
+      hostActionCompletionKnown = false;
       await triggerGradientAction(client);
       const snapshot = await waitForActionCompletion(
         client,
@@ -2081,6 +2261,7 @@ const main = async () => {
             observedEvidenceRoots
           )
       );
+      hostActionCompletionKnown = true;
       const rendererReport = snapshot.state.lastHostResult;
       lastRendererReport = rendererReport;
       const resultEventBatch = await readPaletteResultEvents(client);
@@ -2249,6 +2430,7 @@ const main = async () => {
     injectionAttempted = true;
     await installUnknownCompletionInjection(client);
     rendererCleanupVerified = false;
+    hostActionCompletionKnown = false;
     await triggerGradientAction(client);
     const pendingSnapshot = await waitForActionPending(
       client,
@@ -2304,6 +2486,7 @@ const main = async () => {
           observedEvidenceRoots
         )
     );
+    hostActionCompletionKnown = true;
     const failureReport = failureSnapshot.state.lastHostResult;
     lastRendererReport = failureReport;
     await writeDurableJson(resolve(OUTPUT_DIRECTORY, "unknown-completion-provisional.json"), {
@@ -2402,6 +2585,11 @@ const main = async () => {
       "Injected failure changed palette state or authoritative storage"
     );
     requireCondition(failureHashAfter === failureHashBefore, "Injected host failure rewrote the project");
+    expectedFinalOwnedProject = projectIdentity(failureAfter);
+    expectedFinalOwnedProjectHash = {
+      path: failureFixture,
+      sha256: failureHashAfter,
+    };
     const preservedPresetEvidence = await assertOwnedDisposition(failureReport, "preserved");
     requireCondition(preservedPresetEvidence.length === 2, "Preserved preset archive was incomplete");
     rendererCleanupVerified = true;
@@ -2475,7 +2663,12 @@ const main = async () => {
     failure = error;
     let failureScreenshot = null;
     let failureScreenshotError = null;
-    if (client && evidenceRun && productionRestoreRequired) {
+    if (
+      client &&
+      evidenceRun &&
+      productionRestoreRequired &&
+      operationGuard?.isCompletionKnown() !== false
+    ) {
       try {
         const screenshot = await client.send("Page.captureScreenshot", {
           format: "png",
@@ -2506,8 +2699,11 @@ const main = async () => {
       consoleEvidence: client ? consoleEvidence(client.events) : null,
     };
   } finally {
-    const cleanupErrors = [];
-    if (client) {
+    if (
+      client &&
+      operationGuard?.isCompletionKnown() !== false &&
+      hostActionCompletionKnown
+    ) {
       if (originalPanel) {
       try {
       const orphanedResultBatch = await readPaletteResultEvents(client, { allowAbsent: true });
@@ -2528,7 +2724,7 @@ const main = async () => {
         if (injectionProbe.owner !== null && injectionProbe.owner !== RUN_TOKEN) {
           throw new Error(`foreign injection owner: ${injectionProbe.owner}`);
         }
-        await waitForIdle(client);
+        await waitForIdle(client, operationGuard);
         const lockState = await client.evaluate(
           debugCall("(api) => ({ pendingHostAction: api.getState().pendingHostAction, pendingPaletteMutation: api.getState().pendingPaletteMutation })")
         );
@@ -2585,21 +2781,56 @@ const main = async () => {
         cleanup.panel = { debugStateRestored: true, notRequired: true };
       }
 
-      if (originalProject && projectRegistrationConfirmed) {
+      const finalizationCompletionKnown = () =>
+        operationGuard?.isCompletionKnown() !== false && hostActionCompletionKnown;
+
+      if (originalProject && projectRegistrationConfirmed && finalizationCompletionKnown()) {
         try {
+          requireCondition(
+            expectedFinalOwnedProject != null && expectedFinalOwnedProjectHash != null,
+            "accepted final owned project identity is unavailable"
+          );
+          requireCondition(
+            (await sha256(expectedFinalOwnedProjectHash.path)) === expectedFinalOwnedProjectHash.sha256,
+            "owned project bytes drifted before restoration"
+          );
           cleanup.project = await evalHost(
             client,
-            restoreProjectSource(originalProject, ownedFixturePaths)
+            restoreProjectSource(
+              originalProject,
+              ownedFixturePaths,
+              expectedFinalOwnedProject
+            )
           );
           requireCondition(
             cleanup.project.restored === true,
             `project restoration failed: ${JSON.stringify(cleanup.project)}`
           );
+          const postCloseOwnedProjectHash = await sha256(expectedFinalOwnedProjectHash.path);
+          if (postCloseOwnedProjectHash !== expectedFinalOwnedProjectHash.sha256) {
+            cleanup.project = {
+              ...cleanup.project,
+              restored: false,
+              originalProjectRestored: true,
+              savedBeforeClose: true,
+              reason: "saved owned project drifted; temporary archive retained",
+              acceptedHash: expectedFinalOwnedProjectHash.sha256,
+              postCloseHash: postCloseOwnedProjectHash,
+              preservedAt: expectedFinalOwnedProjectHash.path,
+            };
+            cleanupErrors.push(`project cleanup: ${cleanup.project.reason}`);
+          } else {
+            cleanup.project = {
+              ...cleanup.project,
+              savedBeforeClose: true,
+              postCloseHash: postCloseOwnedProjectHash,
+            };
+          }
         } catch (error) {
           cleanup.project = error instanceof Error ? error.message : String(error);
           cleanupErrors.push(`project cleanup: ${cleanup.project}`);
         }
-      } else if (originalProject) {
+      } else if (originalProject && finalizationCompletionKnown()) {
         try {
           const currentProject = await evalHost(client, projectStateSource);
           requireCondition(
@@ -2611,10 +2842,14 @@ const main = async () => {
           cleanup.project = error instanceof Error ? error.message : String(error);
           cleanupErrors.push(`project cleanup: ${cleanup.project}`);
         }
+      } else if (originalProject) {
+        const reason = "completion became unknown before project restoration; project preserved";
+        cleanup.project = { restored: false, reason };
+        cleanupErrors.push(`project cleanup: ${reason}`);
       } else {
         cleanup.project = { restored: true, notRequired: true };
       }
-      if (projectRegistrationAttempted) {
+      if (projectRegistrationAttempted && finalizationCompletionKnown()) {
         try {
           const registrationProbe = await evalHost(client, probeOriginalProjectRegistrationSource);
           requireCondition(registrationProbe.foreign === false, "project registration owner became foreign");
@@ -2640,18 +2875,27 @@ const main = async () => {
           cleanup.projectRegistration = error instanceof Error ? error.message : String(error);
           cleanupErrors.push(`project registration cleanup: ${cleanup.projectRegistration}`);
         }
+      } else if (projectRegistrationAttempted) {
+        const reason = "completion became unknown before project-registration release; registration preserved";
+        cleanup.projectRegistration = { released: false, reason };
+        cleanupErrors.push(`project registration cleanup: ${reason}`);
       } else {
         cleanup.projectRegistration = { released: true, notRequired: true };
       }
 
       const debugPanelCleanup = cleanup.panel;
-      if (productionRestoreRequired) {
+      if (productionRestoreRequired && finalizationCompletionKnown()) {
         try {
           const productionPreparation = await prepareProductionBuild();
           buildOutputs.push(productionPreparation.buildOutput);
           const productionManifestAfter = await createBuildManifest("production-restored");
-          const productionUrl = pathToFileURL(await realpath(MAIN_PAGE)).href;
-          const productionRuntimeAfter = await navigateMain(client, productionUrl, false);
+          requireCondition(panelNavigation, "production panel navigation was not captured");
+          const productionRuntimeAfter = await navigateMain(
+            client,
+            panelNavigation.productionUrl,
+            false,
+            operationGuard
+          );
           reloadCounts.production += 1;
           productionBuildEvidence = await assertRuntimeBuild(
             productionRuntimeAfter,
@@ -2686,6 +2930,14 @@ const main = async () => {
           };
           cleanupErrors.push(`production panel restoration: ${cleanup.panel.productionError}`);
         }
+      } else if (productionRestoreRequired) {
+        const reason = "completion became unknown before production rebuild; canonical build left untouched";
+        cleanup.panel = {
+          restored: false,
+          debugCleanup: debugPanelCleanup,
+          reason,
+        };
+        cleanupErrors.push(`production panel restoration: ${reason}`);
       } else {
         cleanup.panel = {
           restored: typeof debugPanelCleanup === "object",
@@ -2693,6 +2945,16 @@ const main = async () => {
           debugCleanup: debugPanelCleanup,
         };
       }
+    } else if (client) {
+      const quarantineReason = operationGuard?.isCompletionKnown() === false
+        ? "CDP completion is unknown; compensating cleanup refused"
+        : "host action completion is unknown; compensating cleanup refused";
+      cleanup.busyListener = quarantineReason;
+      cleanup.injectionAbsent = false;
+      cleanup.panel = { restored: false, reason: quarantineReason };
+      cleanup.project = { restored: false, reason: quarantineReason };
+      cleanup.projectRegistration = { released: false, reason: quarantineReason };
+      cleanupErrors.push(`CDP operation quarantine: ${quarantineReason}`);
     } else {
       cleanup.busyListener = true;
       cleanup.injectionAbsent = true;
@@ -2706,7 +2968,11 @@ const main = async () => {
       }
     }
 
-    if (client) {
+    if (
+      client &&
+      operationGuard?.isCompletionKnown() !== false &&
+      hostActionCompletionKnown
+    ) {
       try {
         await clearHarnessRunToken(client);
         const finalHarnessState = await client.evaluate(harnessPresenceExpression);
@@ -2722,8 +2988,13 @@ const main = async () => {
         cleanupErrors.push(`final harness absence: ${cleanup.harnessAbsent}`);
       }
     } else {
-      cleanup.harnessAbsent = originalPanel ? "CDP client unavailable" : true;
-      if (originalPanel) cleanupErrors.push("final harness absence: CDP client unavailable");
+      const reason = client
+        ? operationGuard?.isCompletionKnown() === false
+          ? "CDP completion unknown"
+          : "host action completion unknown"
+        : "CDP client unavailable";
+      cleanup.harnessAbsent = originalPanel ? reason : true;
+      if (originalPanel) cleanupErrors.push(`final harness absence: ${reason}`);
     }
 
     try {
@@ -2891,18 +3162,34 @@ const main = async () => {
     if (!passed && !failure) failure = new Error(`Track B cleanup failed: ${cleanupErrors.join("; ")}`);
   }
 
-  if (failure) throw failure;
+  if (failure) {
+    const throwable = failure instanceof Error
+      ? failure
+      : new Error(String(failure), { cause: failure });
+    if (cleanupErrors.length > 0) {
+      const existing = Array.isArray(throwable.cleanupErrors) ? throwable.cleanupErrors : [];
+      throwable.cleanupErrors = [...existing, ...cleanupErrors];
+    }
+    throw throwable;
+  }
   process.stdout.write(
     `${JSON.stringify({ passed: true, report: resolve(OUTPUT_DIRECTORY, "report.json") }, null, 2)}\n`
   );
 };
 
 export const runFormalTrackB = main;
-const isDirectCliInvocation = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
-if (isDirectCliInvocation) {
+if (isDirectCliInvocation(import.meta.url)) {
   if (process.argv.length === 2) {
     runFormalTrackB().catch((error) => {
       console.error(error instanceof Error ? error.stack || error.message : String(error));
+      const finalizationDiagnostics = Array.isArray(error?.cleanupErrors)
+        ? error.cleanupErrors.slice(0, 50).map(String)
+        : [];
+      if (finalizationDiagnostics.length > 0) {
+        console.error(
+          `FINALIZATION_DIAGNOSTICS ${JSON.stringify(finalizationDiagnostics).slice(0, 16_384)}`
+        );
+      }
       process.exitCode = 1;
     });
   } else {

@@ -6,14 +6,21 @@ import { fileURLToPath } from "node:url";
 import { pathToFileURL } from "node:url";
 import { CdpClient } from "./lib/cdp-client.mjs";
 import {
+  assertCanonicalRuntimeUrl,
   createOwnedRunDirectory,
   createOwnedTemporaryConfigDirectory,
+  guardClientEvaluations,
+  isDirectCliInvocation,
   parseRunnerArgs,
   removeOwnedRunDirectory,
+  restoreConfigRootWithReadback,
+  selectCanonicalCdpTarget,
 } from "./lib/live-runner-policy.mjs";
 import contract from "../src/shared/product-contract.json" with { type: "json" };
+import packageJson from "../package.json" with { type: "json" };
 
 const REPO_ROOT = fileURLToPath(new URL("../", import.meta.url));
+const EXPECTED_BUILD_MARKER = `${contract.marker.current} · ${packageJson.version}`;
 const PANELS = [
   { page: "main", port: 8198, suffix: "/main/index.html" },
   { page: "settings", port: 8199, suffix: "/settings/index.html" },
@@ -31,13 +38,12 @@ const connectPanel = async (panel) => {
   });
   if (!response.ok) throw new Error(`${panel.page} CDP endpoint returned ${response.status}`);
   const targets = await response.json();
-  const matches = targets.filter(
-    (target) => target.type === "page" && new URL(target.url).pathname.endsWith(panel.suffix)
+  const target = await selectCanonicalCdpTarget(
+    targets,
+    resolve(REPO_ROOT, "dist/cep", panel.page, "index.html"),
+    { label: `${panel.page} persistence smoke` }
   );
-  if (matches.length !== 1) {
-    throw new Error(`${panel.page} expected one exact CDP target, found ${matches.length}`);
-  }
-  const client = new CdpClient(matches[0].webSocketDebuggerUrl);
+  const client = new CdpClient(target.webSocketDebuggerUrl);
   try {
     await client.connect();
     await Promise.all([
@@ -116,20 +122,78 @@ const run = async (outputDirectory) => {
   let scratch = await createOwnedTemporaryConfigDirectory({ tokenPrefix: "chroma-relay-persistence" });
   let temporaryRoot = scratch.path;
   let primaryError = null;
+  let pendingReport = null;
+  let restorationFailed = false;
   const cleanupErrors = [];
+  const originalConfigRoots = new Map();
+  const configuredPanels = new Set();
+  const inactiveScratches = [];
+  const uncertainClients = new Set();
+  const evaluationGuards = new Map();
+  const evaluateTracked = async (client, expression) => {
+    uncertainClients.add(client);
+    const result = await client.evaluate(expression);
+    uncertainClients.delete(client);
+    return result;
+  };
+  const setVerifiedConfigRoot = async (client, expectedRoot, label) => {
+    uncertainClients.add(client);
+    await restoreConfigRootWithReadback({
+      expectedRoot,
+      setRoot: (root) => client.evaluate(
+        debugCall(`(api) => api.setTemporaryConfigRoot(${JSON.stringify(root)})`)
+      ),
+      settle: () => afterRender(client),
+      readRoot: () => client.evaluate(debugCall("(api) => api.getIdentity().configRoot")),
+      label,
+    });
+    uncertainClients.delete(client);
+  };
   await mkdir(outputDirectory, { recursive: true });
   const resetRoot = async () => {
-    await removeOwnedRunDirectory(scratch);
-    scratch = await createOwnedTemporaryConfigDirectory({ tokenPrefix: "chroma-relay-persistence" });
-    temporaryRoot = scratch.path;
-    await Promise.all(
-      [...clients.values()].map(async (client) => {
-        await client.evaluate(
-          debugCall(`(api) => api.setTemporaryConfigRoot(${JSON.stringify(temporaryRoot)})`)
+    const previousScratch = scratch;
+    const nextScratch = await createOwnedTemporaryConfigDirectory({
+      tokenPrefix: "chroma-relay-persistence",
+    });
+    const switchedClients = [];
+    try {
+      for (const client of clients.values()) {
+        await setVerifiedConfigRoot(
+          client,
+          nextScratch.path,
+          "persistence rotated config root"
         );
-        await afterRender(client);
-      })
-    );
+        switchedClients.push(client);
+      }
+    } catch (switchError) {
+      const rollbackErrors = [];
+      for (const client of switchedClients.reverse()) {
+        try {
+          await setVerifiedConfigRoot(
+            client,
+            previousScratch.path,
+            "persistence rolled-back config root"
+          );
+        } catch (rollbackError) {
+          rollbackErrors.push(rollbackError);
+        }
+      }
+      inactiveScratches.push(nextScratch);
+      restorationFailed = true;
+      if (rollbackErrors.length > 0) {
+        throw new AggregateError([switchError, ...rollbackErrors], "Persistence root switch rollback failed");
+      }
+      throw switchError;
+    }
+
+    scratch = nextScratch;
+    temporaryRoot = nextScratch.path;
+    try {
+      await removeOwnedRunDirectory(previousScratch);
+    } catch (error) {
+      inactiveScratches.push(previousScratch);
+      throw error;
+    }
   };
   const snapshot = (client) =>
     client.evaluate(debugCall("(api) => ({ state: api.getState(), counters: api.getCounters() })"));
@@ -138,19 +202,41 @@ const run = async (outputDirectory) => {
     for (const panel of PANELS) {
       const client = await connectPanel(panel);
       clients.set(panel.page, client);
-      await client.evaluate(debugCall("(api) => api.resetTestState()"));
-      await afterRender(client);
-      await client.evaluate(
-        debugCall(`(api) => api.setTemporaryConfigRoot(${JSON.stringify(temporaryRoot)})`)
+      evaluationGuards.set(
+        client,
+        guardClientEvaluations(client, `${panel.page} persistence smoke`)
       );
+      const identity = await client.evaluate(debugCall("(api) => api.getIdentity()"));
+      await assertCanonicalRuntimeUrl(
+        identity.url,
+        resolve(REPO_ROOT, "dist/cep", panel.page, "index.html"),
+        { label: `${panel.page} persistence runtime` }
+      );
+      if (
+        identity.extensionId !== contract.product.panelIds[panel.page] ||
+        identity.page !== panel.page ||
+        identity.buildMarker !== EXPECTED_BUILD_MARKER
+      ) {
+        throw new Error(
+          `${panel.page} persistence identity/build marker mismatch: ${JSON.stringify(identity)}`
+        );
+      }
+      originalConfigRoots.set(panel.page, identity.configRoot ?? null);
+      configuredPanels.add(panel.page);
+      await evaluateTracked(client, debugCall("(api) => api.resetTestState()"));
       await afterRender(client);
+      await setVerifiedConfigRoot(
+        client,
+        temporaryRoot,
+        `${panel.page} persistence initial config root`
+      );
     }
     const main = clients.get("main");
     const settings = clients.get("settings");
     const cases = {};
 
     await resetRoot();
-    cases.missing = await main.evaluate(debugCall("(api) => api.reloadPalette()"));
+    cases.missing = await evaluateTracked(main, debugCall("(api) => api.reloadPalette()"));
     if (cases.missing.error || activeColors(cases.missing.document).length !== 5) {
       throw new Error("Missing palette did not load the non-destructive default");
     }
@@ -159,7 +245,7 @@ const run = async (outputDirectory) => {
     const exact = palette(7, "exact-hdr", [1.25, -0.1, 0.5000004, 0.875]);
     const exactRaw = `${JSON.stringify(exact, null, 2)}\n`;
     await writeFile(resolve(temporaryRoot, "palette.json"), exactRaw);
-    cases.valid = await main.evaluate(debugCall("(api) => api.reloadPalette()"));
+    cases.valid = await evaluateTracked(main, debugCall("(api) => api.reloadPalette()"));
     await afterRender(main);
     const unchangedLegacyRaw = await readFile(resolve(temporaryRoot, "palette.json"), "utf8");
     if (
@@ -172,7 +258,7 @@ const run = async (outputDirectory) => {
     ) {
       throw new Error("Valid v1 palette did not migrate in memory without an eager rewrite");
     }
-    await main.evaluate(
+    await evaluateTracked(main,
       debugCall(
         `(api) => api.persistPalette(${JSON.stringify(exact.colors)})`
       )
@@ -190,13 +276,13 @@ const run = async (outputDirectory) => {
     await resetRoot();
     const malformedRaw = '{"schemaVersion":1,"revision":';
     await writeFile(resolve(temporaryRoot, "palette.json"), malformedRaw);
-    cases.malformed = await main.evaluate(debugCall("(api) => api.reloadPalette()"));
+    cases.malformed = await evaluateTracked(main, debugCall("(api) => api.reloadPalette()"));
     await afterRender(main);
-    await main.evaluate(
+    await evaluateTracked(main,
       debugCall('(api) => api.seedPalette([{ id: "guard-bypass", css: "#ff0000" }])')
     );
     await afterRender(main);
-    cases.malformedWriteAttempt = await main.evaluate(
+    cases.malformedWriteAttempt = await evaluateTracked(main,
       debugCall(
         '(async (api) => { try { await api.persistPalette([{ id: "must-not-write", rgba: [1, 0, 0, 1] }]); return "unexpected"; } catch (error) { return error.message; } })'
       )
@@ -214,13 +300,13 @@ const run = async (outputDirectory) => {
     await resetRoot();
     const temporary = palette(8, "temp-recovery", [0.1, 0.2, 0.3, 1]);
     await writeFile(resolve(temporaryRoot, "palette.json.tmp"), `${JSON.stringify(temporary)}\n`);
-    cases.temp = await main.evaluate(debugCall("(api) => api.reloadPalette()"));
+    cases.temp = await evaluateTracked(main, debugCall("(api) => api.reloadPalette()"));
     if (cases.temp.recovery !== "temp") throw new Error("Valid temp recovery did not run");
 
     await resetRoot();
     const backup = palette(9, "backup-recovery", [0.4, 0.5, 0.6, 1]);
     await writeFile(resolve(temporaryRoot, "palette.json.bak"), `${JSON.stringify(backup)}\n`);
-    cases.backup = await main.evaluate(debugCall("(api) => api.reloadPalette()"));
+    cases.backup = await evaluateTracked(main, debugCall("(api) => api.reloadPalette()"));
     if (cases.backup.recovery !== "backup") throw new Error("Valid backup recovery did not run");
 
     await resetRoot();
@@ -228,7 +314,7 @@ const run = async (outputDirectory) => {
     const interruptedTemp = palette(11, "verified-temp-wins", [0.3, 0.2, 0.1, 1]);
     await writeFile(resolve(temporaryRoot, "palette.json.bak"), `${JSON.stringify(interruptedBackup)}\n`);
     await writeFile(resolve(temporaryRoot, "palette.json.tmp"), `${JSON.stringify(interruptedTemp)}\n`);
-    cases.interrupted = await main.evaluate(debugCall("(api) => api.reloadPalette()"));
+    cases.interrupted = await evaluateTracked(main, debugCall("(api) => api.reloadPalette()"));
     if (
       cases.interrupted.recovery !== "temp" ||
       activeColors(cases.interrupted.document)[0].id !== "verified-temp-wins"
@@ -241,7 +327,7 @@ const run = async (outputDirectory) => {
     const invalidTempRaw = '{"schemaVersion":1,"revision":';
     await writeFile(resolve(temporaryRoot, "palette.json.tmp"), invalidTempRaw);
     await writeFile(resolve(temporaryRoot, "palette.json.bak"), `${JSON.stringify(fallbackBackup)}\n`);
-    cases.invalidTemp = await main.evaluate(debugCall("(api) => api.reloadPalette()"));
+    cases.invalidTemp = await evaluateTracked(main, debugCall("(api) => api.reloadPalette()"));
     const preservedInvalidTemp = await readFile(resolve(temporaryRoot, "palette.json.tmp"), "utf8");
     if (
       cases.invalidTemp.recovery !== "backup" ||
@@ -252,15 +338,16 @@ const run = async (outputDirectory) => {
     }
 
     await resetRoot();
-    await main.evaluate(debugCall("(api) => api.resetTestState()"));
+    await evaluateTracked(main, debugCall("(api) => api.resetTestState()"));
     await afterRender(main);
-    await main.evaluate(
-      debugCall(`(api) => api.setTemporaryConfigRoot(${JSON.stringify(temporaryRoot)})`)
+    await setVerifiedConfigRoot(
+      main,
+      temporaryRoot,
+      "main persistence queue config root"
     );
-    await afterRender(main);
     const firstColors = [{ id: "queued-first", rgba: [0.11, 0.22, 0.33, 1] }];
     const secondColors = [{ id: "queued-second", rgba: [0.44, 0.55, 0.66, 0.77] }];
-    await main.evaluate(
+    await evaluateTracked(main,
       debugCall(
         `(api) => Promise.all([api.persistPalette(${JSON.stringify(firstColors)}), api.persistPalette(${JSON.stringify(secondColors)})])`
       )
@@ -276,13 +363,13 @@ const run = async (outputDirectory) => {
       throw new Error("Serialized writes did not complete twice with last-write-wins data");
     }
 
-    await main.evaluate(
+    await evaluateTracked(main,
       debugCall(
         '(api) => api.seedPalette([{ id: "transient-memory", css: "#e6ccb3" }])'
       )
     );
     await afterRender(main);
-    await main.evaluate(debugCall("(api) => api.reloadPalette()"));
+    await evaluateTracked(main, debugCall("(api) => api.reloadPalette()"));
     await afterRender(main);
     const reloaded = await snapshot(main);
     if (
@@ -292,7 +379,7 @@ const run = async (outputDirectory) => {
       throw new Error("Exact palette values did not survive Main reload");
     }
 
-    const settingsWriteBoundary = await settings.evaluate(
+    const settingsWriteBoundary = await evaluateTracked(settings,
       debugCall(
         `(async (api) => { try { await api.persistPalette(${JSON.stringify(firstColors)}); return "unexpected"; } catch (error) { return error.message; } })`
       )
@@ -318,7 +405,7 @@ const run = async (outputDirectory) => {
       }
     }
 
-    const report = {
+    pendingReport = {
       capturedAt: new Date().toISOString(),
       passed: true,
       temporaryRoot,
@@ -332,49 +419,110 @@ const run = async (outputDirectory) => {
       screenshots: ["main-reloaded.png"],
       preservedEvidence: ["malformed-palette.json"],
     };
-    await writeFile(resolve(outputDirectory, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
-    console.log(JSON.stringify({ passed: true, outputDirectory }, null, 2));
   } catch (error) {
     primaryError = error;
   } finally {
-    for (const client of clients.values()) {
+    for (const [page, client] of clients.entries()) {
       try {
-        await client.evaluate(debugCall("(api) => api.setTemporaryConfigRoot(null)"));
-      } catch {
-        // Cleanup continues even if a panel closed during the run.
+        if (
+          uncertainClients.has(client) ||
+          !evaluationGuards.get(client)?.isCompletionKnown()
+        ) {
+          restorationFailed = true;
+          cleanupErrors.push({
+            phase: `restore-config:${page}`,
+            error: "Renderer completion is unknown; restoration dispatch refused",
+          });
+        } else if (configuredPanels.has(page)) {
+          await restoreConfigRootWithReadback({
+            expectedRoot: originalConfigRoots.get(page) ?? null,
+            setRoot: (root) => client.evaluate(
+              debugCall(`(api) => api.setTemporaryConfigRoot(${JSON.stringify(root)})`)
+            ),
+            settle: () => afterRender(client),
+            readRoot: () => client.evaluate(debugCall("(api) => api.getIdentity().configRoot")),
+            label: `${page} persistence config root`,
+          });
+        }
+      } catch (error) {
+        restorationFailed = true;
+        cleanupErrors.push({
+          phase: `restore-config:${page}`,
+          error: String(error?.stack || error),
+        });
       }
       try {
         await client.close();
       } catch (error) {
-        cleanupErrors.push({ phase: `close:${client.page || "panel"}`, error: String(error?.stack || error) });
+        cleanupErrors.push({ phase: `close:${page}`, error: String(error?.stack || error) });
       }
     }
-    try {
-      await removeOwnedRunDirectory(scratch);
-    } catch (error) {
-      cleanupErrors.push({ phase: "scratch", error: String(error?.stack || error) });
+    if (!restorationFailed) {
+      for (const ownedScratch of [scratch, ...inactiveScratches]) {
+        try {
+          await removeOwnedRunDirectory(ownedScratch);
+        } catch (error) {
+          cleanupErrors.push({
+            phase: `scratch:${ownedScratch.path}`,
+            error: String(error?.stack || error),
+          });
+        }
+      }
     }
   }
   if (primaryError || cleanupErrors.length > 0) {
-    await writeFile(
-      resolve(outputDirectory, "failure.json"),
-      `${JSON.stringify(
-        {
+    const failure = {
           capturedAt: new Date().toISOString(),
           passed: false,
+          temporaryRoot,
+          ownedTemporaryRoots: [scratch, ...inactiveScratches].map(({ path }) => path),
+          scratchPreserved: restorationFailed,
           error: primaryError ? primaryError.stack || primaryError.message : null,
           cleanupErrors,
           consoleEvidence: Object.fromEntries(
             [...clients.entries()].map(([page, client]) => [page, consoleEvidence(client.events)])
           ),
-        },
-        null,
-        2
-      )}\n`
-    );
-    if (primaryError) throw primaryError;
+        };
+    const failureText = `${JSON.stringify(failure, null, 2)}\n`;
+    for (const file of ["report.json", "failure.json"]) {
+      try {
+        await writeFile(resolve(outputDirectory, file), failureText);
+      } catch (error) {
+        cleanupErrors.push({ phase: `failure-evidence:${file}`, error: String(error?.stack || error) });
+      }
+    }
+    if (primaryError) {
+      if (cleanupErrors.length > 0 && (typeof primaryError === "object" || typeof primaryError === "function")) {
+        try { primaryError.cleanupErrors = cleanupErrors; } catch {}
+      }
+      throw primaryError;
+    }
     throw new AggregateError(cleanupErrors.map(({ error }) => new Error(error)), "Persistence cleanup failed");
   }
+  try {
+    await writeFile(
+      resolve(outputDirectory, "report.json"),
+      `${JSON.stringify(pendingReport, null, 2)}\n`
+    );
+  } catch (publicationError) {
+    const failure = {
+      capturedAt: new Date().toISOString(),
+      passed: false,
+      temporaryRoot,
+      error: publicationError.stack || publicationError.message,
+      cleanupErrors: [],
+    };
+    const failureText = `${JSON.stringify(failure, null, 2)}\n`;
+    const evidenceWriteErrors = [];
+    for (const [phase, file] of [["report", "report.json"], ["failure", "failure.json"]]) {
+      try { await writeFile(resolve(outputDirectory, file), failureText); } catch (error) {
+        evidenceWriteErrors.push({ phase: `failure-evidence:${phase}`, error: String(error?.stack || error) });
+      }
+    }
+    if (evidenceWriteErrors.length > 0) publicationError.evidenceWriteErrors = evidenceWriteErrors;
+    throw publicationError;
+  }
+  console.log(JSON.stringify({ passed: true, outputDirectory }, null, 2));
 };
 
 const cli = async () => {
@@ -384,9 +532,18 @@ const cli = async () => {
   return run(owned.path);
 };
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+if (isDirectCliInvocation(import.meta.url)) {
   cli().catch((error) => {
     console.error(error instanceof Error ? error.stack || error.message : error);
+    const evidenceDiagnostics = [
+      ...(Array.isArray(error?.evidenceWriteErrors) ? error.evidenceWriteErrors : []),
+      ...(Array.isArray(error?.cleanupErrors)
+        ? error.cleanupErrors.filter(({ phase }) => String(phase).startsWith("failure-evidence:"))
+        : []),
+    ];
+    if (evidenceDiagnostics.length > 0) {
+      console.error(`Failure evidence publication also failed:\n${JSON.stringify(evidenceDiagnostics, null, 2)}`);
+    }
     process.exitCode = 1;
   });
 }

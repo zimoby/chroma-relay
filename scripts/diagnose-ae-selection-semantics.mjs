@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
-import { mkdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
+import { mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -19,8 +20,20 @@ const label = labelArg;
 const expectedVersion = expectedVersionArg;
 const outputDir = resolve(outputDirArg);
 const port = String(portArg);
+const ownershipToken = `chroma-selection-semantics-${randomBytes(16).toString("hex")}`;
+const reportPath = resolve(outputDir, `${label}-report.json`);
+const failurePath = resolve(outputDir, `${label}-failure.json`);
+const projectArchivePath = resolve(outputDir, `${label}-${ownershipToken}.aep`);
+await mkdir(outputDir, { recursive: true });
+await writeFile(
+  reportPath,
+  `${JSON.stringify({ passed: false, status: "running", label, expectedVersion, port }, null, 2)}\n`
+);
 const { CdpClient } = await import(
   pathToFileURL(resolve(repo, "scripts/lib/cdp-client.mjs")).href
+);
+const { assertCanonicalRuntimeUrl, guardClientEvaluations, selectCanonicalCdpTarget } = await import(
+  pathToFileURL(resolve(repo, "scripts/lib/live-runner-policy.mjs")).href
 );
 const contract = JSON.parse(
   await readFile(resolve(repo, "src/shared/product-contract.json"), "utf8")
@@ -53,6 +66,114 @@ const debugCall = (source) => `(() => {
   return (${source})(api);
 })()`;
 
+const diagnosticTopologySource = `
+  function diagnosticValue(value) {
+    if (value === null || value === undefined) return value;
+    if (typeof value === "number" || typeof value === "string" || typeof value === "boolean") return value;
+    if (value instanceof Array) {
+      var arrayValue = [];
+      for (var valueIndex = 0; valueIndex < value.length; valueIndex += 1) arrayValue.push(diagnosticValue(value[valueIndex]));
+      return arrayValue;
+    }
+    try { return value.toString(); } catch (error) { return "[unreadable-value]"; }
+  }
+  function diagnosticEase(ease) {
+    var result = [];
+    for (var easeIndex = 0; easeIndex < ease.length; easeIndex += 1) {
+      result.push({ speed: ease[easeIndex].speed, influence: ease[easeIndex].influence });
+    }
+    return result;
+  }
+  function diagnosticProperty(property) {
+    var result = {
+      name: property.name,
+      matchName: property.matchName,
+      propertyType: property.propertyType,
+      propertyIndex: property.propertyIndex,
+      enabled: property.enabled,
+      active: property.active,
+      elided: property.elided,
+      numProperties: property.numProperties || 0
+    };
+    if (property.propertyType === PropertyType.PROPERTY) {
+      try { result.value = diagnosticValue(property.value); } catch (error) { result.valueError = String(error); }
+      try { result.expression = property.canSetExpression ? property.expression : null; } catch (error) { result.expressionError = String(error); }
+      result.numKeys = property.numKeys || 0;
+      result.keys = [];
+      for (var keyIndex = 1; keyIndex <= result.numKeys; keyIndex += 1) {
+        var key = { time: property.keyTime(keyIndex), value: diagnosticValue(property.keyValue(keyIndex)) };
+        try { key.inInterpolationType = property.keyInInterpolationType(keyIndex); } catch (error) {}
+        try { key.outInterpolationType = property.keyOutInterpolationType(keyIndex); } catch (error) {}
+        try { key.inTemporalEase = diagnosticEase(property.keyInTemporalEase(keyIndex)); } catch (error) {}
+        try { key.outTemporalEase = diagnosticEase(property.keyOutTemporalEase(keyIndex)); } catch (error) {}
+        try { key.temporalAutoBezier = property.keyTemporalAutoBezier(keyIndex); } catch (error) {}
+        try { key.temporalContinuous = property.keyTemporalContinuous(keyIndex); } catch (error) {}
+        try { key.roving = property.keyRoving(keyIndex); } catch (error) {}
+        try { key.inSpatialTangent = diagnosticValue(property.keyInSpatialTangent(keyIndex)); } catch (error) {}
+        try { key.outSpatialTangent = diagnosticValue(property.keyOutSpatialTangent(keyIndex)); } catch (error) {}
+        try { key.spatialAutoBezier = property.keySpatialAutoBezier(keyIndex); } catch (error) {}
+        try { key.spatialContinuous = property.keySpatialContinuous(keyIndex); } catch (error) {}
+        result.keys.push(key);
+      }
+      return result;
+    }
+    result.children = [];
+    for (var propertyIndex = 1; propertyIndex <= result.numProperties; propertyIndex += 1) {
+      result.children.push(diagnosticProperty(property.property(propertyIndex)));
+    }
+    return result;
+  }
+  function diagnosticProjectTopology() {
+    var topology = { numItems: app.project.numItems, items: [] };
+    for (var itemIndex = 1; itemIndex <= app.project.numItems; itemIndex += 1) {
+      var item = app.project.item(itemIndex);
+      var itemState = { id: item.id, name: item.name, typeName: item.typeName, comment: item.comment, label: item.label };
+      if (item instanceof CompItem) {
+        itemState.comp = {
+          width: item.width,
+          height: item.height,
+          pixelAspect: item.pixelAspect,
+          duration: item.duration,
+          frameRate: item.frameRate,
+          displayStartTime: item.displayStartTime,
+          workAreaStart: item.workAreaStart,
+          workAreaDuration: item.workAreaDuration,
+          numLayers: item.numLayers,
+          layers: []
+        };
+        for (var layerIndex = 1; layerIndex <= item.numLayers; layerIndex += 1) {
+          var layer = item.layer(layerIndex);
+          itemState.comp.layers.push({
+            id: layer.id,
+            index: layer.index,
+            name: layer.name,
+            matchName: layer.matchName,
+            comment: layer.comment,
+            label: layer.label,
+            enabled: layer.enabled,
+            locked: layer.locked,
+            shy: layer.shy,
+            solo: layer.solo,
+            guideLayer: layer.guideLayer,
+            adjustmentLayer: layer.adjustmentLayer,
+            threeDLayer: layer.threeDLayer,
+            parentId: layer.parent ? layer.parent.id : null,
+            blendingMode: String(layer.blendingMode),
+            trackMatteType: String(layer.trackMatteType),
+            inPoint: layer.inPoint,
+            outPoint: layer.outPoint,
+            startTime: layer.startTime,
+            stretch: layer.stretch,
+            properties: diagnosticProperty(layer)
+          });
+        }
+      }
+      topology.items.push(itemState);
+    }
+    return topology;
+  }
+`;
+
 let hostCallDispatched = false;
 let harnessHostEvalCount = 0;
 let harnessHostEvalAfterResultCount = 0;
@@ -71,11 +192,14 @@ const hostEval = (client, source) => {
 };
 
 const hostSource = `(function () {
+  ${diagnosticTopologySource}
   var MAX_SELECTED_PROPERTIES = 32;
   var EXPECTED_VERSION = ${JSON.stringify(expectedVersion)};
+  var OWNER_TOKEN = ${JSON.stringify(ownershipToken)};
   var reports = [];
   var records = [];
   var undoOpened = false;
+  var undoCompletionKnown = true;
   var stage = "preflight";
 
   function boundedText(value) {
@@ -195,6 +319,7 @@ const hostSource = `(function () {
   function addTarget(comp, name, kind) {
     var layer = comp.layers.addShape();
     layer.name = name;
+    layer.comment = OWNER_TOKEN;
     var root = layer.property("ADBE Root Vectors Group");
     var rootIndex = root.propertyIndex;
     var group = root.addProperty("ADBE Vector Group");
@@ -256,6 +381,10 @@ const hostSource = `(function () {
       2,
       24
     );
+    comp.comment = ${JSON.stringify(ownershipToken)};
+    if (records.length === 0) {
+      $.global.__CHROMA_SELECTION_SEMANTICS_OWNER__ = ${JSON.stringify(ownershipToken)};
+    }
     var targets = {};
     for (var index = 0; index < kinds.length; index += 1) {
       var kind = kinds[index];
@@ -302,7 +431,12 @@ const hostSource = `(function () {
         expectedVersion: EXPECTED_VERSION
       });
     }
-    if (!app.project || app.project.numItems !== 0 || app.project.dirty !== false) {
+    if (
+      !app.project ||
+      app.project.numItems !== 0 ||
+      app.project.dirty !== false ||
+      app.project.file !== null
+    ) {
       return JSON.stringify({
         ok: false,
         stage: "preflight",
@@ -312,7 +446,9 @@ const hostSource = `(function () {
         dirty: app.project ? app.project.dirty : null
       });
     }
-
+    if ($.global.__CHROMA_SELECTION_SEMANTICS_OWNER__ != null) {
+      return JSON.stringify({ ok: false, cleanupSafe: false, reason: "foreign-owner-present" });
+    }
     app.beginUndoGroup("Chroma Relay selection semantics diagnostic");
     undoOpened = true;
 
@@ -355,15 +491,20 @@ const hostSource = `(function () {
 
     stage = "end-undo";
     undoOpened = false;
+    undoCompletionKnown = false;
     app.endUndoGroup();
+    undoCompletionKnown = true;
 
     stage = "after-undo-capture";
     for (var recordIndex = 0; recordIndex < records.length; recordIndex += 1) {
       records[recordIndex].report.afterUndo = snapshot(records[recordIndex].comp);
     }
 
+    $.global.__CHROMA_SELECTION_SEMANTICS_TOPOLOGY__ = JSON.stringify(diagnosticProjectTopology());
+    $.global.__CHROMA_SELECTION_SEMANTICS_SETUP_COMPLETE__ = ${JSON.stringify(ownershipToken)};
     return JSON.stringify({
       ok: true,
+      cleanupSafe: true,
       schemaVersion: 1,
       version: app.version,
       caseCount: reports.length,
@@ -372,11 +513,13 @@ const hostSource = `(function () {
       projectDirty: app.project.dirty === true
     });
   } catch (error) {
-    var closeError = null;
+    var closeError = undoCompletionKnown ? null : "undo-completion-unknown";
     if (undoOpened) {
       undoOpened = false;
+      undoCompletionKnown = false;
       try {
         app.endUndoGroup();
+        undoCompletionKnown = true;
       } catch (undoError) {
         closeError = boundedText(undoError && undoError.message ? undoError.message : undoError);
       }
@@ -388,10 +531,198 @@ const hostSource = `(function () {
       stage: stage,
       error: boundedText(error && error.message ? error.message : error),
       undoCloseError: closeError,
+      cleanupSafe: closeError === null && undoCompletionKnown,
       caseCount: reports.length,
       cases: reports
     });
   }
+})()`;
+
+const cleanupSource = `(function () {
+  ${diagnosticTopologySource}
+  if (app.version !== ${JSON.stringify(expectedVersion)}) {
+    return JSON.stringify({ ok: false, reason: "unexpected-ae-version", version: app.version });
+  }
+  if (!app.project) {
+    return JSON.stringify({ ok: false, reason: "no-project" });
+  }
+  var ownsRun = $.global.__CHROMA_SELECTION_SEMANTICS_OWNER__ === ${JSON.stringify(ownershipToken)};
+  var setupComplete = $.global.__CHROMA_SELECTION_SEMANTICS_SETUP_COMPLETE__ === ${JSON.stringify(ownershipToken)};
+  var acceptedTopology = $.global.__CHROMA_SELECTION_SEMANTICS_TOPOLOGY__;
+  var expectedNames = ${JSON.stringify([
+    "fill-leaf-only",
+    "stroke-leaf-only",
+    "fill-parent-only",
+    "stroke-parent-only",
+    "fill-parent-then-leaf",
+    "stroke-parent-then-leaf",
+    "fill-leaf-then-parent-off",
+    "stroke-leaf-then-parent-off",
+    "fill-then-stroke",
+    "stroke-then-fill",
+  ].map((name) => `CHROMA_SELECTION_SEMANTICS_${label}_${name}`))};
+  var expectedKinds = ${JSON.stringify([
+    ["fill"],
+    ["stroke"],
+    ["fill"],
+    ["stroke"],
+    ["fill"],
+    ["stroke"],
+    ["fill"],
+    ["stroke"],
+    ["fill", "stroke"],
+    ["fill", "stroke"],
+  ])};
+  function exactTarget(layer, expectedIndex, kind) {
+    var expectedName = "CHROMA_" + kind.toUpperCase();
+    var expectedGraphic = kind === "fill"
+      ? "ADBE Vector Graphic - G-Fill"
+      : "ADBE Vector Graphic - G-Stroke";
+    if (
+      !layer ||
+      layer.index !== expectedIndex ||
+      layer.name !== expectedName ||
+      layer.comment !== ${JSON.stringify(ownershipToken)} ||
+      layer.matchName !== "ADBE Vector Layer" ||
+      layer.inPoint !== 0 ||
+      layer.outPoint !== 2 ||
+      layer.startTime !== 0 ||
+      layer.stretch !== 100
+    ) return false;
+    var root = layer.property("ADBE Root Vectors Group");
+    if (!root || root.numProperties !== 1) return false;
+    var group = root.property(1);
+    if (!group || group.matchName !== "ADBE Vector Group" || group.name !== expectedName + " Group") return false;
+    var contents = group.property("ADBE Vectors Group");
+    if (!contents || contents.numProperties !== 1) return false;
+    var graphic = contents.property(1);
+    if (!graphic || graphic.matchName !== expectedGraphic) return false;
+    var colors = graphic.property("ADBE Vector Grad Colors");
+    return !!colors && colors.matchName === "ADBE Vector Grad Colors";
+  }
+
+  function exactPartialTarget(layer, expectedIndex, kind) {
+    var expectedName = "CHROMA_" + kind.toUpperCase();
+    var expectedGraphic = kind === "fill"
+      ? "ADBE Vector Graphic - G-Fill"
+      : "ADBE Vector Graphic - G-Stroke";
+    if (
+      !layer ||
+      layer.index !== expectedIndex ||
+      layer.name !== expectedName ||
+      layer.comment !== ${JSON.stringify(ownershipToken)} ||
+      layer.matchName !== "ADBE Vector Layer" ||
+      layer.inPoint !== 0 ||
+      layer.outPoint !== 2 ||
+      layer.startTime !== 0 ||
+      layer.stretch !== 100
+    ) return false;
+    var root = layer.property("ADBE Root Vectors Group");
+    if (!root || root.numProperties < 0 || root.numProperties > 1) return false;
+    if (root.numProperties === 0) return true;
+    var group = root.property(1);
+    if (!group || group.matchName !== "ADBE Vector Group" || group.name !== expectedName + " Group") return false;
+    var contents = group.property("ADBE Vectors Group");
+    if (!contents || contents.numProperties < 0 || contents.numProperties > 1) return false;
+    if (contents.numProperties === 0) return true;
+    var graphic = contents.property(1);
+    if (!graphic || graphic.matchName !== expectedGraphic) return false;
+    var colors = graphic.property("ADBE Vector Grad Colors");
+    return !colors || colors.matchName === "ADBE Vector Grad Colors";
+  }
+
+  if (
+    !ownsRun ||
+    app.project.file !== null ||
+    app.project.numItems < 1 ||
+    app.project.numItems > expectedNames.length
+  ) {
+    return JSON.stringify({
+      ok: false,
+      reason: "owned-fixture-mismatch",
+      ownsRun: ownsRun,
+      file: app.project.file ? app.project.file.fsName : null,
+      numItems: app.project.numItems
+    });
+  }
+  for (var itemIndex = 1; itemIndex <= app.project.numItems; itemIndex += 1) {
+    var item = app.project.item(itemIndex);
+    var kinds = expectedKinds[itemIndex - 1];
+    var isFinalOwnedItem = itemIndex === app.project.numItems;
+    var isPartialFinalItem = isFinalOwnedItem && item.numLayers < kinds.length;
+    if (
+      item.comment !== ${JSON.stringify(ownershipToken)} ||
+      item.name !== expectedNames[itemIndex - 1] ||
+      item.width !== 640 ||
+      item.height !== 360 ||
+      item.pixelAspect !== 1 ||
+      item.duration !== 2 ||
+      item.frameRate !== 24 ||
+      item.numLayers > kinds.length ||
+      (setupComplete && item.numLayers !== kinds.length) ||
+      (!isFinalOwnedItem && item.numLayers !== kinds.length)
+    ) {
+      return JSON.stringify({
+        ok: false,
+        reason: "owned-fixture-item-mismatch",
+        itemIndex: itemIndex,
+        itemName: item.name
+      });
+    }
+    var createdKinds = kinds.slice(0, item.numLayers);
+    for (var layerIndex = 1; layerIndex <= item.numLayers; layerIndex += 1) {
+      var expectedKind = createdKinds[createdKinds.length - layerIndex];
+      var targetExact = exactTarget(item.layer(layerIndex), layerIndex, expectedKind);
+      var targetPartial =
+        !setupComplete &&
+        isFinalOwnedItem &&
+        layerIndex === 1 &&
+        exactPartialTarget(item.layer(layerIndex), layerIndex, expectedKind);
+      if (!targetExact && !targetPartial) {
+        return JSON.stringify({
+          ok: false,
+          reason: "owned-fixture-layer-mismatch",
+          itemIndex: itemIndex,
+          layerIndex: layerIndex
+        });
+      }
+    }
+  }
+  if (
+    setupComplete &&
+    (typeof acceptedTopology !== "string" || JSON.stringify(diagnosticProjectTopology()) !== acceptedTopology)
+  ) {
+    return JSON.stringify({ ok: false, reason: "owned-fixture-topology-drift" });
+  }
+  var archive = new File(${JSON.stringify(projectArchivePath)});
+  if (archive.exists) {
+    return JSON.stringify({ ok: false, reason: "project-archive-already-exists" });
+  }
+  app.project.save(archive);
+  if (!archive.exists || !app.project.file || app.project.file.fsName !== archive.fsName) {
+    return JSON.stringify({ ok: false, reason: "project-archive-not-authoritative" });
+  }
+  var closed = app.project.close(CloseOptions.SAVE_CHANGES);
+  if (closed !== true) {
+    return JSON.stringify({ ok: false, reason: "project-close-refused" });
+  }
+  app.newProject();
+  var cleanupOk =
+    app.project.numItems === 0 &&
+    app.project.dirty === false &&
+    app.project.file === null;
+  if (cleanupOk) {
+    delete $.global.__CHROMA_SELECTION_SEMANTICS_OWNER__;
+    delete $.global.__CHROMA_SELECTION_SEMANTICS_SETUP_COMPLETE__;
+    delete $.global.__CHROMA_SELECTION_SEMANTICS_TOPOLOGY__;
+  }
+  return JSON.stringify({
+    ok: cleanupOk,
+    archivePath: archive.fsName,
+    numItems: app.project.numItems,
+    dirty: app.project.dirty,
+    file: app.project.file ? app.project.file.fsName : null
+  });
 })()`;
 
 const caseSpecs = [
@@ -560,11 +891,15 @@ const validateHostResult = (result) => {
 };
 
 let client = null;
+let operationGuard = null;
 let identity = null;
 let hostResult = null;
+let hostCleanupAuthorized = false;
 let screenshotPath = null;
 let primaryError = null;
-await mkdir(outputDir, { recursive: true });
+let successReport = null;
+let projectCleanup = null;
+const cleanupErrors = [];
 try {
   let target = null;
   for (let attempt = 0; attempt < 90; attempt += 1) {
@@ -574,14 +909,10 @@ try {
       });
       if (response.ok) {
         const targets = await response.json();
-        const matches = targets.filter(
-          (entry) =>
-            entry.type === "page" && new URL(entry.url).pathname.endsWith("/main/index.html")
-        );
-        if (matches.length === 1) {
-          target = matches[0];
-          break;
-        }
+        target = await selectCanonicalCdpTarget(targets, expectedPanelPath, {
+          label: `selection-semantics ${label} Main diagnostic`,
+        });
+        break;
       }
     } catch {}
     await delay(500);
@@ -601,7 +932,11 @@ try {
     client.send("Log.enable"),
     client.send("Page.enable"),
   ]);
+  operationGuard = guardClientEvaluations(client, `selection-semantics ${label} Main`);
   identity = await client.evaluate(debugCall("(api) => api.getIdentity()"));
+  await assertCanonicalRuntimeUrl(identity?.url, expectedPanelPath, {
+    label: `selection-semantics ${label} Main runtime`,
+  });
   if (
     identity?.extensionId !== contract.product.panelIds.main ||
     identity?.page !== "main" ||
@@ -611,6 +946,7 @@ try {
   }
 
   hostResult = await hostEval(client, hostSource);
+  hostCleanupAuthorized = hostResult?.cleanupSafe === true;
   if (
     hostResult?.ok !== true ||
     hostResult?.schemaVersion !== 1 ||
@@ -638,8 +974,9 @@ try {
     await writeFile(screenshotPath, Buffer.from(screenshot.data, "base64"));
   } catch {}
 
-  const report = {
+  successReport = {
     passed: true,
+    status: "passed",
     label,
     expectedVersion,
     identity,
@@ -653,56 +990,111 @@ try {
     harnessHostEvalCount,
     harnessHostEvalAfterResultCount,
     screenshotPath,
-    preservedState: {
-      projectCleanupAttempted: false,
-      undoCommandAttempted: false,
-      panelConfigChanged: false,
-    },
     capturedAt: new Date().toISOString(),
   };
-  await writeFile(
-    resolve(outputDir, `${label}-report.json`),
-    `${JSON.stringify(report, null, 2)}\n`
-  );
-  console.log(
-    JSON.stringify({
-      passed: true,
-      version: hostResult.version,
-      caseCount: hostResult.caseCount,
-      harnessHostEvalCount,
-      harnessHostEvalAfterResultCount,
-      outputDir,
-    })
-  );
 } catch (error) {
   primaryError = error;
-  try {
-    await writeFile(
-      resolve(outputDir, `${label}-failure.json`),
-      `${JSON.stringify(
-        {
-          passed: false,
-          error: String(error?.stack || error),
-          identity,
-          hostResult,
-          hostCallDispatched,
-          harnessHostEvalCount,
-          harnessHostEvalAfterResultCount,
-          preservedState: {
-            projectCleanupAttempted: false,
-            undoCommandAttempted: false,
-            panelConfigChanged: false,
-          },
-          capturedAt: new Date().toISOString(),
-        },
-        null,
-        2
-      )}\n`
-    );
-  } catch {}
 } finally {
+  if (client && hostCleanupAuthorized && operationGuard?.isCompletionKnown() !== false) {
+    try {
+      harnessHostEvalAfterResultCount += 1;
+      projectCleanup = await client.evaluate(`new Promise((resolve, reject) => {
+        window.__adobe_cep__.evalScript(${JSON.stringify(cleanupSource)}, (raw) => {
+          try { resolve(JSON.parse(raw)); } catch (error) { reject(new Error(raw)); }
+        });
+      })`);
+      if (
+        projectCleanup?.ok !== true ||
+        projectCleanup.numItems !== 0 ||
+        projectCleanup.dirty !== false ||
+        projectCleanup.file !== null
+      ) {
+        throw new Error(`Owned selection-semantics cleanup failed: ${JSON.stringify(projectCleanup)}`);
+      }
+    } catch (error) {
+      cleanupErrors.push({ phase: "project", error: String(error?.stack || error) });
+    }
+  } else if (client && hostCleanupAuthorized) {
+    cleanupErrors.push({
+      phase: "project-quarantine",
+      error: "Selection-semantics CDP completion is unknown; project cleanup refused",
+    });
+  }
   try {
     if (client) await client.close();
-  } catch {}
+  } catch (error) {
+    cleanupErrors.push({ phase: "close", error: String(error?.stack || error) });
+  }
 }
-if (primaryError) throw primaryError;
+
+if (!primaryError && cleanupErrors.length > 0) {
+  primaryError = new AggregateError(
+    cleanupErrors.map(({ error }) => new Error(error)),
+    "Selection-semantics cleanup failed"
+  );
+}
+
+if (primaryError) {
+  const failureText = `${JSON.stringify({
+    passed: false,
+    status: "failed",
+    label,
+    expectedVersion,
+    error: String(primaryError?.stack || primaryError),
+    identity,
+    hostResult,
+    hostCallDispatched,
+    hostCleanupAuthorized,
+    harnessHostEvalCount,
+    harnessHostEvalAfterResultCount,
+    screenshotPath,
+    cleanupErrors,
+    projectCleanup,
+    capturedAt: new Date().toISOString(),
+  }, null, 2)}\n`;
+  const evidenceWriteErrors = [];
+  for (const [phase, path] of [["report", reportPath], ["failure", failurePath]]) {
+    try { await writeFile(path, failureText); } catch (error) {
+      evidenceWriteErrors.push({ phase: `failure-evidence:${phase}`, error: String(error?.stack || error) });
+    }
+  }
+  if (evidenceWriteErrors.length > 0) primaryError.evidenceWriteErrors = evidenceWriteErrors;
+  throw primaryError;
+}
+
+successReport.harnessHostEvalAfterResultCount = harnessHostEvalAfterResultCount;
+successReport.restoredState = {
+  projectCleanup,
+  panelConfigChanged: false,
+};
+try {
+  await rm(failurePath, { force: true });
+  await writeFile(reportPath, `${JSON.stringify(successReport, null, 2)}\n`);
+} catch (publicationError) {
+  const failureText = `${JSON.stringify({
+    passed: false,
+    status: "failed",
+    label,
+    expectedVersion,
+    error: String(publicationError?.stack || publicationError),
+    capturedAt: new Date().toISOString(),
+  }, null, 2)}\n`;
+  const evidenceWriteErrors = [];
+  for (const [phase, path] of [["report", reportPath], ["failure", failurePath]]) {
+    try { await writeFile(path, failureText); } catch (error) {
+      evidenceWriteErrors.push({ phase: `failure-evidence:${phase}`, error: String(error?.stack || error) });
+    }
+  }
+  if (evidenceWriteErrors.length > 0) publicationError.evidenceWriteErrors = evidenceWriteErrors;
+  throw publicationError;
+}
+console.log(
+  JSON.stringify({
+    passed: true,
+    version: hostResult.version,
+    caseCount: hostResult.caseCount,
+    harnessHostEvalCount,
+    harnessHostEvalAfterResultCount,
+    outputDir,
+  })
+);

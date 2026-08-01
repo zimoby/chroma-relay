@@ -3,6 +3,7 @@
 import { readFile, readdir } from "node:fs/promises";
 import { extname, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { isDirectCliInvocation } from "./lib/live-runner-policy.mjs";
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const sourceRoots = [
@@ -105,8 +106,7 @@ export const runCepCompatibilityCheck = async () => {
   };
 };
 
-const isDirectExecution =
-  Boolean(process.argv[1]) && pathToFileURL(resolve(process.argv[1])).href === import.meta.url;
+const isDirectExecution = isDirectCliInvocation(import.meta.url);
 if (isDirectExecution) {
   const report = await runCepCompatibilityCheck();
   console.log(JSON.stringify(report, null, 2));

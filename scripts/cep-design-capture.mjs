@@ -4,13 +4,17 @@ import { mkdir, realpath, writeFile } from "node:fs/promises";
 import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
 import { isAbsolute, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { CdpClient } from "./lib/cdp-client.mjs";
 import {
+  assertCanonicalRuntimeUrl,
   createOwnedRunDirectory,
+  guardClientEvaluations,
+  isDirectCliInvocation,
   parseRunnerArgs,
   removeOwnedRunDirectory,
+  restoreConfigRootWithReadback,
+  selectCanonicalCdpTarget,
 } from "./lib/live-runner-policy.mjs";
 import contract from "../src/shared/product-contract.json" with { type: "json" };
 import packageJson from "../package.json" with { type: "json" };
@@ -54,34 +58,34 @@ const debugCall = (source) => `
   })()
 `;
 
+export const selectDesignCaptureTarget = (
+  targets,
+  panel,
+  {
+    expectedPage = resolve(REPO_ROOT, "dist/cep", panel.page, "index.html"),
+    realpathFn,
+  } = {}
+) => selectCanonicalCdpTarget(targets, expectedPage, {
+  label: `${panel.page} design capture CDP ${panel.port}`,
+  ...(realpathFn ? { realpathFn } : {}),
+});
+
 const getTarget = async (panel) => {
   const response = await fetch(`http://127.0.0.1:${panel.port}/json/list`, {
     signal: AbortSignal.timeout(3000),
   });
   if (!response.ok) throw new Error(`CDP ${panel.port} returned HTTP ${response.status}`);
   const targets = await response.json();
-  const matches = targets.filter((target) => {
-    if (target.type !== "page") return false;
-    try {
-      return fileURLToPath(target.url).endsWith(panel.pageSuffix);
-    } catch {
-      return false;
-    }
-  });
-  if (matches.length !== 1 || !matches[0].webSocketDebuggerUrl) {
-    throw new Error(
-      `${panel.page} expected exactly one ${panel.pageSuffix} target on port ${panel.port}; found ${matches.length}`
-    );
-  }
-  return matches[0];
+  return selectDesignCaptureTarget(targets, panel);
 };
 
-const waitForComplete = async (client) => {
+const waitForComplete = async (client, evaluationGuard) => {
   for (let attempt = 0; attempt < 50; attempt += 1) {
     if ((await client.evaluate("document.readyState")) === "complete") return;
     await delay(100);
   }
-  throw new Error("Panel document did not reach readyState=complete");
+  evaluationGuard?.quarantine();
+  throw new Error("Panel document did not reach readyState=complete; renderer completion quarantined");
 };
 
 const afterRender = (client) =>
@@ -156,8 +160,17 @@ export const runDesignCaptureLifecycle = async ({
   }
 
   if (primaryError || cleanupErrors.length > 0) {
-    await writeFailure({ primaryError, cleanupErrors, report });
-    if (primaryError) throw primaryError;
+    try {
+      await writeFailure({ primaryError, cleanupErrors, report });
+    } catch (error) {
+      cleanupErrors.push({ phase: "write-failure", error: String(error?.stack || error) });
+    }
+    if (primaryError) {
+      if (cleanupErrors.length > 0 && (typeof primaryError === "object" || typeof primaryError === "function")) {
+        try { primaryError.cleanupErrors = cleanupErrors; } catch {}
+      }
+      throw primaryError;
+    }
     throw new AggregateError(
       cleanupErrors.map(({ error }) => new Error(error)),
       "Design cleanup failed"
@@ -177,6 +190,10 @@ const capturePanel = async (panel, outputDirectory) => {
   let target;
   let client;
   let report = null;
+  let originalConfigRoot = null;
+  let temporaryConfigInstalled = false;
+  let configRestored = false;
+  let evaluationGuard = null;
 
   const captured = await runDesignCaptureLifecycle({
     capture: async () => {
@@ -188,14 +205,48 @@ const capturePanel = async (panel, outputDirectory) => {
       client.send("Log.enable"),
       client.send("Page.enable"),
     ]);
+    evaluationGuard = guardClientEvaluations(client, `${panel.page} design capture`);
+    await waitForComplete(client, evaluationGuard);
+    const baselineIdentity = await client.evaluate(debugCall("(api) => api.getIdentity()"));
+    await assertCanonicalRuntimeUrl(
+      baselineIdentity.url,
+      resolve(REPO_ROOT, "dist/cep", panel.page, "index.html"),
+      { label: `${panel.page} design capture baseline runtime` }
+    );
+    if (
+      baselineIdentity.extensionId !== panel.extensionId ||
+      baselineIdentity.page !== panel.page ||
+      baselineIdentity.buildMarker !== EXPECTED_BUILD_MARKER
+    ) {
+      throw new Error(`${panel.page} baseline identity/build marker mismatch`);
+    }
+    originalConfigRoot = baselineIdentity.configRoot ?? null;
     await client.send("Emulation.clearDeviceMetricsOverride");
     await client.send("Runtime.discardConsoleEntries");
     client.events = [];
     await client.send("Page.reload", { ignoreCache: true });
-    await waitForComplete(client);
+    await waitForComplete(client, evaluationGuard);
     await afterRender(client);
 
+    const identity = await client.evaluate(debugCall("(api) => api.getIdentity()"));
+    await assertCanonicalRuntimeUrl(
+      identity.url,
+      resolve(REPO_ROOT, "dist/cep", panel.page, "index.html"),
+      { label: `${panel.page} design capture runtime` }
+    );
+    if (
+      identity.extensionId !== panel.extensionId ||
+      identity.page !== panel.page ||
+      identity.buildMarker !== EXPECTED_BUILD_MARKER
+    ) {
+      throw new Error(`${panel.page} identity/build marker mismatch`);
+    }
+    if ((identity.configRoot ?? null) !== originalConfigRoot) {
+      throw new Error(`${panel.page} config root changed during authenticated reload`);
+    }
+
     const temporaryRoot = scratch.path;
+    temporaryConfigInstalled = true;
     await client.evaluate(
       debugCall(`(api) => api.setTemporaryConfigRoot(${JSON.stringify(temporaryRoot)})`)
     );
@@ -204,15 +255,6 @@ const capturePanel = async (panel, outputDirectory) => {
     );
     if (!accepted) throw new Error(`${panel.page} rejected the approved design preview`);
     await afterRender(client);
-
-    const identity = await client.evaluate(debugCall("(api) => api.getIdentity()"));
-    if (
-      identity.extensionId !== panel.extensionId ||
-      identity.page !== panel.page ||
-      identity.buildMarker !== EXPECTED_BUILD_MARKER
-    ) {
-      throw new Error(`${panel.page} identity/build marker mismatch`);
-    }
 
     const captures = {};
     if (panel.page === "main") {
@@ -376,8 +418,35 @@ const capturePanel = async (panel, outputDirectory) => {
     },
     cleanupSteps: [
       {
+        phase: "restore-config",
+        run: async () => {
+          if (client && temporaryConfigInstalled) {
+            if (!evaluationGuard?.isCompletionKnown()) {
+              throw new Error(
+                `${panel.page} renderer completion is unknown; config restoration dispatch refused`
+              );
+            }
+            await restoreConfigRootWithReadback({
+              expectedRoot: originalConfigRoot,
+              setRoot: (root) => client.evaluate(
+                debugCall(`(api) => api.setTemporaryConfigRoot(${JSON.stringify(root)})`)
+              ),
+              settle: () => afterRender(client),
+              readRoot: () => client.evaluate(debugCall("(api) => api.getIdentity().configRoot")),
+              label: `${panel.page} design capture config root`,
+            });
+          }
+          configRestored = true;
+        },
+      },
+      {
         phase: "emulation",
         run: async () => {
+          if (client && !evaluationGuard?.isCompletionKnown()) {
+            throw new Error(
+              `${panel.page} renderer completion is unknown; emulation cleanup dispatch refused`
+            );
+          }
           if (client) await client.send("Emulation.clearDeviceMetricsOverride");
         },
       },
@@ -387,7 +456,15 @@ const capturePanel = async (panel, outputDirectory) => {
           if (client) await client.close();
         },
       },
-      { phase: "scratch", run: () => removeOwnedRunDirectory(scratch) },
+      {
+        phase: "scratch",
+        run: () => {
+          if (temporaryConfigInstalled && !configRestored) {
+            throw new Error(`Preserving ${scratch.path} because ${panel.page} config restoration failed`);
+          }
+          return removeOwnedRunDirectory(scratch);
+        },
+      },
     ],
     writeFailure: async ({ primaryError, cleanupErrors }) => {
       await writeFile(
@@ -442,7 +519,7 @@ const main = async () => {
   console.log(JSON.stringify(summary, null, 2));
 };
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+if (isDirectCliInvocation(import.meta.url)) {
   main().catch((error) => {
     console.error(error?.stack || String(error));
     process.exitCode = 1;

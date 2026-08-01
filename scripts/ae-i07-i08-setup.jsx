@@ -6,7 +6,9 @@
     }
   }
 
-  var comp = app.project.items.addComp("CP_I07_I08_FIXTURE", 640, 360, 1, 2, 24);
+  var comp = null;
+  try {
+  comp = app.project.items.addComp("CP_I07_I08_FIXTURE", 640, 360, 1, 2, 24);
   var shape = comp.layers.addShape();
   shape.name = "CP_COLOR_FIXTURE";
   var root = shape.property("ADBE Root Vectors Group");
@@ -115,6 +117,7 @@
 
   return JSON.stringify({
     ok: true,
+    compId: comp.id,
     compName: comp.name,
     exactColor: fillColor.value,
     duplicateColor: duplicateColor.value,
@@ -129,4 +132,20 @@
     shapeSelectedPropertyCount: shape.selectedProperties.length,
     textSelectedPropertyCount: text.selectedProperties.length
   });
+  } catch (error) {
+    var residualItems = [];
+    var failedCompId = comp ? comp.id : null;
+    for (var residualIndex = 1; residualIndex <= app.project.numItems; residualIndex += 1) {
+      var residual = app.project.item(residualIndex);
+      if (residual.id === failedCompId) {
+        residualItems.push({ id: residual.id, name: residual.name, kind: "comp" });
+      }
+    }
+    return JSON.stringify({
+      ok: false,
+      reason: "fixture-setup-failed",
+      error: String(error),
+      residualItems: residualItems
+    });
+  }
 })();

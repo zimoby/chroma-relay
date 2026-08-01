@@ -2,14 +2,16 @@
 
 import { lstat, readdir, readFile, realpath, rm } from "node:fs/promises";
 import { isAbsolute, relative, resolve, sep } from "node:path";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import productContract from "../src/shared/product-contract.json" with { type: "json" };
-import { removeOwnedRunDirectory } from "./lib/live-runner-policy.mjs";
+import { isDirectCliInvocation, removeOwnedRunDirectory } from "./lib/live-runner-policy.mjs";
 
 const REPO_ROOT = fileURLToPath(new URL("../", import.meta.url));
 const MARKER_FILE = productContract.runner.markerFile;
 const EVIDENCE_ROOT = resolve(REPO_ROOT, "evidence/local/native-gradient/track-b-apply-ae25");
-const TEMPORARY_ROOT = "/private/tmp/chroma-relay-native-gradient-apply";
+const TRACK_B_TEMPORARY_ROOT = "/private/tmp";
+const DEFAULT_MINIMUM_AGE_MS = 24 * 60 * 60 * 1000;
 
 const isDirectChild = (root, candidate) => {
   const child = relative(root, candidate);
@@ -18,7 +20,16 @@ const isDirectChild = (root, candidate) => {
 
 const refusal = (root, candidate, reason) => ({ root, candidate, reason });
 
-const inspectCandidate = async (root, candidate, fs) => {
+const defaultProcessAlive = (pid) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code !== "ESRCH";
+  }
+};
+
+const inspectCandidate = async (root, candidate, fs, { now, minimumAgeMs, processAlive }) => {
   if (!isDirectChild(root, candidate)) return refusal(root, candidate, "candidate is outside the documented direct-child scope");
   let rootStat;
   let candidateStat;
@@ -74,6 +85,17 @@ const inspectCandidate = async (root, candidate, fs) => {
     marker?.root !== rootReal ||
     marker?.child !== candidateReal
   ) return refusal(root, candidate, "ownership marker is foreign or stale");
+  const createdAt = Date.parse(marker.createdAt);
+  if (!Number.isFinite(createdAt)) {
+    return refusal(root, candidate, "ownership marker has no trustworthy creation time");
+  }
+  if (Number.isInteger(marker.pid) && marker.pid > 0 && processAlive(marker.pid)) {
+    return refusal(root, candidate, "owned run process is still active");
+  }
+  const ageMs = now - createdAt;
+  if (ageMs < minimumAgeMs) {
+    return refusal(root, candidate, "owned run is active or inside the cleanup grace period");
+  }
   return {
     root,
     candidate,
@@ -82,17 +104,65 @@ const inspectCandidate = async (root, candidate, fs) => {
   };
 };
 
-export const inspectCleanupRoots = async ({ roots = [EVIDENCE_ROOT, TEMPORARY_ROOT], apply = false, fs = {
+export const buildDefaultCleanupRootSpecifications = ({
+  canonicalTemporaryRoot,
+  evidenceRoot = EVIDENCE_ROOT,
+  trackBTemporaryRoot = TRACK_B_TEMPORARY_ROOT,
+}) => {
+  const specifications = [
+    { path: evidenceRoot, prefix: "chroma-relay-track-b-" },
+  ];
+  if (resolve(canonicalTemporaryRoot) === resolve(trackBTemporaryRoot)) {
+    specifications.push({ path: trackBTemporaryRoot, prefix: "chroma-relay-" });
+  } else {
+    specifications.push(
+      { path: trackBTemporaryRoot, prefix: "chroma-relay-track-b-" },
+      { path: canonicalTemporaryRoot, prefix: "chroma-relay-" }
+    );
+  }
+  return specifications;
+};
+
+const defaultCleanupRoots = async (fs) => {
+  let canonicalTemporaryRoot;
+  try {
+    canonicalTemporaryRoot = await fs.realpath(tmpdir());
+  } catch {
+    canonicalTemporaryRoot = resolve(tmpdir());
+  }
+  return buildDefaultCleanupRootSpecifications({ canonicalTemporaryRoot });
+};
+
+export const inspectCleanupRoots = async ({
+  roots,
+  apply = false,
+  now = Date.now(),
+  minimumAgeMs = roots ? 0 : DEFAULT_MINIMUM_AGE_MS,
+  processAlive = defaultProcessAlive,
+  fs = {
   lstat,
   readdir,
   readFile,
   realpath,
   rm,
-} } = {}) => {
+  },
+} = {}) => {
+  if (
+    !Number.isFinite(now) ||
+    !Number.isFinite(minimumAgeMs) ||
+    minimumAgeMs < 0 ||
+    typeof processAlive !== "function"
+  ) {
+    throw new TypeError("Cleanup age policy must use finite non-negative milliseconds");
+  }
   const candidates = [];
   const refusals = [];
   const removed = [];
-  for (const root of roots) {
+  const rootSpecifications = roots
+    ? roots.map((root) => typeof root === "string" ? { path: root, prefix: null } : root)
+    : await defaultCleanupRoots(fs);
+  for (const specification of rootSpecifications) {
+    const root = specification.path;
     let names;
     try {
       const rootStat = await fs.lstat(root);
@@ -107,8 +177,13 @@ export const inspectCleanupRoots = async ({ roots = [EVIDENCE_ROOT, TEMPORARY_RO
       continue;
     }
     for (const name of names.sort()) {
+      if (specification.prefix && !name.startsWith(specification.prefix)) continue;
       const candidate = resolve(root, name);
-      const inspected = await inspectCandidate(root, candidate, fs);
+      const inspected = await inspectCandidate(root, candidate, fs, {
+        now,
+        minimumAgeMs,
+        processAlive,
+      });
       if (inspected.run) {
         candidates.push({ root, candidate, marker: inspected.marker, action: apply ? "remove" : "would-remove" });
         if (apply) {
@@ -130,12 +205,12 @@ export const inspectCleanupRoots = async ({ roots = [EVIDENCE_ROOT, TEMPORARY_RO
     candidates,
     refusals,
     removed,
-    roots: [...roots],
+    roots: rootSpecifications.map(({ path }) => path),
+    rootFilters: rootSpecifications.map(({ path, prefix }) => ({ path, prefix })),
   };
 };
 
-const isDirectCliInvocation = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
-if (isDirectCliInvocation) {
+if (isDirectCliInvocation(import.meta.url)) {
   const apply = process.argv.slice(2).length === 1 && process.argv[2] === "--apply";
   if (process.argv.slice(2).length > 0 && !apply) {
     console.error("Usage: node scripts/cleanup-live-test-residue.mjs [--apply]");

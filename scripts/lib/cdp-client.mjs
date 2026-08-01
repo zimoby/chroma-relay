@@ -27,6 +27,9 @@ export class CdpClient {
     this.bindings = [];
     this.connectPromise = null;
     this.closePromise = null;
+    // Keep evaluate's internal transport request distinct from public sends so
+    // the operation guard can reject genuinely concurrent top-level requests.
+    this.sendForEvaluate = this.send.bind(this);
   }
 
   _add(name, handler, { once = false } = {}) {
@@ -231,7 +234,7 @@ export class CdpClient {
   }
 
   async evaluate(expression) {
-    const result = await this.send("Runtime.evaluate", {
+    const result = await this.sendForEvaluate("Runtime.evaluate", {
       expression,
       awaitPromise: true,
       returnByValue: true,

@@ -1,29 +1,78 @@
 #!/usr/bin/env node
 
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { isAbsolute, resolve } from "node:path";
+import { mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
+import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { CdpClient } from "./lib/cdp-client.mjs";
+import contract from "../src/shared/product-contract.json" with { type: "json" };
+import packageJson from "../package.json" with { type: "json" };
 import {
+  assertCanonicalRuntimeUrl,
+  createOwnedRunDirectory,
   createOwnedTemporaryConfigDirectory,
+  guardClientEvaluations,
+  isDirectCliInvocation,
+  parseRunnerArgs,
   removeOwnedRunDirectory,
+  restoreConfigRootWithReadback,
+  selectCanonicalCdpTarget,
 } from "./lib/live-runner-policy.mjs";
 
 const REPO_ROOT = fileURLToPath(new URL("../", import.meta.url));
-const modeArg = process.argv.slice(2).find((value) => value.startsWith("--mode="));
-const mode = modeArg ? modeArg.slice("--mode=".length) : "collect";
-if (
-  mode !== "collect" &&
-  mode !== "apply" &&
-  mode !== "mutate" &&
-  mode !== "image" &&
-  mode !== "image-selection"
-) {
-  throw new Error(`Unsupported functional smoke mode: ${mode}`);
+const isCliEntry = isDirectCliInvocation(import.meta.url);
+const canonicalizePotentialOutput = async (path) => {
+  const suffix = [];
+  let cursor = path;
+  while (true) {
+    try {
+      return resolve(await realpath(cursor), ...suffix.reverse());
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+      const parent = dirname(cursor);
+      if (parent === cursor) throw error;
+      suffix.push(relative(parent, cursor));
+      cursor = parent;
+    }
+  }
+};
+
+export const extractExplicitFunctionalSmokeOutput = async (args) => {
+  const outputArgs = args.filter((arg) => typeof arg === "string" && arg.startsWith("--output="));
+  if (outputArgs.length === 0) return null;
+  const outputs = [];
+  for (const outputArg of outputArgs) {
+    try {
+      outputs.push(parseRunnerArgs([outputArg], { allowed: ["output"] }).output);
+    } catch {
+      return null;
+    }
+  }
+  const destinations = await Promise.all(
+    outputs.map((output) => canonicalizePotentialOutput(resolve(REPO_ROOT, output)))
+  );
+  if (destinations.some((destination) => destination !== destinations[0])) return null;
+  return relative(REPO_ROOT, destinations[0]);
+};
+const rawCliArgs = isCliEntry ? process.argv.slice(2) : [];
+let cliArgs;
+let cliArgumentError = null;
+try {
+  cliArgs = parseRunnerArgs(rawCliArgs, { allowed: ["mode", "output"] });
+} catch (error) {
+  cliArgumentError = error;
+  const explicitOutput = await extractExplicitFunctionalSmokeOutput(rawCliArgs);
+  if (!explicitOutput) throw error;
+  cliArgs = { output: explicitOutput };
 }
-const outputArg = process.argv.slice(2).find((value) => value.startsWith("--output="));
-const requestedOutput = outputArg
-  ? outputArg.slice("--output=".length)
+const mode = cliArgumentError ? "invalid-cli" : cliArgs.mode || "collect";
+const modeSupported = ["collect", "apply", "mutate", "image", "image-selection"].includes(mode);
+const modeValidationError = cliArgumentError || (modeSupported
+  ? null
+  : new Error(`Unsupported functional smoke mode: ${mode}`));
+const outputExplicit = Object.prototype.hasOwnProperty.call(cliArgs, "output");
+if (modeValidationError && !outputExplicit) throw modeValidationError;
+const requestedOutput = outputExplicit
+  ? cliArgs.output
   : mode === "apply"
     ? "evidence/i08/apply-smoke"
     : mode === "mutate"
@@ -32,10 +81,7 @@ const requestedOutput = outputArg
         ? "evidence/local/image-extraction/live-smoke"
         : mode === "image-selection"
           ? "evidence/local/image-extraction/selection-smoke"
-        : "evidence/i07/host-smoke";
-const outputDirectory = isAbsolute(requestedOutput)
-  ? requestedOutput
-  : resolve(REPO_ROOT, requestedOutput);
+          : "evidence/i07/host-smoke";
 let temporaryRoot = null;
 const APPLY_RGBA = [0.75, 0.5, 0.25, 1];
 const MUTATION_COLORS = [
@@ -65,8 +111,24 @@ const debugCall = (callback) => `(() => {
   if (!api) throw new Error("Chroma Relay debug API unavailable");
   return (${callback})(api);
 })()`;
+const assertFunctionalRuntime = async (client, label = "functional smoke Main runtime") => {
+  const identity = await client.evaluate(debugCall("(api) => api.getIdentity()"));
+  await assertCanonicalRuntimeUrl(
+    identity.url,
+    resolve(REPO_ROOT, "dist/cep/main/index.html"),
+    { label }
+  );
+  if (
+    identity.extensionId !== contract.product.panelIds.main ||
+    identity.page !== "main" ||
+    identity.buildMarker !== `${contract.marker.current} · ${packageJson.version}`
+  ) {
+    throw new Error(`Functional smoke Main identity mismatch: ${JSON.stringify(identity)}`);
+  }
+  return identity;
+};
 
-const waitForStableDebug = async (client) => {
+const waitForStableDebug = async (client, evaluationGuard) => {
   let stableFrames = 0;
   for (let attempt = 0; attempt < 80; attempt += 1) {
     const ready = await client.evaluate(
@@ -74,7 +136,10 @@ const waitForStableDebug = async (client) => {
     );
     stableFrames = ready ? stableFrames + 1 : 0;
     if (stableFrames === 3) return;
-    if (attempt === 79) throw new Error("Main debug API did not stabilize");
+    if (attempt === 79) {
+      evaluationGuard?.quarantine();
+      throw new Error("Main debug API did not stabilize; renderer completion quarantined");
+    }
     await delay(50);
   }
 };
@@ -82,19 +147,22 @@ const waitForStableDebug = async (client) => {
 const afterRender = (client) =>
   client.evaluate("new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))");
 
-const waitForHostIdle = async (client) => {
+const waitForHostIdle = async (client, evaluationGuard) => {
   for (let attempt = 0; attempt < 80; attempt += 1) {
     const state = await client.evaluate(debugCall("(api) => api.getState()"));
     if (state.pendingHostAction === null) {
       await afterRender(client);
       return state;
     }
-    if (attempt === 79) throw new Error("Host action did not complete");
+    if (attempt === 79) {
+      evaluationGuard?.quarantine();
+      throw new Error("Host action did not complete; renderer completion quarantined");
+    }
     await delay(50);
   }
 };
 
-const waitForMutationRevision = async (client, revision) => {
+const waitForMutationRevision = async (client, revision, evaluationGuard) => {
   for (let attempt = 0; attempt < 80; attempt += 1) {
     const snapshot = await client.evaluate(
       debugCall("(api) => ({ state: api.getState(), counters: api.getCounters() })")
@@ -103,13 +171,18 @@ const waitForMutationRevision = async (client, revision) => {
       await afterRender(client);
       return snapshot;
     }
-    if (attempt === 79) throw new Error(`Palette mutation did not reach revision ${revision}`);
+    if (attempt === 79) {
+      evaluationGuard?.quarantine();
+      throw new Error(
+        `Palette mutation did not reach revision ${revision}; renderer completion quarantined`
+      );
+    }
     await delay(50);
   }
 };
 
 
-const waitForReloadedPalette = async (client, configRoot, revision) => {
+const waitForReloadedPalette = async (client, configRoot, revision, evaluationGuard) => {
   for (let attempt = 0; attempt < 80; attempt += 1) {
     const snapshot = await client.evaluate(
       debugCall("(api) => ({ identity: api.getIdentity(), state: api.getState() })")
@@ -123,8 +196,9 @@ const waitForReloadedPalette = async (client, configRoot, revision) => {
       return snapshot.state;
     }
     if (attempt === 79) {
+      evaluationGuard?.quarantine();
       throw new Error(
-        `Reloaded palette did not reach config root ${configRoot} at revision ${revision}`
+        `Reloaded palette did not reach config root ${configRoot} at revision ${revision}; renderer completion quarantined`
       );
     }
     await delay(50);
@@ -195,7 +269,7 @@ const importSelectedImageSource = (fixture) => `(function () {
   });
 })()`;
 
-const removeProjectItemSource = (itemId) => `(function () {
+export const removeProjectItemSource = (itemId) => `(function () {
   if (!app.project) return JSON.stringify({ removed: false });
   for (var index = app.project.numItems; index >= 1; index -= 1) {
     var item = app.project.item(index);
@@ -207,24 +281,202 @@ const removeProjectItemSource = (itemId) => `(function () {
   return JSON.stringify({ removed: false });
 })()`;
 
-const cleanupImageSelectionFixturesSource = `(function () {
-  if (!app.project) return JSON.stringify({ removed: [] });
-  var owned = {
-    CP_I07_I08_FIXTURE: true,
-    CP_IMAGE_LAYER_FIXTURE: true,
-    CP_IMAGE_LAYER_PNG: true,
-    CP_IMAGE_SECOND_JPG: true,
-    CP_IMAGE_UNSUPPORTED_GIF: true,
-    CP_IMAGE_CORRUPT_PNG: true
+const claimImageSelectionProjectSource = (runToken) => `(function () {
+  if (!app.project || app.project.file || app.project.dirty !== false || app.project.numItems !== 0) {
+    return JSON.stringify({ ok: false, reason: "project-not-empty-clean-unsaved" });
+  }
+  if ($.global.__CHROMA_FUNCTIONAL_PROJECT_OWNER__ != null ||
+      $.global.__CHROMA_FUNCTIONAL_PROJECT__ != null) {
+    return JSON.stringify({ ok: false, reason: "foreign-project-claim-present" });
+  }
+  $.global.__CHROMA_FUNCTIONAL_PROJECT_OWNER__ = ${JSON.stringify(runToken)};
+  $.global.__CHROMA_FUNCTIONAL_PROJECT__ = app.project;
+  return JSON.stringify({
+    ok: true,
+    projectPath: null,
+    dirty: app.project.dirty,
+    numItems: app.project.numItems
+  });
+})()`;
+
+export const guardImageSelectionProjectSource = (runToken, source) => `(function () {
+  if ($.global.__CHROMA_FUNCTIONAL_PROJECT_OWNER__ !== ${JSON.stringify(runToken)} ||
+      $.global.__CHROMA_FUNCTIONAL_PROJECT__ !== app.project) {
+    return JSON.stringify({ ok: false, reason: "image-selection-project-owner-mismatch" });
+  }
+  return ${source};
+})()`;
+
+const imageSelectionTopologyFunctions = `
+  var snapshotValue = function (value) {
+    if (value === null || value === undefined) return value === null ? null : "undefined";
+    if (value instanceof Array) {
+      var values = [];
+      for (var valueIndex = 0; valueIndex < value.length; valueIndex += 1) {
+        values.push(snapshotValue(value[valueIndex]));
+      }
+      return values;
+    }
+    if (typeof value !== "object") return value;
+    var objectValue = { display: String(value) };
+    var fields = ["text", "closed", "vertices", "inTangents", "outTangents"];
+    for (var fieldIndex = 0; fieldIndex < fields.length; fieldIndex += 1) {
+      var field = fields[fieldIndex];
+      try {
+        if (value[field] !== undefined) objectValue[field] = snapshotValue(value[field]);
+      } catch (_) {}
+    }
+    return objectValue;
   };
+  var snapshotProperty = function (property) {
+    var result = {
+      index: property.propertyIndex,
+      name: property.name,
+      matchName: property.matchName,
+      propertyType: property.propertyType,
+      numProperties: property.numProperties || 0
+    };
+    if (result.numProperties > 0) {
+      result.children = [];
+      for (var childIndex = 1; childIndex <= result.numProperties; childIndex += 1) {
+        result.children.push(snapshotProperty(property.property(childIndex)));
+      }
+      return result;
+    }
+    try { result.value = snapshotValue(property.value); } catch (_) { result.value = "<unreadable>"; }
+    try { result.expression = property.canSetExpression ? property.expression : null; } catch (_) {}
+    try { result.expressionEnabled = property.canSetExpression ? property.expressionEnabled : null; } catch (_) {}
+    try {
+      result.keys = [];
+      for (var keyIndex = 1; keyIndex <= property.numKeys; keyIndex += 1) {
+        var key = { time: property.keyTime(keyIndex), value: snapshotValue(property.keyValue(keyIndex)) };
+        try { key.inInterpolationType = String(property.keyInInterpolationType(keyIndex)); } catch (_) {}
+        try { key.outInterpolationType = String(property.keyOutInterpolationType(keyIndex)); } catch (_) {}
+        try {
+          var inEase = property.keyInTemporalEase(keyIndex);
+          key.inTemporalEase = [];
+          for (var inEaseIndex = 0; inEaseIndex < inEase.length; inEaseIndex += 1) {
+            key.inTemporalEase.push({ speed: inEase[inEaseIndex].speed, influence: inEase[inEaseIndex].influence });
+          }
+        } catch (_) {}
+        try {
+          var outEase = property.keyOutTemporalEase(keyIndex);
+          key.outTemporalEase = [];
+          for (var outEaseIndex = 0; outEaseIndex < outEase.length; outEaseIndex += 1) {
+            key.outTemporalEase.push({ speed: outEase[outEaseIndex].speed, influence: outEase[outEaseIndex].influence });
+          }
+        } catch (_) {}
+        try { key.temporalAutoBezier = property.keyTemporalAutoBezier(keyIndex); } catch (_) {}
+        try { key.temporalContinuous = property.keyTemporalContinuous(keyIndex); } catch (_) {}
+        try { key.roving = property.keyRoving(keyIndex); } catch (_) {}
+        try { key.spatialAutoBezier = property.keySpatialAutoBezier(keyIndex); } catch (_) {}
+        try { key.spatialContinuous = property.keySpatialContinuous(keyIndex); } catch (_) {}
+        try { key.inSpatialTangent = snapshotValue(property.keyInSpatialTangent(keyIndex)); } catch (_) {}
+        try { key.outSpatialTangent = snapshotValue(property.keyOutSpatialTangent(keyIndex)); } catch (_) {}
+        result.keys.push(key);
+      }
+    } catch (_) {}
+    return result;
+  };
+  var snapshotItem = function (item) {
+    var kind = item instanceof CompItem ? "comp" : "footage";
+    var result = {
+      id: item.id,
+      name: item.name,
+      typeName: item.typeName,
+      kind: kind,
+      comment: item.comment,
+      label: item.label
+    };
+    if (kind === "footage") {
+      result.width = item.width;
+      result.height = item.height;
+      result.duration = item.duration;
+      result.frameRate = item.frameRate;
+      result.file = item.mainSource && item.mainSource.file ? item.mainSource.file.fsName : null;
+      return result;
+    }
+    result.width = item.width;
+    result.height = item.height;
+    result.pixelAspect = item.pixelAspect;
+    result.duration = item.duration;
+    result.frameRate = item.frameRate;
+    result.bgColor = snapshotValue(item.bgColor);
+    result.layers = [];
+    for (var layerIndex = 1; layerIndex <= item.numLayers; layerIndex += 1) {
+      var layer = item.layer(layerIndex);
+      var layerResult = {
+        id: layer.id,
+        index: layer.index,
+        name: layer.name,
+        matchName: layer.matchName,
+        comment: layer.comment,
+        label: layer.label,
+        sourceId: layer.source ? layer.source.id : null,
+        parentId: layer.parent ? layer.parent.id : null,
+        enabled: layer.enabled,
+        locked: layer.locked,
+        shy: layer.shy,
+        solo: layer.solo,
+        adjustmentLayer: layer.adjustmentLayer,
+        guideLayer: layer.guideLayer,
+        threeDLayer: layer.threeDLayer,
+        blendingMode: String(layer.blendingMode),
+        trackMatteType: String(layer.trackMatteType),
+        startTime: layer.startTime,
+        inPoint: layer.inPoint,
+        outPoint: layer.outPoint,
+        stretch: layer.stretch,
+        properties: []
+      };
+      for (var propertyIndex = 1; propertyIndex <= layer.numProperties; propertyIndex += 1) {
+        layerResult.properties.push(snapshotProperty(layer.property(propertyIndex)));
+      }
+      result.layers.push(layerResult);
+    }
+    return result;
+  };
+`;
+
+const cleanupImageSelectionFixturesSource = (runToken, ownedItems, expectedTopology) => `(function () {
+  if ($.global.__CHROMA_FUNCTIONAL_PROJECT_OWNER__ !== ${JSON.stringify(runToken)} ||
+      $.global.__CHROMA_FUNCTIONAL_PROJECT__ !== app.project) {
+    return JSON.stringify({ removed: [], reason: "image-selection-project-owner-mismatch" });
+  }
+  var owned = ${JSON.stringify(ownedItems)};
+  var expectedTopology = ${JSON.stringify(expectedTopology)};
+  if (!expectedTopology || expectedTopology.length !== owned.length) {
+    return JSON.stringify({ removed: [], reason: "owned-project-topology-unavailable" });
+  }
+  if (!app.project || app.project.file || app.project.numItems !== owned.length) {
+    return JSON.stringify({ removed: [], reason: "owned-project-topology-mismatch" });
+  }
+  ${imageSelectionTopologyFunctions}
+  for (var verifyIndex = 0; verifyIndex < owned.length; verifyIndex += 1) {
+    var expected = owned[verifyIndex];
+    var found = null;
+    for (var findIndex = 1; findIndex <= app.project.numItems; findIndex += 1) {
+      if (app.project.item(findIndex).id === expected.id) found = app.project.item(findIndex);
+    }
+    var foundKind = found instanceof CompItem ? "comp" : "footage";
+    if (!found || found.name !== expected.name || foundKind !== expected.kind) {
+      return JSON.stringify({ removed: [], reason: "owned-item-identity-mismatch", expected: expected });
+    }
+    if (JSON.stringify(snapshotItem(found)) !== JSON.stringify(expectedTopology[verifyIndex])) {
+      return JSON.stringify({ removed: [], reason: "owned-item-topology-mismatch", expected: expected });
+    }
+  }
   var removed = [];
   var removeMatching = function (compsOnly) {
     for (var index = app.project.numItems; index >= 1; index -= 1) {
       var item = app.project.item(index);
       var isComp = item instanceof CompItem;
-      if (owned[item.name] && (compsOnly ? isComp : !isComp)) {
-        removed.push(item.name);
-        item.remove();
+      for (var ownedIndex = 0; ownedIndex < owned.length; ownedIndex += 1) {
+        if (item.id === owned[ownedIndex].id && (compsOnly ? isComp : !isComp)) {
+          removed.push(item.name);
+          item.remove();
+          break;
+        }
       }
     }
   };
@@ -243,47 +495,123 @@ const imageSelectionProjectStateSource = `(function () {
   });
 })()`;
 
-const resetOwnedEmptyProjectSource = `(function () {
-  if (!app.project || app.project.file || app.project.numItems !== 0) {
-    return JSON.stringify({ reset: false, reason: "project-not-empty-unsaved" });
+const archiveAndResetOwnedProjectSource = (runToken, archivePath) => `(function () {
+  if ($.global.__CHROMA_FUNCTIONAL_PROJECT_OWNER__ !== ${JSON.stringify(runToken)} ||
+      $.global.__CHROMA_FUNCTIONAL_PROJECT__ !== app.project) {
+    return JSON.stringify({ reset: false, reason: "project-owner-mismatch" });
   }
-  app.project.close(CloseOptions.DO_NOT_SAVE_CHANGES);
+  if (!app.project || app.project.file || app.project.numItems !== 0) {
+    if (!app.project || app.project.file) {
+      return JSON.stringify({ reset: false, reason: "project-not-owned-unsaved" });
+    }
+  }
+  var archive = new File(${JSON.stringify(archivePath)});
+  if (archive.exists) {
+    return JSON.stringify({ reset: false, reason: "project-archive-already-exists" });
+  }
+  app.project.save(archive);
+  if (!archive.exists || !app.project.file || app.project.file.fsName !== archive.fsName) {
+    return JSON.stringify({ reset: false, reason: "project-archive-not-authoritative" });
+  }
+  var closed = app.project.close(CloseOptions.SAVE_CHANGES);
+  if (closed !== true) {
+    return JSON.stringify({ reset: false, reason: "project-close-refused" });
+  }
   app.newProject();
+  var reset = app.project && app.project.file === null &&
+    app.project.dirty === false && app.project.numItems === 0;
+  if (reset) {
+    $.global.__CHROMA_FUNCTIONAL_PROJECT_OWNER__ = null;
+    $.global.__CHROMA_FUNCTIONAL_PROJECT__ = null;
+  }
   return JSON.stringify({
-    reset: true,
+    reset: reset,
+    archivePath: archive.fsName,
     projectPath: app.project.file ? app.project.file.fsName : null,
     dirty: app.project.dirty,
     numItems: app.project.numItems
   });
 })()`;
 
-const setupColorFixtureSource = `(function () {
+const captureSetupTopologySource = (source, descriptorsSource) => `(function () {
+  ${imageSelectionTopologyFunctions}
+  var result = JSON.parse(${source});
+  if (!result || result.ok !== true) return JSON.stringify(result);
+  var descriptors = ${descriptorsSource};
+  result.ownedTopology = [];
+  for (var descriptorIndex = 0; descriptorIndex < descriptors.length; descriptorIndex += 1) {
+    var descriptor = descriptors[descriptorIndex];
+    var found = null;
+    for (var itemIndex = 1; itemIndex <= app.project.numItems; itemIndex += 1) {
+      if (app.project.item(itemIndex).id === descriptor.id) found = app.project.item(itemIndex);
+    }
+    var foundKind = found instanceof CompItem ? "comp" : "footage";
+    if (!found || found.name !== descriptor.name || foundKind !== descriptor.kind) {
+      return JSON.stringify({ ok: false, reason: "same-dispatch-topology-item-mismatch" });
+    }
+    result.ownedTopology.push(snapshotItem(found));
+  }
+  return JSON.stringify(result);
+})()`;
+
+const rawSetupColorFixtureSource = `(function () {
   return $.evalFile(new File(${JSON.stringify(COLOR_FIXTURE_SETUP_PATH)}));
 })()`;
 
-const setupLayerImageFixtureSource = (fixture) => `(function () {
-  if (!app.project) app.newProject();
+const setupColorFixtureSource = captureSetupTopologySource(
+  rawSetupColorFixtureSource,
+  `[{ id: result.compId, name: result.compName, kind: "comp" }]`
+);
+
+const rawSetupLayerImageFixtureSource = (fixture) => `(function () {
   var file = new File(${JSON.stringify(fixture.path)});
   if (!file.exists) return JSON.stringify({ ok: false, reason: "missing-file" });
-  var imported = app.project.importFile(new ImportOptions(file));
-  imported.name = "CP_IMAGE_LAYER_PNG";
-  var comp = app.project.items.addComp("CP_IMAGE_LAYER_FIXTURE", 640, 360, 1, 2, 24);
-  var layer = comp.layers.add(imported);
-  layer.name = "CP_IMAGE_LAYER";
-  comp.openInViewer();
-  for (var itemIndex = 1; itemIndex <= app.project.numItems; itemIndex += 1) {
-    app.project.item(itemIndex).selected = false;
+  var imported = null;
+  var comp = null;
+  try {
+    imported = app.project.importFile(new ImportOptions(file));
+    imported.name = "CP_IMAGE_LAYER_PNG";
+    comp = app.project.items.addComp("CP_IMAGE_LAYER_FIXTURE", 640, 360, 1, 2, 24);
+    var layer = comp.layers.add(imported);
+    layer.name = "CP_IMAGE_LAYER";
+    comp.openInViewer();
+    for (var itemIndex = 1; itemIndex <= app.project.numItems; itemIndex += 1) {
+      app.project.item(itemIndex).selected = false;
+    }
+    layer.selected = true;
+    return JSON.stringify({
+      ok: true,
+      compId: comp.id,
+      itemId: imported.id,
+      path: imported.file.fsName,
+      selectedLayers: comp.selectedLayers.length,
+      selectedItems: app.project.selection.length
+    });
+  } catch (error) {
+    var importedId = imported ? imported.id : null;
+    var compId = comp ? comp.id : null;
+    var residualItems = [];
+    for (var residualIndex = 1; residualIndex <= app.project.numItems; residualIndex += 1) {
+      var residual = app.project.item(residualIndex);
+      if (residual.id === compId) residualItems.push({ id: residual.id, name: residual.name, kind: "comp" });
+      if (residual.id === importedId) residualItems.push({ id: residual.id, name: residual.name, kind: "footage" });
+    }
+    return JSON.stringify({
+      ok: false,
+      reason: "fixture-setup-failed",
+      error: String(error),
+      residualItems: residualItems
+    });
   }
-  layer.selected = true;
-  return JSON.stringify({
-    ok: true,
-    compId: comp.id,
-    itemId: imported.id,
-    path: imported.file.fsName,
-    selectedLayers: comp.selectedLayers.length,
-    selectedItems: app.project.selection.length
-  });
 })()`;
+
+const setupLayerImageFixtureSource = (fixture) => captureSetupTopologySource(
+  rawSetupLayerImageFixtureSource(fixture),
+  `[
+    { id: result.compId, name: "CP_IMAGE_LAYER_FIXTURE", kind: "comp" },
+    { id: result.itemId, name: "CP_IMAGE_LAYER_PNG", kind: "footage" }
+  ]`
+);
 
 const selectLayerImageSource = (fixture, includeProjectItem) => `(function () {
   var comp = null;
@@ -308,18 +636,41 @@ const selectLayerImageSource = (fixture, includeProjectItem) => `(function () {
   });
 })()`;
 
-const importProjectImageSource = (path, name) => `(function () {
+const rawImportProjectImageSource = (path, name) => `(function () {
   var file = new File(${JSON.stringify(path)});
   if (!file.exists) return JSON.stringify({ ok: false, reason: "missing-file" });
-  var imported = app.project.importFile(new ImportOptions(file));
-  imported.name = ${JSON.stringify(name)};
-  return JSON.stringify({
-    ok: true,
-    id: imported.id,
-    name: imported.name,
-    path: imported.file.fsName
-  });
+  var imported = null;
+  try {
+    imported = app.project.importFile(new ImportOptions(file));
+    imported.name = ${JSON.stringify(name)};
+    return JSON.stringify({
+      ok: true,
+      id: imported.id,
+      name: imported.name,
+      path: imported.file.fsName
+    });
+  } catch (error) {
+    var importedId = imported ? imported.id : null;
+    var residualItems = [];
+    for (var residualIndex = 1; residualIndex <= app.project.numItems; residualIndex += 1) {
+      var residual = app.project.item(residualIndex);
+      if (residual.id === importedId) {
+        residualItems.push({ id: residual.id, name: residual.name, kind: "footage" });
+      }
+    }
+    return JSON.stringify({
+      ok: false,
+      reason: "image-import-failed",
+      error: String(error),
+      residualItems: residualItems
+    });
+  }
 })()`;
+
+const importProjectImageSource = (path, name) => captureSetupTopologySource(
+  rawImportProjectImageSource(path, name),
+  `[{ id: result.id, name: result.name, kind: "footage" }]`
+);
 
 const selectProjectImagesSource = (itemIds) => `(function () {
   var selectedIds = ${JSON.stringify(itemIds.map(Number))};
@@ -606,71 +957,185 @@ const getConsoleEvidence = (events) => ({
     .map((event) => event.params.entry),
 });
 
+export const finalizeFunctionalSmoke = async ({
+  primaryError = null,
+  cleanupSteps = [],
+  publishSuccess,
+  writeFailure,
+}) => {
+  const cleanupErrors = [];
+  for (const { phase, run: cleanup } of cleanupSteps) {
+    try {
+      await cleanup();
+    } catch (error) {
+      cleanupErrors.push({ phase, error: String(error?.stack || error) });
+    }
+  }
+  if (!primaryError && cleanupErrors.length === 0) {
+    try {
+      await publishSuccess();
+      return;
+    } catch (error) {
+      primaryError = error;
+    }
+  }
+  try {
+    await writeFailure({ primaryError, cleanupErrors });
+  } catch (error) {
+    cleanupErrors.push({ phase: "write-failure", error: String(error?.stack || error) });
+  }
+
+  if (primaryError) {
+    if (cleanupErrors.length > 0 && (typeof primaryError === "object" || typeof primaryError === "function")) {
+      try { primaryError.cleanupErrors = cleanupErrors; } catch {}
+    }
+    throw primaryError;
+  }
+  throw new AggregateError(
+    cleanupErrors.map(({ error }) => new Error(error)),
+    "Functional smoke cleanup failed"
+  );
+};
+
+export const replaceFunctionalSmokeReport = async ({
+  reportPath,
+  pendingReportPath,
+  report,
+  beforeCommit = async () => undefined,
+}) => {
+  await writeFile(pendingReportPath, `${JSON.stringify(report, null, 2)}\n`, { flag: "wx" });
+  try {
+    await beforeCommit();
+    await rm(reportPath, { force: true });
+    await rename(pendingReportPath, reportPath);
+  } catch (error) {
+    await rm(pendingReportPath, { force: true }).catch(() => undefined);
+    throw error;
+  }
+};
+
 const run = async () => {
+  const outputRun = await createOwnedRunDirectory(resolve(REPO_ROOT, requestedOutput));
+  const outputDirectory = outputRun.path;
   let client;
   let configRun;
+  let originalConfigRoot = null;
+  let configMutationAttempted = false;
+  let configRestored = false;
   let imageSelectionCleanupRequired = false;
   let imageSelectionProjectResetRequired = false;
-  let imageSelectionProjectResetError = null;
-  await mkdir(outputDirectory, { recursive: true });
-  configRun = await createOwnedTemporaryConfigDirectory({
-    tokenPrefix: `chroma-relay-functional-${mode}`,
-  });
-  temporaryRoot = configRun.path;
-  const initialDocument = {
-    schemaVersion: 1,
-    revision: 0,
-    colors:
-      mode === "apply"
-        ? [{ id: "apply-exact", rgba: APPLY_RGBA }]
-        : mode === "mutate"
-          ? MUTATION_COLORS
-          : [],
+  let imageSelectionHostStateKnown = true;
+  let runtimeEvaluationGuard = null;
+  const runtimeEvaluationCompletionKnown = () =>
+    runtimeEvaluationGuard?.isCompletionKnown() !== false;
+  const imageSelectionOwnedItems = [];
+  const imageSelectionOwnedTopology = [];
+  let primaryError = null;
+  let successPublication = null;
+  const runId = `${process.pid}-${Date.now()}`;
+  const reportPath = resolve(outputDirectory, "report.json");
+  const failurePath = resolve(outputDirectory, "failure.json");
+  const pendingReportPath = resolve(outputDirectory, `.report-${runId}.pending.json`);
+  const dispatchHostActionAndWait = async (expression) => {
+    imageSelectionHostStateKnown = false;
+    const accepted = await client.evaluate(debugCall(expression));
+    const state = await waitForHostIdle(client, runtimeEvaluationGuard);
+    imageSelectionHostStateKnown = true;
+    return { accepted, state };
   };
-  await writeFile(
-    resolve(temporaryRoot, "palette.json"),
-    `${JSON.stringify(initialDocument, null, 2)}\n`
-  );
-  await writeFile(
-    resolve(temporaryRoot, "settings.json"),
-    `${JSON.stringify(
-      {
-        schemaVersion: 2,
-        revision: 0,
-        layoutMode: "stretch",
-        swatchSize: 32,
-        includeDisabledColors: false,
-      },
-      null,
-      2
-    )}\n`
-  );
 
   try {
+    await mkdir(outputDirectory, { recursive: true });
+    await replaceFunctionalSmokeReport({
+      reportPath,
+      pendingReportPath,
+      report: {
+        capturedAt: new Date().toISOString(),
+        passed: false,
+        status: "running",
+        mode,
+        runId,
+      },
+    });
+    await rm(failurePath, { force: true });
+    if (modeValidationError) throw modeValidationError;
+    configRun = await createOwnedTemporaryConfigDirectory({
+      tokenPrefix: `chroma-relay-functional-${mode}`,
+    });
+    temporaryRoot = configRun.path;
+    const initialDocument = {
+      schemaVersion: 1,
+      revision: 0,
+      colors:
+        mode === "apply"
+          ? [{ id: "apply-exact", rgba: APPLY_RGBA }]
+          : mode === "mutate"
+            ? MUTATION_COLORS
+            : [],
+    };
+    await writeFile(
+      resolve(temporaryRoot, "palette.json"),
+      `${JSON.stringify(initialDocument, null, 2)}\n`
+    );
+    await writeFile(
+      resolve(temporaryRoot, "settings.json"),
+      `${JSON.stringify(
+        {
+          schemaVersion: 2,
+          revision: 0,
+          layoutMode: "stretch",
+          swatchSize: 32,
+          includeDisabledColors: false,
+        },
+        null,
+        2
+      )}\n`
+    );
+
     const response = await fetch("http://127.0.0.1:8198/json/list", {
       signal: AbortSignal.timeout(3000),
     });
     const targets = await response.json();
-    const matches = targets.filter(
-      (target) =>
-        target.type === "page" && new URL(target.url).pathname.endsWith("/main/index.html")
+    const target = await selectCanonicalCdpTarget(
+      targets,
+      resolve(REPO_ROOT, "dist/cep/main/index.html"),
+      { label: "functional smoke Main" }
     );
-    if (matches.length !== 1) throw new Error(`Expected one Main target, found ${matches.length}`);
-    client = new CdpClient(matches[0].webSocketDebuggerUrl);
+    client = new CdpClient(target.webSocketDebuggerUrl);
     await client.connect();
     await Promise.all([
       client.send("Runtime.enable"),
       client.send("Log.enable"),
       client.send("Page.enable"),
     ]);
+    runtimeEvaluationGuard = guardClientEvaluations(client, "functional smoke Main");
+    await waitForStableDebug(client, runtimeEvaluationGuard);
+    const baselineIdentity = await assertFunctionalRuntime(client, "functional smoke Main baseline runtime");
+    originalConfigRoot = baselineIdentity.configRoot ?? null;
     client.events = [];
     await client.send("Page.reload", { ignoreCache: true });
-    await waitForStableDebug(client);
+    await waitForStableDebug(client, runtimeEvaluationGuard);
     await afterRender(client);
+    const initialIdentity = await assertFunctionalRuntime(client);
+    if ((initialIdentity.configRoot ?? null) !== originalConfigRoot) {
+      throw new Error("Functional smoke config root changed during authenticated reload");
+    }
+    configMutationAttempted = true;
+    imageSelectionHostStateKnown = false;
     await client.evaluate(
       debugCall(`(api) => api.setTemporaryConfigRoot(${JSON.stringify(temporaryRoot)})`)
     );
     await afterRender(client);
+    const temporaryIdentity = await assertFunctionalRuntime(
+      client,
+      "functional smoke Main temporary config runtime"
+    );
+    if (temporaryIdentity.configRoot !== temporaryRoot) {
+      throw new Error(
+        `Functional smoke temporary config root readback failed: ${JSON.stringify(temporaryIdentity)}`
+      );
+    }
+    imageSelectionHostStateKnown = true;
 
     if (mode === "mutate") {
       const initialSnapshot = await client.evaluate(
@@ -683,7 +1148,7 @@ const run = async () => {
           new MouseEvent("click", { altKey: true, bubbles: true, cancelable: true })
         );
       })()`);
-      const afterRemove = await waitForMutationRevision(client, 1);
+      const afterRemove = await waitForMutationRevision(client, 1, runtimeEvaluationGuard);
       if (
         removeDispatched !== true ||
         afterRemove.state.palette.map((color) => color.id).join(",") !== "a,c,d" ||
@@ -706,7 +1171,7 @@ const run = async () => {
           })
         );
       })()`);
-      const afterKeyboardReorder = await waitForMutationRevision(client, 2);
+      const afterKeyboardReorder = await waitForMutationRevision(client, 2, runtimeEvaluationGuard);
       if (
         keyboardReorderDispatched !== false ||
         afterKeyboardReorder.state.palette.map((color) => color.id).join(",") !== "a,d,c" ||
@@ -758,7 +1223,7 @@ const run = async () => {
         }));
         return true;
       })()`);
-      const afterDrag = await waitForMutationRevision(client, 3);
+      const afterDrag = await waitForMutationRevision(client, 3, runtimeEvaluationGuard);
       await client.evaluate(`(() => {
         const source = document.querySelector("[data-testid=swatch-a]");
         if (source && window.__chromaRelayMutationTransfer) {
@@ -809,7 +1274,7 @@ const run = async () => {
           })
         );
       })()`);
-      const afterKeyboardRemove = await waitForMutationRevision(client, 4);
+      const afterKeyboardRemove = await waitForMutationRevision(client, 4, runtimeEvaluationGuard);
       const keyboardRemovalFocus = await client.evaluate(
         "document.activeElement?.dataset?.testid || null"
       );
@@ -852,12 +1317,19 @@ const run = async () => {
         throw new Error(`Persisted mutation order is wrong: ${JSON.stringify(stored)}`);
       }
 
+      await assertFunctionalRuntime(client, "functional smoke pre-mutation-reload runtime");
       await client.send("Page.reload", { ignoreCache: true });
-      await waitForStableDebug(client);
+      await waitForStableDebug(client, runtimeEvaluationGuard);
+      await assertFunctionalRuntime(client, "functional smoke post-mutation-reload runtime");
       await client.evaluate(
         debugCall(`(api) => api.setTemporaryConfigRoot(${JSON.stringify(temporaryRoot)})`)
       );
-      const afterReload = await waitForReloadedPalette(client, temporaryRoot, 4);
+      const afterReload = await waitForReloadedPalette(
+        client,
+        temporaryRoot,
+        4,
+        runtimeEvaluationGuard
+      );
       if (
         afterReload.paletteRevision !== 4 ||
         afterReload.palette.map((color) => color.id).join(",") !== "c,a"
@@ -905,26 +1377,66 @@ const run = async () => {
         consoleEvidence,
         screenshots: ["main-mutated.png"],
       };
-      await writeFile(resolve(outputDirectory, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
-      console.log(JSON.stringify({ passed: true, mode, outputDirectory }, null, 2));
+      successPublication = { report, summary: { passed: true, mode, outputDirectory } };
       return;
     }
 
-    if (mode === "image-selection") {
-      const projectState = await evalHost(client, imageSelectionProjectStateSource);
+    let evalImageHost = null;
+    if (mode === "image-selection" || mode === "image") {
+      const projectState = await evalHost(client, claimImageSelectionProjectSource(runId));
       if (
-        projectState.exists !== true ||
+        projectState.ok !== true ||
         projectState.projectPath !== null ||
         projectState.dirty !== false ||
         projectState.numItems !== 0
       ) {
         throw new Error(
-          `Image-selection requires an empty clean unsaved project: ${JSON.stringify(projectState)}`
+          `${mode} requires an empty clean unsaved project: ${JSON.stringify(projectState)}`
         );
       }
       imageSelectionProjectResetRequired = true;
       imageSelectionCleanupRequired = true;
-      const staleCleanup = await evalHost(client, cleanupImageSelectionFixturesSource);
+      evalImageHost = (source) =>
+        (async () => {
+          imageSelectionHostStateKnown = false;
+          const result = await evalHost(
+            client,
+            guardImageSelectionProjectSource(runId, source)
+          );
+          imageSelectionHostStateKnown = true;
+          return result;
+        })();
+    }
+
+    if (mode === "image-selection") {
+      const staleCleanup = { removed: [] };
+      const captureNewOwnedTopology = (items, setupResult) => {
+        if (setupResult.ownedTopology?.length !== items.length) {
+          throw new Error(`Owned image fixture same-dispatch topology capture failed: ${JSON.stringify(setupResult)}`);
+        }
+        for (let index = 0; index < items.length; index += 1) {
+          requireCondition(
+            setupResult.ownedTopology[index]?.id === items[index].id &&
+              setupResult.ownedTopology[index]?.name === items[index].name &&
+              setupResult.ownedTopology[index]?.kind === items[index].kind,
+            `Owned image fixture topology descriptor drifted: ${JSON.stringify({ item: items[index], topology: setupResult.ownedTopology[index] })}`
+          );
+        }
+        imageSelectionOwnedTopology.push(...setupResult.ownedTopology);
+      };
+      const recordResidualItems = (result) => {
+        if (!Array.isArray(result?.residualItems)) return;
+        for (const item of result.residualItems) {
+          if (
+            Number.isInteger(item?.id) &&
+            item.id > 0 &&
+            typeof item.name === "string" &&
+            (item.kind === "comp" || item.kind === "footage")
+          ) {
+            imageSelectionOwnedItems.push(item);
+          }
+        }
+      };
       const pngFixture = IMAGE_FIXTURES.find((fixture) => fixture.format === "png");
       const jpgFixture = IMAGE_FIXTURES.find((fixture) => fixture.format === "jpg");
       const pngBytes = await readFile(pngFixture.path);
@@ -936,20 +1448,33 @@ const run = async () => {
       );
       await writeFile(corruptPath, pngBytes);
 
-      const colorFixture = await evalHost(client, setupColorFixtureSource);
-      const layerFixture = await evalHost(client, setupLayerImageFixtureSource(pngFixture));
-      if (!colorFixture.ok || !layerFixture.ok) {
-        throw new Error(
-          `Selection fixture setup failed: ${JSON.stringify({ colorFixture, layerFixture })}`
-        );
+      const colorFixture = await evalImageHost(setupColorFixtureSource);
+      recordResidualItems(colorFixture);
+      if (colorFixture.ok) {
+        const colorOwnedItem = { id: colorFixture.compId, name: colorFixture.compName, kind: "comp" };
+        imageSelectionOwnedItems.push(colorOwnedItem);
+        captureNewOwnedTopology([colorOwnedItem], colorFixture);
+      } else {
+        throw new Error(`Color selection fixture setup failed: ${JSON.stringify(colorFixture)}`);
+      }
+      const layerFixture = await evalImageHost(setupLayerImageFixtureSource(pngFixture));
+      recordResidualItems(layerFixture);
+      if (layerFixture.ok) {
+        const layerOwnedItems = [
+          { id: layerFixture.compId, name: "CP_IMAGE_LAYER_FIXTURE", kind: "comp" },
+          { id: layerFixture.itemId, name: "CP_IMAGE_LAYER_PNG", kind: "footage" }
+        ];
+        imageSelectionOwnedItems.push(...layerOwnedItems);
+        captureNewOwnedTopology(layerOwnedItems, layerFixture);
+      } else {
+        throw new Error(`Layer image fixture setup failed: ${JSON.stringify(layerFixture)}`);
       }
 
       const cases = [];
       const executeCase = async (name, prepare) => {
         await resetImageSelectionCase(client);
         const selection = await prepare();
-        const probe = await evalHost(
-          client,
+        const probe = await evalImageHost(
           `(function () {
             try {
               return JSON.stringify($["com.zimoby.chroma-relay"].resolvePaletteAddSelection(false));
@@ -966,14 +1491,19 @@ const run = async () => {
           throw new Error(`${name} host probe failed: ${JSON.stringify(probe)}`);
         }
         const startedAt = Date.now();
+        imageSelectionHostStateKnown = false;
         const accepted = await client.evaluate(
           debugCall('(api) => api.dispatchClick("palette-add")')
         );
-        const state = await waitForHostIdle(client);
+        const state = await waitForHostIdle(client, runtimeEvaluationGuard);
         const elapsedMs = Date.now() - startedAt;
         const snapshot = await client.evaluate(
           debugCall("(api) => ({ state: api.getState(), counters: api.getCounters() })")
         );
+        imageSelectionHostStateKnown =
+          accepted === true &&
+          snapshot?.state?.pendingHostAction === null &&
+          snapshot?.counters?.hostCalls === 1;
         const stored = JSON.parse(
           await readFile(resolve(temporaryRoot, "palette.json"), "utf8")
         );
@@ -987,7 +1517,7 @@ const run = async () => {
       };
 
       const layerSource = await executeCase("selected-layer-source", () =>
-        evalHost(client, selectLayerImageSource(layerFixture, false))
+        evalImageHost(selectLayerImageSource(layerFixture, false))
       );
       if (
         !layerSource.selection.ok ||
@@ -1008,7 +1538,7 @@ const run = async () => {
       }
 
       const dedupedSource = await executeCase("project-layer-same-source-deduped", () =>
-        evalHost(client, selectLayerImageSource(layerFixture, true))
+        evalImageHost(selectLayerImageSource(layerFixture, true))
       );
       if (
         !dedupedSource.selection.ok ||
@@ -1022,13 +1552,16 @@ const run = async () => {
         throw new Error(`Project/layer dedupe case failed: ${JSON.stringify(dedupedSource)}`);
       }
 
-      const secondImage = await evalHost(
-        client,
+      const secondImage = await evalImageHost(
         importProjectImageSource(jpgFixture.path, "CP_IMAGE_SECOND_JPG")
       );
+      recordResidualItems(secondImage);
       if (!secondImage.ok) throw new Error(`Second image import failed: ${JSON.stringify(secondImage)}`);
+      const secondOwnedItem = { id: secondImage.id, name: secondImage.name, kind: "footage" };
+      imageSelectionOwnedItems.push(secondOwnedItem);
+      captureNewOwnedTopology([secondOwnedItem], secondImage);
       const multipleImages = await executeCase("multiple-images-rejected", () =>
-        evalHost(client, selectProjectImagesSource([layerFixture.itemId, secondImage.id]))
+        evalImageHost(selectProjectImagesSource([layerFixture.itemId, secondImage.id]))
       );
       if (
         multipleImages.selection.selectedItems !== 2 ||
@@ -1044,7 +1577,7 @@ const run = async () => {
       }
 
       const mixedSelection = await executeCase("colors-and-image-rejected", () =>
-        evalHost(client, selectMixedColorAndImageSource(layerFixture.itemId))
+        evalImageHost(selectMixedColorAndImageSource(layerFixture.itemId))
       );
       if (
         !mixedSelection.selection.ok ||
@@ -1060,15 +1593,22 @@ const run = async () => {
         throw new Error(`Mixed color/image rejection failed: ${JSON.stringify(mixedSelection)}`);
       }
 
-      const unsupportedImage = await evalHost(
-        client,
+      const unsupportedImage = await evalImageHost(
         importProjectImageSource(unsupportedPath, "CP_IMAGE_UNSUPPORTED_GIF")
       );
+      recordResidualItems(unsupportedImage);
       if (!unsupportedImage.ok) {
         throw new Error(`Unsupported image import failed: ${JSON.stringify(unsupportedImage)}`);
       }
+      const unsupportedOwnedItem = {
+        id: unsupportedImage.id,
+        name: unsupportedImage.name,
+        kind: "footage",
+      };
+      imageSelectionOwnedItems.push(unsupportedOwnedItem);
+      captureNewOwnedTopology([unsupportedOwnedItem], unsupportedImage);
       const unsupported = await executeCase("unsupported-gif-rejected", () =>
-        evalHost(client, selectProjectImagesSource([unsupportedImage.id]))
+        evalImageHost(selectProjectImagesSource([unsupportedImage.id]))
       );
       if (
         unsupported.selection.selectedItems !== 1 ||
@@ -1083,16 +1623,19 @@ const run = async () => {
         throw new Error(`Unsupported-image rejection failed: ${JSON.stringify(unsupported)}`);
       }
 
-      const corruptImage = await evalHost(
-        client,
+      const corruptImage = await evalImageHost(
         importProjectImageSource(corruptPath, "CP_IMAGE_CORRUPT_PNG")
       );
+      recordResidualItems(corruptImage);
       if (!corruptImage.ok) {
         throw new Error(`Corrupt image setup import failed: ${JSON.stringify(corruptImage)}`);
       }
+      const corruptOwnedItem = { id: corruptImage.id, name: corruptImage.name, kind: "footage" };
+      imageSelectionOwnedItems.push(corruptOwnedItem);
+      captureNewOwnedTopology([corruptOwnedItem], corruptImage);
       await writeFile(corruptPath, "not a valid PNG");
       const corrupt = await executeCase("corrupt-png-decode-rejected", () =>
-        evalHost(client, selectProjectImagesSource([corruptImage.id]))
+        evalImageHost(selectProjectImagesSource([corruptImage.id]))
       );
       if (
         corrupt.selection.selectedItems !== 1 ||
@@ -1116,22 +1659,11 @@ const run = async () => {
         resolve(outputDirectory, "main-selection-gates.png"),
         Buffer.from(screenshot.data, "base64")
       );
-      const cleanup = await evalHost(client, cleanupImageSelectionFixturesSource);
-      imageSelectionCleanupRequired = false;
-      const expectedRemoved = [
-        "CP_I07_I08_FIXTURE",
-        "CP_IMAGE_LAYER_FIXTURE",
-        "CP_IMAGE_LAYER_PNG",
-        "CP_IMAGE_SECOND_JPG",
-        "CP_IMAGE_UNSUPPORTED_GIF",
-        "CP_IMAGE_CORRUPT_PNG",
-      ];
-      if (
-        cleanup.removed.length !== expectedRemoved.length ||
-        expectedRemoved.some((name) => !cleanup.removed.includes(name))
-      ) {
-        throw new Error(`Selection fixture cleanup failed: ${JSON.stringify(cleanup)}`);
-      }
+      const cleanup = {
+        deferredToProjectArchive: true,
+        archive: "preserved-functional-project.aep",
+        ownedItemCount: imageSelectionOwnedItems.length,
+      };
 
       const consoleEvidence = getConsoleEvidence(client.events);
       const errors = consoleEvidence.console.filter((entry) =>
@@ -1154,11 +1686,10 @@ const run = async () => {
         consoleEvidence,
         screenshots: ["main-selection-gates.png"],
       };
-      await writeFile(resolve(outputDirectory, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
-      await rm(resolve(outputDirectory, "failure.json"), { force: true });
-      console.log(
-        JSON.stringify({ passed: true, mode, cases: cases.length, outputDirectory }, null, 2)
-      );
+      successPublication = {
+        report,
+        summary: { passed: true, mode, cases: cases.length, outputDirectory },
+      };
       return;
     }
 
@@ -1194,15 +1725,17 @@ const run = async () => {
 
           let imported = null;
           try {
-            imported = await evalHost(client, importSelectedImageSource(fixture));
+            imported = await evalImageHost(importSelectedImageSource(fixture));
             if (!imported.ok || imported.selectedItems !== 1) {
               throw new Error(`Image fixture selection failed: ${JSON.stringify(imported)}`);
             }
             const startedAt = Date.now();
+            imageSelectionHostStateKnown = false;
             const accepted = await client.evaluate(
               debugCall('(api) => api.dispatchClick("palette-add")')
             );
-            const state = await waitForHostIdle(client);
+            const state = await waitForHostIdle(client, runtimeEvaluationGuard);
+            imageSelectionHostStateKnown = true;
             const elapsedMs = Date.now() - startedAt;
             const snapshot = await client.evaluate(
               debugCall("(api) => ({ state: api.getState(), counters: api.getCounters() })")
@@ -1256,13 +1789,8 @@ const run = async () => {
               resolve(outputDirectory, "progress.json"),
               `${JSON.stringify({ passedCases: cases }, null, 2)}\n`
             );
-          } finally {
-            if (imported?.id) {
-              const cleanup = await evalHost(client, removeProjectItemSource(imported.id));
-              if (!cleanup.removed) {
-                throw new Error(`Image fixture cleanup failed for item ${imported.id}`);
-              }
-            }
+          } catch (error) {
+            throw error;
           }
         }
       }
@@ -1337,9 +1865,10 @@ const run = async () => {
         consoleEvidence,
         screenshots: ["main-image-extracted.png"],
       };
-      await writeFile(resolve(outputDirectory, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
-      await rm(resolve(outputDirectory, "failure.json"), { force: true });
-      console.log(JSON.stringify({ passed: true, mode, cases: cases.length, outputDirectory }, null, 2));
+      successPublication = {
+        report,
+        summary: { passed: true, mode, cases: cases.length, outputDirectory },
+      };
       return;
     }
 
@@ -1351,12 +1880,11 @@ const run = async () => {
         throw new Error("AE fixture could not restore direct-property selection before apply");
       }
       const beforeApply = await evalHost(client, applySnapshotSource);
-      const rapidAccepted = await client.evaluate(
-        debugCall(
-          '(api) => [api.dispatchClick("swatch-apply-exact"), api.dispatchClick("swatch-apply-exact")]'
-        )
+      const applyAction = await dispatchHostActionAndWait(
+        '(api) => [api.dispatchClick("swatch-apply-exact"), api.dispatchClick("swatch-apply-exact")]'
       );
-      const appliedState = await waitForHostIdle(client);
+      const rapidAccepted = applyAction.accepted;
+      const appliedState = applyAction.state;
       const appliedSnapshot = await client.evaluate(
         debugCall("(api) => ({ state: api.getState(), counters: api.getCounters() })")
       );
@@ -1443,8 +1971,7 @@ const run = async () => {
         consoleEvidence,
         screenshots: ["main-applied.png"],
       };
-      await writeFile(resolve(outputDirectory, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
-      console.log(JSON.stringify({ passed: true, mode, outputDirectory }, null, 2));
+      successPublication = { report, summary: { passed: true, mode, outputDirectory } };
       return;
     }
 
@@ -1455,10 +1982,11 @@ const run = async () => {
       throw new Error("AE fixture could not restore direct-property selection before collection");
     }
     const before = await evalHost(client, hostSnapshotSource);
-    const rapidAccepted = await client.evaluate(
-      debugCall('(api) => [api.dispatchClick("palette-add"), api.dispatchClick("palette-add")]')
+    const collectionAction = await dispatchHostActionAndWait(
+      '(api) => [api.dispatchClick("palette-add"), api.dispatchClick("palette-add")]'
     );
-    const collectedState = await waitForHostIdle(client);
+    const rapidAccepted = collectionAction.accepted;
+    const collectedState = collectionAction.state;
     const collectedSnapshot = await client.evaluate(
       debugCall("(api) => ({ state: api.getState(), counters: api.getCounters() })")
     );
@@ -1502,8 +2030,10 @@ const run = async () => {
     }
 
     const groupSelection = await evalHost(client, selectGroupSource);
-    await client.evaluate(debugCall('(api) => api.dispatchClick("palette-add")'));
-    const groupState = await waitForHostIdle(client);
+    const groupAction = await dispatchHostActionAndWait(
+      '(api) => api.dispatchClick("palette-add")'
+    );
+    const groupState = groupAction.state;
     const groupSnapshot = await client.evaluate(
       debugCall("(api) => ({ state: api.getState(), counters: api.getCounters() })")
     );
@@ -1526,8 +2056,10 @@ const run = async () => {
     }
 
     const wholeLayerSelection = await evalHost(client, selectWholeLayersSource);
-    await client.evaluate(debugCall('(api) => api.dispatchClick("palette-add")'));
-    const wholeLayerState = await waitForHostIdle(client);
+    const wholeLayerAction = await dispatchHostActionAndWait(
+      '(api) => api.dispatchClick("palette-add")'
+    );
+    const wholeLayerState = wholeLayerAction.state;
     const wholeLayerSnapshot = await client.evaluate(
       debugCall("(api) => ({ state: api.getState(), counters: api.getCounters() })")
     );
@@ -1556,8 +2088,10 @@ const run = async () => {
     }
 
     const disabledSelection = await evalHost(client, selectDisabledGroupSource);
-    await client.evaluate(debugCall('(api) => api.dispatchClick("palette-add")'));
-    const disabledSkippedState = await waitForHostIdle(client);
+    const disabledSkippedAction = await dispatchHostActionAndWait(
+      '(api) => api.dispatchClick("palette-add")'
+    );
+    const disabledSkippedState = disabledSkippedAction.state;
     const disabledSkippedSnapshot = await client.evaluate(
       debugCall("(api) => ({ state: api.getState(), counters: api.getCounters() })")
     );
@@ -1592,15 +2126,19 @@ const run = async () => {
         2
       )}\n`
     );
+    await assertFunctionalRuntime(client, "functional smoke pre-disabled-reload runtime");
     await client.send("Page.reload", { ignoreCache: true });
-    await waitForStableDebug(client);
+    await waitForStableDebug(client, runtimeEvaluationGuard);
+    await assertFunctionalRuntime(client, "functional smoke post-disabled-reload runtime");
     await client.evaluate(
       debugCall(`(api) => api.setTemporaryConfigRoot(${JSON.stringify(temporaryRoot)})`)
     );
     await afterRender(client);
     const disabledIncludedSelection = await evalHost(client, selectDisabledGroupSource);
-    await client.evaluate(debugCall('(api) => api.dispatchClick("palette-add")'));
-    const disabledIncludedState = await waitForHostIdle(client);
+    const disabledIncludedAction = await dispatchHostActionAndWait(
+      '(api) => api.dispatchClick("palette-add")'
+    );
+    const disabledIncludedState = disabledIncludedAction.state;
     const disabledIncludedSnapshot = await client.evaluate(
       debugCall("(api) => ({ state: api.getState(), counters: api.getCounters() })")
     );
@@ -1634,8 +2172,10 @@ const run = async () => {
     }
 
     const deselected = await evalHost(client, deselectSource);
-    await client.evaluate(debugCall('(api) => api.dispatchClick("palette-add")'));
-    const emptyState = await waitForHostIdle(client);
+    const emptyAction = await dispatchHostActionAndWait(
+      '(api) => api.dispatchClick("palette-add")'
+    );
+    const emptyState = emptyAction.state;
     const emptySnapshot = await client.evaluate(
       debugCall("(api) => ({ state: api.getState(), counters: api.getCounters() })")
     );
@@ -1696,60 +2236,157 @@ const run = async () => {
       consoleEvidence,
       screenshots: ["main-collected.png"],
     };
-    await writeFile(resolve(outputDirectory, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
-    console.log(JSON.stringify({ passed: true, outputDirectory }, null, 2));
+    successPublication = { report, summary: { passed: true, outputDirectory } };
   } catch (error) {
-    await writeFile(
-      resolve(outputDirectory, "failure.json"),
-      `${JSON.stringify(
-        {
-          capturedAt: new Date().toISOString(),
-          passed: false,
-          error: error instanceof Error ? error.stack || error.message : String(error),
-          consoleEvidence: client ? getConsoleEvidence(client.events) : null,
-        },
-        null,
-        2
-      )}\n`
-    );
-    throw error;
+    primaryError = error;
   } finally {
+    const cleanupSteps = [];
     if (client) {
-      if (imageSelectionCleanupRequired) {
-        try {
-          await evalHost(client, cleanupImageSelectionFixturesSource);
-        } catch {
-          // Continue restoring the panel if AE or the panel closed during failure cleanup.
-        }
+      if (imageSelectionCleanupRequired && !imageSelectionProjectResetRequired) {
+        cleanupSteps.push({
+          phase: "image-selection-fixtures",
+          run: async () => {
+            if (!imageSelectionHostStateKnown || !runtimeEvaluationCompletionKnown()) {
+              throw new Error("Renderer or image-selection host completion is unknown; cleanup dispatch refused");
+            }
+            imageSelectionHostStateKnown = false;
+            const result = await evalHost(
+              client,
+              cleanupImageSelectionFixturesSource(
+                runId,
+                imageSelectionOwnedItems,
+                imageSelectionOwnedTopology
+              )
+            );
+            imageSelectionHostStateKnown = true;
+            return result;
+          },
+        });
       }
       if (imageSelectionProjectResetRequired) {
-        try {
-          const reset = await evalHost(client, resetOwnedEmptyProjectSource);
-          if (
-            reset.reset !== true ||
-            reset.projectPath !== null ||
-            reset.dirty !== false ||
-            reset.numItems !== 0
-          ) {
-            throw new Error(`Image-selection project reset failed: ${JSON.stringify(reset)}`);
-          }
-        } catch (error) {
-          imageSelectionProjectResetError = error;
-        }
+        cleanupSteps.push({
+          phase: "image-selection-project-reset",
+          run: async () => {
+            if (!imageSelectionHostStateKnown || !runtimeEvaluationCompletionKnown()) {
+              throw new Error("Renderer or image-selection host completion is unknown; project reset refused");
+            }
+            imageSelectionHostStateKnown = false;
+            const archivePath = resolve(outputDirectory, "preserved-functional-project.aep");
+            const reset = await evalHost(
+              client,
+              archiveAndResetOwnedProjectSource(runId, archivePath)
+            );
+            imageSelectionHostStateKnown = true;
+            if (
+              reset.reset !== true ||
+              reset.archivePath !== archivePath ||
+              reset.projectPath !== null ||
+              reset.dirty !== false ||
+              reset.numItems !== 0
+            ) {
+              throw new Error(`Image-selection project reset failed: ${JSON.stringify(reset)}`);
+            }
+          },
+        });
       }
-      try {
-        await client.evaluate(debugCall("(api) => api.setTemporaryConfigRoot(null)"));
-      } catch {
-        // Cleanup continues if the panel was reloaded or closed.
-      }
-      await client.close();
+      cleanupSteps.push(
+        {
+          phase: "temporary-config-root",
+          run: async () => {
+            if (!configMutationAttempted) return;
+            if (!imageSelectionHostStateKnown || !runtimeEvaluationCompletionKnown()) {
+              throw new Error("Renderer or image-selection host completion is unknown; config restoration refused");
+            }
+            await restoreConfigRootWithReadback({
+              expectedRoot: originalConfigRoot,
+              setRoot: (root) => client.evaluate(
+                debugCall(`(api) => api.setTemporaryConfigRoot(${JSON.stringify(root)})`)
+              ),
+              settle: () => afterRender(client),
+              readRoot: () => client.evaluate(debugCall("(api) => api.getIdentity().configRoot")),
+              label: "functional smoke Main config root",
+            });
+            configRestored = true;
+          },
+        },
+        { phase: "cdp-close", run: async () => await client.close() }
+      );
     }
-    if (imageSelectionProjectResetError) throw imageSelectionProjectResetError;
-    if (configRun) await removeOwnedRunDirectory(configRun);
+    if (configRun) {
+      cleanupSteps.push({
+        phase: "temporary-directory",
+        run: () => {
+          if (configMutationAttempted && !configRestored) {
+            throw new Error(`Preserving ${configRun.path} because config restoration is unproven`);
+          }
+          return removeOwnedRunDirectory(configRun);
+        },
+      });
+    }
+    await finalizeFunctionalSmoke({
+      primaryError,
+      cleanupSteps,
+      publishSuccess: async () => {
+        if (!successPublication) throw new Error("Functional smoke completed without a success report");
+        await replaceFunctionalSmokeReport({
+          reportPath,
+          pendingReportPath,
+          report: {
+            ...successPublication.report,
+            status: "passed",
+            runId,
+          },
+          beforeCommit: () => rm(failurePath, { force: true }),
+        });
+        try {
+          console.log(JSON.stringify(successPublication.summary, null, 2));
+        } catch {
+          // The committed report remains authoritative if stdout closes after publication.
+        }
+      },
+      writeFailure: async ({ primaryError: failure, cleanupErrors }) => {
+        const error = failure ? String(failure?.stack || failure) : null;
+        const finalCleanupErrors = [...cleanupErrors];
+        try {
+          await replaceFunctionalSmokeReport({
+            reportPath,
+            pendingReportPath,
+            report: {
+              capturedAt: new Date().toISOString(),
+              passed: false,
+              status: "failed",
+              mode,
+              runId,
+              error,
+              cleanupErrors,
+            },
+          });
+        } catch (reportError) {
+          finalCleanupErrors.push({
+            phase: "failure-report",
+            error: String(reportError?.stack || reportError),
+          });
+        }
+        await writeFile(
+          failurePath,
+          `${JSON.stringify(
+            {
+              capturedAt: new Date().toISOString(),
+              passed: false,
+              error,
+              cleanupErrors: finalCleanupErrors,
+              consoleEvidence: client ? getConsoleEvidence(client.events) : null,
+            },
+            null,
+            2
+          )}\n`
+        );
+      },
+    });
   }
 };
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+if (isCliEntry) {
   run().catch((error) => {
     console.error(error instanceof Error ? error.stack || error.message : error);
     process.exitCode = 1;

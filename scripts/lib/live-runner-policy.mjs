@@ -1,7 +1,9 @@
 import { lstat, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
-import { isAbsolute, join, parse, relative, resolve, sep } from "node:path";
+import { realpathSync } from "node:fs";
+import { isAbsolute, join, parse, relative, resolve, sep, win32 } from "node:path";
 import { randomBytes } from "node:crypto";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 import contract from "../../src/shared/product-contract.json" with { type: "json" };
 
 export class RunnerPolicyError extends Error {
@@ -13,6 +15,19 @@ export class RunnerPolicyError extends Error {
 
 const defaultFs = { lstat, mkdir, readFile, realpath, rm, writeFile };
 const markerName = contract.runner.markerFile;
+
+export const isDirectCliInvocation = (
+  moduleUrl,
+  entryPath = process.argv[1],
+  { realpathFn = realpathSync } = {}
+) => {
+  if (!entryPath) return false;
+  try {
+    return resolve(realpathFn(entryPath)) === resolve(realpathFn(fileURLToPath(moduleUrl)));
+  } catch {
+    return false;
+  }
+};
 
 export const parseRunnerArgs = (argv, { allowed = [] } = {}) => {
   const accepted = new Set(allowed);
@@ -27,17 +42,34 @@ export const parseRunnerArgs = (argv, { allowed = [] } = {}) => {
     if (Object.prototype.hasOwnProperty.call(result, key)) {
       throw new RunnerPolicyError(`Duplicate runner option: ${key}`);
     }
-    if (!value.trim()) throw new RunnerPolicyError(`Empty runner option: ${key}`);
-    if (key === "output" && [".", "./", "..", "../"].includes(value.trim())) {
-      throw new RunnerPolicyError("Root output directory is rejected");
-    }
+    const trimmedValue = value.trim();
+    if (!trimmedValue) throw new RunnerPolicyError(`Empty runner option: ${key}`);
     if (key === "output") {
-      if (isAbsolute(value)) throw new RunnerPolicyError("Absolute output roots are rejected");
-      if (value.replaceAll("\\", "/").split("/").includes("..")) {
+      const normalizedValue = trimmedValue.replaceAll("\\", "/");
+      const components = normalizedValue.split("/");
+      const effectiveComponents = components.filter((component) => component && component !== ".");
+      if (isAbsolute(trimmedValue) || win32.isAbsolute(trimmedValue) || /^[A-Za-z]:/.test(trimmedValue)) {
+        throw new RunnerPolicyError("Absolute output roots are rejected");
+      }
+      if (effectiveComponents.length === 0) {
+        throw new RunnerPolicyError("Root output directory is rejected");
+      }
+      if (components.includes("..")) {
         throw new RunnerPolicyError("Output root contains traversal");
       }
+      for (const component of effectiveComponents) {
+        if (/[. ]$/.test(component)) {
+          throw new RunnerPolicyError("Output root contains a non-portable trailing dot or space");
+        }
+        if (/[<>:"|?*\u0000-\u001F]/.test(component)) {
+          throw new RunnerPolicyError("Output root contains non-portable characters");
+        }
+        if (/^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(component)) {
+          throw new RunnerPolicyError("Output root contains a reserved Windows device name");
+        }
+      }
     }
-    result[key] = value;
+    result[key] = trimmedValue;
   }
   return result;
 };
@@ -140,7 +172,7 @@ const validateOutputRoot = async (
   if (!allowAbsolute && !isInside(resolve(cwd), realParent) && realParent !== resolve(cwd)) {
     throw new RunnerPolicyError("Output root escapes through a symlink");
   }
-  if (allowAbsolute) await rejectSymlinkComponents(root, fs);
+  await rejectSymlinkComponents(root, fs);
   if (rootExists) {
     const stat = await fs.lstat(root);
     if (stat.isSymbolicLink?.()) throw new RunnerPolicyError("Output root is a symlink");
@@ -166,6 +198,143 @@ const validateOutputRoot = async (
   return root;
 };
 
+export const validateRunnerOutputRoot = validateOutputRoot;
+
+export const assertCanonicalRuntimeUrl = async (
+  runtimeUrl,
+  expectedPath,
+  { label = "CDP runtime", realpathFn = realpath } = {}
+) => {
+  try {
+    const parsed = new URL(runtimeUrl);
+    if (
+      parsed.protocol !== "file:" ||
+      parsed.search !== "" ||
+      parsed.hash !== "" ||
+      /[?#]/.test(runtimeUrl)
+    ) {
+      throw new Error("non-canonical URL");
+    }
+    const [canonicalRuntime, canonicalExpected] = await Promise.all([
+      realpathFn(fileURLToPath(parsed)),
+      realpathFn(expectedPath),
+    ]);
+    if (canonicalRuntime !== canonicalExpected) throw new Error("path mismatch");
+    return canonicalRuntime;
+  } catch (error) {
+    if (error instanceof RunnerPolicyError) throw error;
+    throw new RunnerPolicyError(`${label} does not resolve to the canonical runtime`);
+  }
+};
+
+export const restoreConfigRootWithReadback = async ({
+  expectedRoot,
+  setRoot,
+  settle,
+  readRoot,
+  label = "CEP config root",
+  attempts = 20,
+}) => {
+  if (
+    typeof setRoot !== "function" ||
+    typeof readRoot !== "function" ||
+    !Number.isInteger(attempts) ||
+    attempts < 1 ||
+    attempts > 100
+  ) {
+    throw new RunnerPolicyError(`${label} restoration callbacks are required`);
+  }
+  const expected = expectedRoot ?? null;
+  await setRoot(expected);
+  let actual = null;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    if (typeof settle === "function") await settle();
+    actual = (await readRoot()) ?? null;
+    if (actual === expected) return actual;
+  }
+  throw new RunnerPolicyError(
+    `${label} restoration readback mismatch: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`
+  );
+};
+
+export const guardClientEvaluations = (client, label = "CDP runtime") => {
+  if (!client || typeof client.evaluate !== "function" || typeof client.send !== "function") {
+    throw new TypeError(`${label} client must expose evaluate() and send()`);
+  }
+  let status = "ready";
+  const rawEvaluate = client.evaluate.bind(client);
+  const rawSend = client.send.bind(client);
+  const refuseReentry = (operation) => {
+    if (status !== "ready") {
+      throw new Error(`${label} ${operation} reentry refused while completion is ${status}`);
+    }
+    status = "pending";
+  };
+  client.evaluate = async (...args) => {
+    refuseReentry("evaluation");
+    try {
+      const result = await rawEvaluate(...args);
+      status = "ready";
+      return result;
+    } catch (error) {
+      status = "unknown";
+      throw error;
+    }
+  };
+  client.send = async (...args) => {
+    refuseReentry(`send ${String(args[0] ?? "request")}`);
+    try {
+      const result = await rawSend(...args);
+      status = "ready";
+      return result;
+    } catch (error) {
+      status = "unknown";
+      throw error;
+    }
+  };
+  return Object.freeze({
+    isCompletionKnown: () => status === "ready",
+    status: () => status,
+    quarantine: () => {
+      status = "unknown";
+    },
+  });
+};
+
+export const selectCanonicalCdpTarget = async (
+  targets,
+  expectedPath,
+  { label = "CDP", realpathFn = realpath } = {}
+) => {
+  const canonicalExpected = await realpathFn(expectedPath);
+  const matches = [];
+  for (const target of targets) {
+    if (target?.type !== "page") continue;
+    try {
+      const parsed = new URL(target.url);
+      if (
+        parsed.protocol !== "file:" ||
+        parsed.search !== "" ||
+        parsed.hash !== "" ||
+        /[?#]/.test(target.url)
+      ) continue;
+      const canonicalTarget = await realpathFn(fileURLToPath(parsed));
+      if (canonicalTarget === canonicalExpected) matches.push(target);
+    } catch {
+      // Foreign, malformed, missing, or non-file targets are not eligible.
+    }
+  }
+  if (matches.length !== 1) {
+    throw new RunnerPolicyError(
+      `${label} expected exactly one canonical target; found ${matches.length}`
+    );
+  }
+  if (!matches[0].webSocketDebuggerUrl) {
+    throw new RunnerPolicyError(`${label} canonical target has no WebSocket debugger URL`);
+  }
+  return matches[0];
+};
+
 const validateToken = (token) => {
   if (typeof token !== "string" || !token || token === "." || token === ".." || token.includes("/") || token.includes("\\")) {
     throw new RunnerPolicyError("Invalid run token");
@@ -180,6 +349,8 @@ const markerFor = ({ root, child, token }) => ({
   token,
   root,
   child,
+  createdAt: new Date().toISOString(),
+  pid: process.pid,
 });
 
 const createMarkedChild = async (root, { fs = defaultFs, tokenFactory, ...options } = {}) => {

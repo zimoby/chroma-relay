@@ -18,7 +18,10 @@ test("formal runner is import-safe and exposes only the exact no-argument CLI en
   assert.doesNotMatch(source, /resultEvents\[0\]\.message === snapshot\.state\.lastResult/);
   assert.match(source, /`Applied \$\{PALETTE\.length\}-color native gradient`/);
   assert.doesNotMatch(source, /current\.dirty !== false \|\|\s*current\.projectPath/);
-  assert.match(source, /app\.project\.close\(CloseOptions\.DO_NOT_SAVE_CHANGES\);\s*app\.open\(previous\)/);
+  assert.match(source, /var closed = app\.project\.close\(CloseOptions\.SAVE_CHANGES\)/);
+  assert.match(source, /if \(closed !== true\)[^]*owned-project-close-refused/);
+  assert.match(source, /const postCloseOwnedProjectHash = await sha256/);
+  assert.match(source, /saved owned project drifted; temporary archive retained/);
   assert.match(source, /const RESULT_HARNESS_PROPERTIES = Object\.freeze/);
   assert.match(source, /JSON\.stringify\(RESULT_HARNESS_PROPERTIES\)/);
   assert.match(source, /readPaletteResultEvents\(client, \{ allowAbsent: true \}\)/);
@@ -122,7 +125,9 @@ test("owned event policy accepts product null request IDs only when explicitly e
 });
 
 test("formal target preflight accepts only file URLs resolving to the canonical production page", async () => {
-  const { verifyCanonicalTargetUrl } = await import("../scripts/run-live-ae-tests.mjs");
+  const { createTrackBPanelNavigation, verifyCanonicalTargetUrl } = await import(
+    "../scripts/run-live-ae-tests.mjs"
+  );
   const canonical = join(tmpdir(), "repo", "dist", "cep", "main", "index.html");
   const installed = join(
     tmpdir(),
@@ -137,6 +142,10 @@ test("formal target preflight accepts only file URLs resolving to the canonical 
     await verifyCanonicalTargetUrl(installedUrl, canonical, { realpathFn }),
     installedUrl,
   );
+  const navigation = createTrackBPanelNavigation(installedUrl, "run-token");
+  assert.equal(navigation.productionUrl, installedUrl);
+  assert.equal(new URL(navigation.developmentUrl).searchParams.get("track-b"), "run-token");
+  assert.equal(new URL(navigation.developmentUrl).pathname, new URL(installedUrl).pathname);
   const encodedInstalled = join(tmpdir(), "installed", "with?#mark", "index.html");
   const encodedCanonical = join(tmpdir(), "repo", "with?#mark", "index.html");
   const encodedUrl = pathToFileURL(encodedInstalled).href;
@@ -407,11 +416,19 @@ test("cleanup only applies current owned children and never removes the caller r
   await writeFile(join(outside, "sentinel"), "preserve\n");
   await symlink(outside, join(root, "symlink-child"));
   try {
-    const dry = await inspectCleanupRoots({ roots: [root], apply: false });
+    const dry = await inspectCleanupRoots({
+      roots: [root],
+      apply: false,
+      processAlive: () => false,
+    });
     assert.equal(dry.mutated, false);
     assert.equal(dry.candidates[0].candidate, owned.path);
     assert.ok(dry.refusals.some(({ reason }) => /missing|symlink|not a directory/.test(reason)));
-    const applied = await inspectCleanupRoots({ roots: [root], apply: true });
+    const applied = await inspectCleanupRoots({
+      roots: [root],
+      apply: true,
+      processAlive: () => false,
+    });
     assert.deepEqual(applied.removed, [owned.path]);
     assert.equal(applied.mutated, true);
     await assert.rejects(readFile(owned.markerPath));
@@ -421,4 +438,90 @@ test("cleanup only applies current owned children and never removes the caller r
     await rm(root, { recursive: true, force: true });
     await rm(outside, { recursive: true, force: true });
   }
+});
+
+test("cleanup apply refuses active owned runs until the age lease expires", async () => {
+  const { inspectCleanupRoots } = await import("../scripts/cleanup-live-test-residue.mjs");
+  const { createOwnedRunDirectory } = await import("../scripts/lib/live-runner-policy.mjs");
+  const root = await mkdtemp(join(tmpdir(), "chroma-relay-s5-active-cleanup-"));
+  const owned = await createOwnedRunDirectory(root, { tokenFactory: () => "active-owned-child" });
+  const marker = JSON.parse(await readFile(owned.markerPath, "utf8"));
+  const createdAt = Date.parse(marker.createdAt);
+  try {
+    const active = await inspectCleanupRoots({
+      roots: [root],
+      apply: true,
+      now: createdAt + 1_000,
+      minimumAgeMs: 60_000,
+      processAlive: () => true,
+    });
+    assert.deepEqual(active.removed, []);
+    assert.equal(active.mutated, false);
+    assert.match(active.refusals[0].reason, /active|grace period/);
+    await assert.doesNotReject(readFile(owned.markerPath));
+
+    const stale = await inspectCleanupRoots({
+      roots: [root],
+      apply: true,
+      now: createdAt + 60_001,
+      minimumAgeMs: 60_000,
+      processAlive: () => false,
+    });
+    assert.deepEqual(stale.removed, [owned.path]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("cleanup root filters discover current Track B topology without inspecting foreign temp children", async () => {
+  const { inspectCleanupRoots } = await import("../scripts/cleanup-live-test-residue.mjs");
+  const { createOwnedRunDirectory } = await import("../scripts/lib/live-runner-policy.mjs");
+  const root = await mkdtemp(join(tmpdir(), "chroma-relay-s5-topology-"));
+  const current = await createOwnedRunDirectory(root, {
+    tokenFactory: () => "chroma-relay-track-b-current",
+  });
+  const otherOwned = await createOwnedRunDirectory(root, {
+    tokenFactory: () => "other-owned-child",
+  });
+
+  try {
+    const roots = [{ path: root, prefix: "chroma-relay-track-b-" }];
+    const dry = await inspectCleanupRoots({ roots, apply: false, processAlive: () => false });
+    assert.deepEqual(dry.candidates.map(({ candidate }) => candidate), [current.path]);
+    assert.deepEqual(dry.refusals, []);
+    assert.deepEqual(dry.rootFilters, roots);
+
+    const applied = await inspectCleanupRoots({ roots, apply: true, processAlive: () => false });
+    assert.deepEqual(applied.removed, [current.path]);
+    await assert.rejects(readFile(current.markerPath));
+    await assert.doesNotReject(readFile(otherOwned.markerPath));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("default cleanup roots keep distinct private tmp scope Track-B-only", async () => {
+  const { buildDefaultCleanupRootSpecifications } = await import(
+    "../scripts/cleanup-live-test-residue.mjs"
+  );
+  const distinct = buildDefaultCleanupRootSpecifications({
+    canonicalTemporaryRoot: "/canonical/os/tmp",
+    evidenceRoot: "/evidence",
+    trackBTemporaryRoot: "/private/tmp",
+  });
+  assert.deepEqual(distinct, [
+    { path: "/evidence", prefix: "chroma-relay-track-b-" },
+    { path: "/private/tmp", prefix: "chroma-relay-track-b-" },
+    { path: "/canonical/os/tmp", prefix: "chroma-relay-" },
+  ]);
+
+  const shared = buildDefaultCleanupRootSpecifications({
+    canonicalTemporaryRoot: "/private/tmp",
+    evidenceRoot: "/evidence",
+    trackBTemporaryRoot: "/private/tmp",
+  });
+  assert.deepEqual(shared, [
+    { path: "/evidence", prefix: "chroma-relay-track-b-" },
+    { path: "/private/tmp", prefix: "chroma-relay-" },
+  ]);
 });

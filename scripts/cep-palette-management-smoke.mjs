@@ -2,18 +2,24 @@ import assert from "node:assert/strict";
 import { copyFile, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { CdpClient } from "./lib/cdp-client.mjs";
 import {
+  assertCanonicalRuntimeUrl,
   createOwnedRunDirectory,
   createOwnedTemporaryConfigDirectory,
+  guardClientEvaluations,
+  isDirectCliInvocation,
   parseRunnerArgs,
   removeOwnedRunDirectory,
+  restoreConfigRootWithReadback,
+  selectCanonicalCdpTarget,
 } from "./lib/live-runner-policy.mjs";
 import contract from "../src/shared/product-contract.json" with { type: "json" };
 import packageJson from "../package.json" with { type: "json" };
 
 const EXPECTED_BUILD_MARKER = `${contract.marker.current} · ${packageJson.version}`;
+const REPO_ROOT = fileURLToPath(new URL("../", import.meta.url));
 const REDESIGN_EVIDENCE_DIRECTORY = resolve("evidence/local/settings-ui-deep-redesign");
 const PORTS = { main: 8198, settings: 8199 };
 const EDITED_RGBA = [51 / 255, 102 / 255, 153 / 255, 128 / 255];
@@ -43,13 +49,14 @@ const connectPanel = async (page, register = () => {}) => {
   const response = await fetch(`http://127.0.0.1:${PORTS[page]}/json/list`);
   if (!response.ok) throw new Error(`${page}: target list returned ${response.status}`);
   const targets = await response.json();
-  const suffix = `/${page}/index.html`;
-  const matches = targets.filter(
-    (target) => target.type === "page" && new URL(target.url).pathname.endsWith(suffix)
+  const target = await selectCanonicalCdpTarget(
+    targets,
+    resolve(REPO_ROOT, "dist/cep", page, "index.html"),
+    { label: `${page} palette-management smoke` }
   );
-  assert.equal(matches.length, 1, `${page}: expected one exact target`);
-  const client = new CdpClient(matches[0].webSocketDebuggerUrl);
+  const client = new CdpClient(target.webSocketDebuggerUrl);
   client.page = page;
+  client.evaluationGuard = guardClientEvaluations(client, `${page} palette management`);
   register(client);
   await client.connect();
   return client;
@@ -91,12 +98,13 @@ const settle = (client) =>
     "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))"
   );
 
-const waitForDebug = async (client) => {
+const waitForDebug = async (client, evaluationGuard) => {
   for (let attempt = 0; attempt < 40; attempt += 1) {
     if (await client.evaluate("Boolean(window.__CHROMA_RELAY_DEBUG__)")) return;
     await wait(100);
   }
-  throw new Error(`${client.page}: debug API did not become ready`);
+  evaluationGuard?.quarantine();
+  throw new Error(`${client.page}: debug API did not become ready; renderer completion quarantined`);
 };
 
 const state = (client) => client.evaluate("window.__CHROMA_RELAY_DEBUG__.getState()");
@@ -118,6 +126,7 @@ const waitForRevision = async (clients, revision, label) => {
     }
     await wait(100);
   }
+  for (const client of clients) client.evaluationGuard?.quarantine();
   throw new Error(`${label}: panels did not converge on revision ${revision}`);
 };
 
@@ -242,12 +251,13 @@ const assertTemporaryRoots = async (clients, temporaryRoot) => {
 
 const readPaletteFile = async (palettePath) => JSON.parse(await readFile(palettePath, "utf8"));
 
-const waitFor = async (predicate, label) => {
+const waitFor = async (predicate, label, evaluationGuard) => {
   for (let attempt = 0; attempt < 50; attempt += 1) {
     if (await predicate()) return;
     await wait(100);
   }
-  throw new Error(`${label}: condition was not met`);
+  evaluationGuard?.quarantine();
+  throw new Error(`${label}: condition was not met; renderer completion quarantined`);
 };
 
 // Stub only the two native dialog methods; the button handlers, Node file
@@ -399,27 +409,55 @@ export const runPaletteManagementLifecycle = async ({
 };
 
 const run = async (outputDirectory) => {
-  const scratch = await createOwnedTemporaryConfigDirectory({ tokenPrefix: "chroma-relay-palette" });
-  const paths = pathsFor(scratch.path);
   await mkdir(outputDirectory, { recursive: true });
   await mkdir(REDESIGN_EVIDENCE_DIRECTORY, { recursive: true });
-  await writeFile(paths.palettePath, `${JSON.stringify(initialDocument, null, 2)}\n`);
+  const scratch = await createOwnedTemporaryConfigDirectory({ tokenPrefix: "chroma-relay-palette" });
+  const paths = pathsFor(scratch.path);
+  try {
+    await writeFile(paths.palettePath, `${JSON.stringify(initialDocument, null, 2)}\n`);
+  } catch (error) {
+    try { await removeOwnedRunDirectory(scratch); } catch {}
+    throw error;
+  }
 
-  let passed = false;
-  return runPaletteManagementLifecycle({
+  const originalConfigRoots = new Map();
+  const configMutationAttempted = new Set();
+  const configRestored = new Set();
+  const lifecycleResult = await runPaletteManagementLifecycle({
     acquireClient: (page, register) => connectPanel(page, register),
     execute: async ({ main, settings, clients }) => {
     await Promise.all(clients.map((client) => client.send("Runtime.enable")));
+    await Promise.all(clients.map((client) => waitForDebug(client, client.evaluationGuard)));
+    for (const client of clients) {
+      const baselineIdentity = await callDebug(client, "return api.getIdentity();");
+      await assertCanonicalRuntimeUrl(
+        baselineIdentity.url,
+        resolve(REPO_ROOT, "dist/cep", client.page, "index.html"),
+        { label: `${client.page} palette-management baseline runtime` }
+      );
+      assert.equal(baselineIdentity.extensionId, contract.product.panelIds[client.page]);
+      assert.equal(baselineIdentity.page, client.page);
+      assert.equal(baselineIdentity.buildMarker, EXPECTED_BUILD_MARKER);
+      originalConfigRoots.set(client.page, baselineIdentity.configRoot ?? null);
+    }
     await Promise.all(
       clients.map((client) => client.send("Page.reload", { ignoreCache: true }))
     );
     await wait(500);
-    await Promise.all(clients.map(waitForDebug));
+    await Promise.all(clients.map((client) => waitForDebug(client, client.evaluationGuard)));
 
     for (const client of clients) {
       const identity = await callDebug(client, "return api.getIdentity();");
+      await assertCanonicalRuntimeUrl(
+        identity.url,
+        resolve(REPO_ROOT, "dist/cep", client.page, "index.html"),
+        { label: `${client.page} palette-management runtime` }
+      );
+      assert.equal(identity.extensionId, contract.product.panelIds[client.page]);
       assert.equal(identity.page, client.page);
       assert.equal(identity.buildMarker, EXPECTED_BUILD_MARKER);
+      assert.equal(identity.configRoot ?? null, originalConfigRoots.get(client.page));
+      configMutationAttempted.add(client.page);
       await callDebug(client, "api.resetTestState(); return true;");
     }
     await Promise.all(clients.map(settle));
@@ -652,7 +690,11 @@ const run = async (outputDirectory) => {
     // revision, write, or event change.
     await setNextDialogPaths(settings, { save: paths.exportPath });
     await click(settings, "palette-export");
-    await waitFor(async () => existsSync(paths.exportPath), "export file");
+    await waitFor(
+      async () => existsSync(paths.exportPath),
+      "export file",
+      settings.evaluationGuard
+    );
     const exportedText = await readFile(paths.exportPath, "utf8");
     const expectedExport = `${JSON.stringify(
       {
@@ -807,35 +849,56 @@ const run = async (outputDirectory) => {
         "final-settings.png",
       ],
     };
-    await writeFile(resolve(outputDirectory, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
-    passed = true;
-    console.log(
-      JSON.stringify(
-        {
-          passed: true,
-          operations: report.operations,
-          revisions: paletteFile.revision,
-          writes: { main: mainCounters.diskWrites, settings: settingsCounters.diskWrites },
-          outputDirectory,
-        },
-        null,
-        2
-      )
-    );
+    return {
+      report,
+      summary: {
+        passed: true,
+        operations: report.operations,
+        revisions: paletteFile.revision,
+        writes: { main: mainCounters.diskWrites, settings: settingsCounters.diskWrites },
+        outputDirectory,
+      },
+    };
     },
     cleanupClient: async (client) => {
       const errors = [];
       if (client.connected && !client.closed) {
-        try {
-          if (client.page === "settings") {
-            await client.send("Emulation.clearDeviceMetricsOverride");
-            await restoreDialogStubs(client);
+        if (!client.evaluationGuard?.isCompletionKnown()) {
+          errors.push({
+            phase: "panel-state",
+            error: `${client.page} renderer completion is unknown; panel cleanup dispatch refused`,
+          });
+        } else {
+          try {
+            if (client.page === "settings") {
+              await client.send("Emulation.clearDeviceMetricsOverride");
+              await restoreDialogStubs(client);
+            }
+          } catch (error) {
+            errors.push({ phase: "panel-state", error: String(error?.stack || error) });
           }
-        } catch (error) {
-          errors.push({ phase: "panel-state", error: String(error?.stack || error) });
         }
         try {
-          await callDebug(client, "return api.setTemporaryConfigRoot(null);");
+          if (configMutationAttempted.has(client.page)) {
+            if (!client.evaluationGuard?.isCompletionKnown()) {
+              throw new Error(
+                `${client.page} renderer completion is unknown; config restoration dispatch refused`
+              );
+            }
+            await restoreConfigRootWithReadback({
+              expectedRoot: originalConfigRoots.get(client.page) ?? null,
+              setRoot: (root) => callDebug(
+                client,
+                `return api.setTemporaryConfigRoot(${JSON.stringify(root)});`
+              ),
+              settle: () => client.evaluate(
+                "new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))"
+              ),
+              readRoot: () => callDebug(client, "return api.getIdentity().configRoot;"),
+              label: `${client.page} palette-management config root`,
+            });
+            configRestored.add(client.page);
+          }
         } catch (error) {
           errors.push({ phase: "temporary-root", error: String(error?.stack || error) });
         }
@@ -857,9 +920,13 @@ const run = async (outputDirectory) => {
       if (preserveEvidence && existsSync(paths.palettePath)) {
         await copyFile(paths.palettePath, resolve(outputDirectory, "failure-palette.json"));
       }
-      if (!preserveEvidence && passed) {
-        await rm(resolve(outputDirectory, "failure.json"), { force: true });
-        await rm(resolve(outputDirectory, "failure-palette.json"), { force: true });
+      const unprovenPanels = [...configMutationAttempted].filter(
+        (page) => !configRestored.has(page)
+      );
+      if (unprovenPanels.length > 0) {
+        throw new Error(
+          `Preserving ${scratch.path}; config restoration unproven for ${unprovenPanels.join(", ")}`
+        );
       }
       await removeOwnedRunDirectory(scratch);
     },
@@ -882,6 +949,32 @@ const run = async (outputDirectory) => {
       );
     },
   });
+  try {
+    await rm(resolve(outputDirectory, "failure.json"), { force: true });
+    await rm(resolve(outputDirectory, "failure-palette.json"), { force: true });
+    await writeFile(
+      resolve(outputDirectory, "report.json"),
+      `${JSON.stringify(lifecycleResult.report, null, 2)}\n`
+    );
+  } catch (publicationError) {
+    const failureText = `${JSON.stringify({
+      passed: false,
+      status: "failed",
+      error: String(publicationError?.stack || publicationError),
+      capturedAt: new Date().toISOString(),
+    }, null, 2)}\n`;
+    const evidenceWriteErrors = [];
+    try { await rm(resolve(outputDirectory, "report.json"), { force: true }); } catch (error) {
+      evidenceWriteErrors.push({ phase: "failure-evidence:remove-report", error: String(error?.stack || error) });
+    }
+    try { await writeFile(resolve(outputDirectory, "failure.json"), failureText); } catch (error) {
+      evidenceWriteErrors.push({ phase: "failure-evidence:failure", error: String(error?.stack || error) });
+    }
+    if (evidenceWriteErrors.length > 0) publicationError.evidenceWriteErrors = evidenceWriteErrors;
+    throw publicationError;
+  }
+  console.log(JSON.stringify(lifecycleResult.summary, null, 2));
+  return lifecycleResult;
 };
 
 const cli = async () => {
@@ -891,9 +984,18 @@ const cli = async () => {
   return run(runDirectory.path);
 };
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+if (isDirectCliInvocation(import.meta.url)) {
   cli().catch((error) => {
-    console.error(error.stack || error.message);
+    console.error(error instanceof Error ? error.stack || error.message : error);
+    const evidenceDiagnostics = [
+      ...(Array.isArray(error?.evidenceWriteErrors) ? error.evidenceWriteErrors : []),
+      ...(Array.isArray(error?.cleanupErrors)
+        ? error.cleanupErrors.filter(({ phase }) => String(phase).startsWith("failure-evidence"))
+        : []),
+    ];
+    if (evidenceDiagnostics.length > 0) {
+      console.error(`Failure evidence publication also failed:\n${JSON.stringify(evidenceDiagnostics, null, 2)}`);
+    }
     process.exitCode = 1;
   });
 }

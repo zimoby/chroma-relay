@@ -7,10 +7,15 @@ import { fileURLToPath } from "node:url";
 import { pathToFileURL } from "node:url";
 import { CdpClient } from "./lib/cdp-client.mjs";
 import {
+  assertCanonicalRuntimeUrl,
   createOwnedRunDirectory,
   createOwnedTemporaryConfigDirectory,
+  guardClientEvaluations,
+  isDirectCliInvocation,
   parseRunnerArgs,
   removeOwnedRunDirectory,
+  restoreConfigRootWithReadback,
+  selectCanonicalCdpTarget,
 } from "./lib/live-runner-policy.mjs";
 import contract from "../src/shared/product-contract.json" with { type: "json" };
 import packageJson from "../package.json" with { type: "json" };
@@ -61,33 +66,35 @@ const targetPath = (target) => {
 export const pathMatchesPageSuffix = (path, pageSuffix) =>
   String(path).replaceAll("\\", "/").endsWith(pageSuffix);
 
-const selectTarget = (targets, panel) => {
-  const matches = targets.filter(
-    (target) => target.type === "page" && pathMatchesPageSuffix(targetPath(target), panel.pageSuffix)
-  );
-  if (matches.length !== 1) {
-    throw new Error(
-      `${panel.page} expected exactly one ${panel.pageSuffix} target on port ${panel.port}; found ${matches.length}`
-    );
-  }
-  if (!matches[0].webSocketDebuggerUrl) {
-    throw new Error(`${panel.page} target has no WebSocket debugger URL`);
-  }
-  return matches[0];
-};
+const selectTarget = (targets, panel, {
+  expectedPage = resolve(BUILD_ROOT, `${panel.page}/index.html`),
+  realpathFn,
+} = {}) =>
+  selectCanonicalCdpTarget(targets, expectedPage, {
+    label: `${panel.page} CDP ${panel.port}`,
+    ...(realpathFn ? { realpathFn } : {}),
+  });
 
-const assertIdentity = (identity, panel) => {
+const assertIdentity = async (
+  identity,
+  panel,
+  {
+    expectedPage = resolve(BUILD_ROOT, `${panel.page}/index.html`),
+    realpathFn,
+  } = {}
+) => {
   if (identity.extensionId !== panel.extensionId) {
     throw new Error(
       `${panel.page} runtime ID mismatch: expected ${panel.extensionId}, got ${identity.extensionId}`
     );
   }
-  if (
-    identity.page !== panel.page ||
-    !pathMatchesPageSuffix(targetPath({ url: identity.url }), panel.pageSuffix)
-  ) {
+  if (identity.page !== panel.page) {
     throw new Error(`${panel.page} runtime page identity mismatch`);
   }
+  await assertCanonicalRuntimeUrl(identity.url, expectedPage, {
+    label: `${panel.page} connected runtime`,
+    ...(realpathFn ? { realpathFn } : {}),
+  });
   if (identity.buildMarker !== EXPECTED_BUILD_MARKER) {
     throw new Error(`${panel.page} build marker mismatch: ${identity.buildMarker}`);
   }
@@ -117,12 +124,43 @@ const debugCall = (source) => `
   })()
 `;
 
-const waitForComplete = async (client) => {
+const waitForComplete = async (client, evaluationGuard) => {
   for (let attempt = 0; attempt < 50; attempt += 1) {
     if ((await client.evaluate("document.readyState")) === "complete") return;
     await delay(100);
   }
-  throw new Error("Panel document did not reach readyState=complete");
+  evaluationGuard?.quarantine();
+  throw new Error("Panel document did not reach readyState=complete; renderer completion quarantined");
+};
+
+const waitForMainHostAction = async (client, evaluationGuard) => {
+  let terminalState = null;
+  for (let attempt = 0; attempt < 100; attempt += 1) {
+    terminalState = await client.evaluate(
+      debugCall(`(api) => {
+        const state = api.getState();
+        return {
+          pendingHostAction: state.pendingHostAction,
+          pendingPaletteMutation: state.pendingPaletteMutation,
+          lastHostResult: state.lastHostResult,
+          hostCalls: api.getCounters().hostCalls,
+        };
+      }`)
+    );
+    if (
+      terminalState.pendingHostAction === null &&
+      terminalState.pendingPaletteMutation === false &&
+      terminalState.hostCalls === 1 &&
+      terminalState.lastHostResult !== null
+    ) {
+      return terminalState;
+    }
+    await delay(100);
+  }
+  evaluationGuard.quarantine();
+  throw new Error(
+    `Main visible-control host action completion is unknown: ${JSON.stringify(terminalState)}`
+  );
 };
 
 const afterRender = async (client) => {
@@ -179,17 +217,27 @@ export const createSettingsFlyoutProbeSource = (mainPanelId) => `
 `;
 
 const inspectPanel = async (panel, outputDirectory) => {
-  const scratch = await createOwnedTemporaryConfigDirectory({ tokenPrefix: `chroma-relay-${panel.page}` });
+  let scratch = null;
   let client;
   let target;
   let report = null;
   let primaryError = null;
+  let originalConfigRoot = null;
+  let configMutationAttempted = false;
+  let configRestored = false;
+  let evaluationGuard = null;
   const cleanupErrors = [];
+  const reportPath = resolve(outputDirectory, `${panel.page}.json`);
   const failurePath = resolve(outputDirectory, `${panel.page}-failure.json`);
+  await writeFile(
+    reportPath,
+    `${JSON.stringify({ passed: false, status: "running", panel, capturedAt: new Date().toISOString() }, null, 2)}\n`
+  );
 
   try {
+    scratch = await createOwnedTemporaryConfigDirectory({ tokenPrefix: `chroma-relay-${panel.page}` });
     const targets = await getTargets(panel.port);
-    target = selectTarget(targets, panel);
+    target = await selectTarget(targets, panel);
     client = new CdpClient(target.webSocketDebuggerUrl);
     await client.connect();
     await Promise.all([
@@ -197,13 +245,25 @@ const inspectPanel = async (panel, outputDirectory) => {
       client.send("Log.enable"),
       client.send("Page.enable"),
     ]);
+    evaluationGuard = guardClientEvaluations(client, `${panel.page} inspect`);
+    await waitForComplete(client, evaluationGuard);
+    const baselineIdentity = await client.evaluate(debugCall("(api) => api.getIdentity()"));
+    await assertIdentity(baselineIdentity, panel);
+    originalConfigRoot = baselineIdentity.configRoot ?? null;
     await client.send("Runtime.discardConsoleEntries");
     client.events = [];
     await client.send("Page.reload", { ignoreCache: true });
-    await waitForComplete(client);
+    await waitForComplete(client, evaluationGuard);
     await afterRender(client);
 
+    const initialIdentity = await client.evaluate(debugCall("(api) => api.getIdentity()"));
+    await assertIdentity(initialIdentity, panel);
+    if ((initialIdentity.configRoot ?? null) !== originalConfigRoot) {
+      throw new Error(`${panel.page} config root changed during authenticated reload`);
+    }
+
     const temporaryRoot = scratch.path;
+    configMutationAttempted = true;
     await client.evaluate(
       debugCall(`(api) => api.setTemporaryConfigRoot(${JSON.stringify(temporaryRoot)})`)
     );
@@ -252,6 +312,9 @@ const inspectPanel = async (panel, outputDirectory) => {
     if (clickResult !== true) {
       throw new Error(`${panel.page} visible-control click contract failed`);
     }
+    if (panel.page === "main") {
+      await waitForMainHostAction(client, evaluationGuard);
+    }
 
     await client.evaluate(debugCall("(api) => api.resetTestState()"));
     await afterRender(client);
@@ -271,7 +334,7 @@ const inspectPanel = async (panel, outputDirectory) => {
         bodyText: document.body.innerText.trim(),
       })`)
     );
-    assertIdentity(snapshot.identity, panel);
+    await assertIdentity(snapshot.identity, panel);
     if (snapshot.identity.configRoot !== temporaryRoot) {
       throw new Error(`${panel.page} temporary config-root seam did not hold`);
     }
@@ -313,10 +376,6 @@ const inspectPanel = async (panel, outputDirectory) => {
         productionConfigWrites: 0,
       },
     };
-    await writeFile(
-      resolve(outputDirectory, `${panel.page}.json`),
-      `${JSON.stringify(report, null, 2)}\n`
-    );
   } catch (error) {
     primaryError = error;
     const failure = {
@@ -326,7 +385,11 @@ const inspectPanel = async (panel, outputDirectory) => {
       error: error instanceof Error ? error.stack || error.message : String(error),
       consoleEvidence: client ? getConsoleEvidence(client.events) : null,
     };
-    await writeFile(failurePath, `${JSON.stringify(failure, null, 2)}\n`);
+    try {
+      await writeFile(failurePath, `${JSON.stringify(failure, null, 2)}\n`);
+    } catch (writeError) {
+      cleanupErrors.push({ phase: "failure-evidence", error: String(writeError?.stack || writeError) });
+    }
     if (client) {
       try {
         await captureScreenshot(client, resolve(outputDirectory, `${panel.page}-failure.png`));
@@ -335,60 +398,120 @@ const inspectPanel = async (panel, outputDirectory) => {
       }
     }
   } finally {
+    if (client && configMutationAttempted && evaluationGuard?.isCompletionKnown()) {
+      try {
+        await restoreConfigRootWithReadback({
+          expectedRoot: originalConfigRoot,
+          setRoot: (root) => client.evaluate(
+            debugCall(`(api) => api.setTemporaryConfigRoot(${JSON.stringify(root)})`)
+          ),
+          settle: () => afterRender(client),
+          readRoot: () => client.evaluate(debugCall("(api) => api.getIdentity().configRoot")),
+          label: `${panel.page} inspect config root`,
+        });
+        configRestored = true;
+      } catch (error) {
+        cleanupErrors.push({ phase: "restore-config", error: String(error?.stack || error) });
+      }
+    } else if (client && configMutationAttempted) {
+      cleanupErrors.push({
+        phase: "restore-config",
+        error: `${panel.page} renderer completion is unknown; restoration dispatch refused`,
+      });
+    }
     try {
       await client?.close();
     } catch (error) {
       cleanupErrors.push({ phase: "close", error: String(error?.stack || error) });
     }
-    try {
-      await removeOwnedRunDirectory(scratch);
-    } catch (error) {
-      cleanupErrors.push({ phase: "scratch", error: String(error?.stack || error) });
+    if (scratch && (!configMutationAttempted || configRestored)) {
+      try {
+        await removeOwnedRunDirectory(scratch);
+      } catch (error) {
+        cleanupErrors.push({ phase: "scratch", error: String(error?.stack || error) });
+      }
     }
   }
   if (primaryError || cleanupErrors.length > 0) {
-    await writeFile(
-      failurePath,
-      `${JSON.stringify(
-        {
-          capturedAt: new Date().toISOString(),
-          panel,
-          target,
-          error: primaryError ? primaryError.stack || primaryError.message : null,
-          cleanupErrors,
-          consoleEvidence: client ? getConsoleEvidence(client.events) : null,
-        },
-        null,
-        2
-      )}\n`
-    );
-    if (primaryError) throw primaryError;
+    const failureText = `${JSON.stringify(
+      {
+        capturedAt: new Date().toISOString(),
+        passed: false,
+        panel,
+        target,
+        error: primaryError ? primaryError.stack || primaryError.message : null,
+        cleanupErrors,
+        originalConfigRoot,
+        temporaryRoot: scratch?.path ?? null,
+        scratchPreserved: configMutationAttempted && !configRestored,
+        consoleEvidence: client ? getConsoleEvidence(client.events) : null,
+      },
+      null,
+      2
+    )}\n`;
+    for (const [phase, path] of [["report", reportPath], ["failure", failurePath]]) {
+      try { await writeFile(path, failureText); } catch (error) {
+        cleanupErrors.push({ phase: `failure-evidence:${phase}`, error: String(error?.stack || error) });
+      }
+    }
+    if (primaryError) {
+      if (cleanupErrors.length > 0) primaryError.cleanupErrors = cleanupErrors;
+      throw primaryError;
+    }
     throw new AggregateError(cleanupErrors.map(({ error }) => new Error(error)), "CDP inspect cleanup failed");
+  }
+  try {
+    await rm(failurePath, { force: true });
+    report.passed = true;
+    report.status = "passed";
+    report.ioPolicy.temporaryRootCreated = true;
+    report.ioPolicy.temporaryRootRemoved = true;
+    report.ioPolicy.configRestored = configRestored;
+    await writeFile(
+      reportPath,
+      `${JSON.stringify(report, null, 2)}\n`
+    );
+  } catch (publicationError) {
+    const failureText = `${JSON.stringify({ passed: false, panel, error: String(publicationError?.stack || publicationError) }, null, 2)}\n`;
+    const evidenceWriteErrors = [];
+    for (const [phase, path] of [["report", reportPath], ["failure", failurePath]]) {
+      try { await writeFile(path, failureText); } catch (error) {
+        evidenceWriteErrors.push({ phase: `failure-evidence:${phase}`, error: String(error?.stack || error) });
+      }
+    }
+    if (evidenceWriteErrors.length > 0) publicationError.evidenceWriteErrors = evidenceWriteErrors;
+    throw publicationError;
   }
   return report;
 };
 
-const expectFailure = (label, action) => {
+const expectFailure = async (label, action) => {
   try {
-    action();
+    await action();
   } catch {
     return label;
   }
   throw new Error(`${label} did not fail closed`);
 };
 
-const runSelfTest = () => {
+const runSelfTest = async () => {
   const panel = PANELS[0];
   const exact = {
     type: "page",
     url: pathToFileURL(resolve(tmpdir(), "example", ...panel.pageSuffix.split("/").filter(Boolean))).href,
     webSocketDebuggerUrl: "ws://example",
   };
+  const expectedPage = fileURLToPath(exact.url);
+  const selectionOptions = { expectedPage, realpathFn: async (path) => path };
   const passed = [
-    selectTarget([exact], panel) === exact ? "single exact target" : null,
-    expectFailure("wrong page", () => selectTarget([{ ...exact, url: "file:///tmp/stale.html" }], panel)),
-    expectFailure("duplicate exact pages", () => selectTarget([exact, { ...exact }], panel)),
-    expectFailure("wrong runtime ID", () =>
+    await selectTarget([exact], panel, selectionOptions) === exact ? "single exact target" : null,
+    await expectFailure("wrong page", () =>
+      selectTarget([{ ...exact, url: "file:///tmp/stale.html" }], panel, selectionOptions)
+    ),
+    await expectFailure("duplicate exact pages", () =>
+      selectTarget([exact, { ...exact }], panel, selectionOptions)
+    ),
+    await expectFailure("wrong runtime ID", () =>
       assertIdentity(
         {
           extensionId: "com.zimoby.chroma-relay.stale",
@@ -431,7 +554,12 @@ const runSettingsSmoke = async (outputDirectory) => {
   const scratch = await createOwnedTemporaryConfigDirectory({ tokenPrefix: "chroma-relay-settings-smoke" });
   const temporaryRoot = scratch.path;
   const clients = new Map();
+  const originalConfigRoots = new Map();
+  const configuredPanels = new Set();
+  const evaluationGuards = new Map();
   let primaryError = null;
+  let pendingReport = null;
+  let restorationFailed = false;
   const cleanupErrors = [];
   await mkdir(outputDirectory, { recursive: true });
   await writeFile(
@@ -457,7 +585,7 @@ const runSettingsSmoke = async (outputDirectory) => {
 
   try {
     for (const panel of PANELS) {
-      const target = selectTarget(await getTargets(panel.port), panel);
+      const target = await selectTarget(await getTargets(panel.port), panel);
       const client = new CdpClient(target.webSocketDebuggerUrl);
       clients.set(panel.page, client);
       await client.connect();
@@ -466,12 +594,23 @@ const runSettingsSmoke = async (outputDirectory) => {
         client.send("Log.enable"),
         client.send("Page.enable"),
       ]);
+      evaluationGuards.set(
+        panel.page,
+        guardClientEvaluations(client, `${panel.page} Settings smoke`)
+      );
+      await waitForComplete(client, evaluationGuards.get(panel.page));
+      const baselineIdentity = await client.evaluate(debugCall("(api) => api.getIdentity()"));
+      await assertIdentity(baselineIdentity, panel);
+      originalConfigRoots.set(panel.page, baselineIdentity.configRoot ?? null);
       client.events = [];
       await client.send("Page.reload", { ignoreCache: true });
-      await waitForComplete(client);
+      await waitForComplete(client, evaluationGuards.get(panel.page));
       await afterRender(client);
       const identity = await client.evaluate(debugCall("(api) => api.getIdentity()"));
-      assertIdentity(identity, panel);
+      await assertIdentity(identity, panel);
+      if ((identity.configRoot ?? null) !== originalConfigRoots.get(panel.page)) {
+        throw new Error(`${panel.page} config root changed during authenticated reload`);
+      }
     }
 
     const main = clients.get("main");
@@ -485,7 +624,8 @@ const runSettingsSmoke = async (outputDirectory) => {
     ) {
       throw new Error(`flyout launch targeted the wrong extension: ${JSON.stringify(flyoutLaunch)}`);
     }
-    for (const client of [main, settings]) {
+    for (const [page, client] of [["main", main], ["settings", settings]]) {
+      configuredPanels.add(page);
       await client.evaluate(
         debugCall(`(api) => api.setTemporaryConfigRoot(${JSON.stringify(temporaryRoot)})`)
       );
@@ -724,10 +864,20 @@ const runSettingsSmoke = async (outputDirectory) => {
       throw new Error("settings.json did not contain the expected revision-4 Fixed/Tonal snapshot");
     }
 
-    for (const client of [main, settings]) {
+    for (const panel of PANELS) {
+      const client = clients.get(panel.page);
+      const preReloadIdentity = await client.evaluate(debugCall("(api) => api.getIdentity()"));
+      await assertIdentity(preReloadIdentity, panel);
+      if (preReloadIdentity.configRoot !== temporaryRoot) {
+        throw new Error(
+          `${panel.page} pre-reload config root drift: ${JSON.stringify(preReloadIdentity.configRoot)}`
+        );
+      }
       await client.send("Page.reload", { ignoreCache: true });
-      await waitForComplete(client);
+      await waitForComplete(client, evaluationGuards.get(panel.page));
       await afterRender(client);
+      const identity = await client.evaluate(debugCall("(api) => api.getIdentity()"));
+      await assertIdentity(identity, panel);
       await client.evaluate(
         debugCall(`(api) => api.setTemporaryConfigRoot(${JSON.stringify(temporaryRoot)})`)
       );
@@ -797,7 +947,7 @@ const runSettingsSmoke = async (outputDirectory) => {
       }
     }
 
-    const report = {
+    pendingReport = {
       capturedAt: new Date().toISOString(),
       passed: true,
       temporaryRoot,
@@ -814,27 +964,47 @@ const runSettingsSmoke = async (outputDirectory) => {
       consoleEvidence,
       screenshots: ["main-fixed-40.png", "settings-fixed-40.png"],
     };
-    await writeFile(resolve(outputDirectory, "report.json"), `${JSON.stringify(report, null, 2)}\n`);
-    console.log(JSON.stringify({ passed: true, outputDirectory, stored }, null, 2));
   } catch (error) {
     primaryError = error;
   } finally {
-    for (const client of clients.values()) {
+    for (const [page, client] of clients.entries()) {
       try {
-        await client.evaluate(debugCall("(api) => api.setTemporaryConfigRoot(null)"));
-      } catch {
-        // Cleanup continues even if a panel closed during the run.
+        if (configuredPanels.has(page) && evaluationGuards.get(page)?.isCompletionKnown()) {
+          await restoreConfigRootWithReadback({
+            expectedRoot: originalConfigRoots.get(page) ?? null,
+            setRoot: (root) => client.evaluate(
+              debugCall(`(api) => api.setTemporaryConfigRoot(${JSON.stringify(root)})`)
+            ),
+            settle: () => afterRender(client),
+            readRoot: () => client.evaluate(debugCall("(api) => api.getIdentity().configRoot")),
+            label: `${page} Settings smoke config root`,
+          });
+        } else if (configuredPanels.has(page)) {
+          restorationFailed = true;
+          cleanupErrors.push({
+            phase: `restore-config:${page}`,
+            error: `${page} renderer completion is unknown; restoration dispatch refused`,
+          });
+        }
+      } catch (error) {
+        restorationFailed = true;
+        cleanupErrors.push({
+          phase: `restore-config:${page}`,
+          error: String(error?.stack || error),
+        });
       }
       try {
         await client.close();
       } catch (error) {
-        cleanupErrors.push({ phase: `close:${client.page || "panel"}`, error: String(error?.stack || error) });
+        cleanupErrors.push({ phase: `close:${page}`, error: String(error?.stack || error) });
       }
     }
-    try {
-      await removeOwnedRunDirectory(scratch);
-    } catch (error) {
-      cleanupErrors.push({ phase: "scratch", error: String(error?.stack || error) });
+    if (!restorationFailed) {
+      try {
+        await removeOwnedRunDirectory(scratch);
+      } catch (error) {
+        cleanupErrors.push({ phase: "scratch", error: String(error?.stack || error) });
+      }
     }
   }
   if (primaryError || cleanupErrors.length > 0) {
@@ -842,16 +1012,51 @@ const runSettingsSmoke = async (outputDirectory) => {
       capturedAt: new Date().toISOString(),
       passed: false,
       temporaryRoot,
+      scratchPreserved: restorationFailed,
       error: primaryError ? primaryError.stack || primaryError.message : null,
       cleanupErrors,
       consoleEvidence: Object.fromEntries(
         [...clients.entries()].map(([page, client]) => [page, getConsoleEvidence(client.events)])
       ),
     };
-    await writeFile(resolve(outputDirectory, "failure.json"), `${JSON.stringify(failure, null, 2)}\n`);
-    if (primaryError) throw primaryError;
+    const failureText = `${JSON.stringify(failure, null, 2)}\n`;
+    for (const file of ["report.json", "failure.json"]) {
+      try {
+        await writeFile(resolve(outputDirectory, file), failureText);
+      } catch (error) {
+        cleanupErrors.push({ phase: `failure-evidence:${file}`, error: String(error?.stack || error) });
+      }
+    }
+    if (primaryError) {
+      if (cleanupErrors.length > 0) primaryError.cleanupErrors = cleanupErrors;
+      throw primaryError;
+    }
     throw new AggregateError(cleanupErrors.map(({ error }) => new Error(error)), "CDP settings cleanup failed");
   }
+  try {
+    await writeFile(
+      resolve(outputDirectory, "report.json"),
+      `${JSON.stringify(pendingReport, null, 2)}\n`
+    );
+  } catch (publicationError) {
+    const failure = {
+      capturedAt: new Date().toISOString(),
+      passed: false,
+      temporaryRoot,
+      error: publicationError.stack || publicationError.message,
+      cleanupErrors: [],
+    };
+    const failureText = `${JSON.stringify(failure, null, 2)}\n`;
+    const evidenceWriteErrors = [];
+    for (const file of ["report.json", "failure.json"]) {
+      try { await writeFile(resolve(outputDirectory, file), failureText); } catch (error) {
+        evidenceWriteErrors.push({ phase: `failure-evidence:${file}`, error: String(error?.stack || error) });
+      }
+    }
+    if (evidenceWriteErrors.length > 0) publicationError.evidenceWriteErrors = evidenceWriteErrors;
+    throw publicationError;
+  }
+  console.log(JSON.stringify({ passed: true, outputDirectory, stored: pendingReport.stored }, null, 2));
 };
 
 const main = async () => {
@@ -867,9 +1072,18 @@ const main = async () => {
   return runSettingsSmoke(run.path);
 };
 
-if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+if (isDirectCliInvocation(import.meta.url)) {
   main().catch((error) => {
     console.error(error instanceof Error ? error.stack || error.message : error);
+    const evidenceDiagnostics = [
+      ...(Array.isArray(error?.evidenceWriteErrors) ? error.evidenceWriteErrors : []),
+      ...(Array.isArray(error?.cleanupErrors)
+        ? error.cleanupErrors.filter(({ phase }) => String(phase).startsWith("failure-evidence:"))
+        : []),
+    ];
+    if (evidenceDiagnostics.length > 0) {
+      console.error(`Failure evidence publication also failed:\n${JSON.stringify(evidenceDiagnostics, null, 2)}`);
+    }
     process.exitCode = 1;
   });
 }
