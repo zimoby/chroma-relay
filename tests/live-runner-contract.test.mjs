@@ -1522,7 +1522,7 @@ test("CDP inspect authenticates before mutation and publishes only after exact c
   const closeIndex = source.indexOf("await client?.close()", restoreIndex);
   const removeIndex = source.indexOf("await removeOwnedRunDirectory(scratch)", closeIndex);
   const passIndex = source.indexOf("report.passed = true", removeIndex);
-  const publishIndex = source.indexOf("await writeFile(\n      reportPath", passIndex);
+  const publishIndex = source.indexOf("reportPath,", passIndex);
   assert.ok(runningIndex < allocationIndex);
   assert.ok(allocationIndex < identityIndex && identityIndex < latchIndex && latchIndex < mutateIndex);
   assert.ok(mutateIndex < restoreIndex && restoreIndex < closeIndex && closeIndex < removeIndex);
