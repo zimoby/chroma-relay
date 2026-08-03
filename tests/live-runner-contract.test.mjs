@@ -153,7 +153,8 @@ const analyzeFunctionalSmokeClosedWorld = (source, { requireExactSource = true }
     ts.ScriptKind.JS,
   );
   const errors = [];
-  const actualSourceSha256 = createHash("sha256").update(source).digest("hex");
+  const canonicalSource = source.replaceAll("\r\n", "\n");
+  const actualSourceSha256 = createHash("sha256").update(canonicalSource).digest("hex");
   if (requireExactSource && actualSourceSha256 !== EXPECTED_FUNCTIONAL_SMOKE_SOURCE_SHA256) {
     errors.push(
       `functional-source-fingerprint:expected-${EXPECTED_FUNCTIONAL_SMOKE_SOURCE_SHA256}:actual-${actualSourceSha256}`,
@@ -2569,6 +2570,10 @@ test("functional smoke production paths satisfy AST-backed closed-world mutation
     "utf8",
   );
   assert.deepEqual(analyzeFunctionalSmokeClosedWorld(functionalSource), []);
+  assert.deepEqual(
+    analyzeFunctionalSmokeClosedWorld(functionalSource.replaceAll("\n", "\r\n")),
+    [],
+  );
 
   const afterValidCopy = (insertion) => functionalSource.replace(
     "      await writeFile(corruptPath, pngBytes);",
