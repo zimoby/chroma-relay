@@ -2565,10 +2565,9 @@ test("functional smoke reads current palette documents and wrapped color-selecti
 });
 
 test("functional smoke production paths satisfy AST-backed closed-world mutation contracts", async () => {
-  const functionalSource = await readFile(
-    new URL("../scripts/cep-functional-smoke.mjs", import.meta.url),
-    "utf8",
-  );
+  const functionalSource = (
+    await readFile(new URL("../scripts/cep-functional-smoke.mjs", import.meta.url), "utf8")
+  ).replaceAll("\r\n", "\n");
   assert.deepEqual(analyzeFunctionalSmokeClosedWorld(functionalSource), []);
   const lfFunctionalSource = functionalSource.replaceAll("\r\n", "\n");
   assert.deepEqual(
