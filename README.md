@@ -64,13 +64,16 @@ Restart or refresh After Effects, then open **Window → Extensions → Chroma R
 
 | Command | Purpose |
 |---|---|
-| `npm run build` | Clean production build through Bolt/Vite. |
+| `npm run build` | Clean production build through the isolated Bolt/Vite wrapper; the plugin’s local CEP link is redirected into an owned temporary home and the real installed link is checked for drift. |
+| `npm run build:compile` | Internal raw compiler invoked only by the isolated `build` wrapper. |
 | `npm run build:dev` / `npm run watch` | Debug build or watch mode. |
 | `npm run verify:static` | Canonical build, tests, contracts, and CEP scan. |
 | `npm run zxp` | Build the signed ZXP through Bolt CEP. |
 | `npm run zip` | Build Bolt's signed ZXP meta-package ZIP. |
 
 Development loads `dist/cep` through the Bolt symlink. Generated `dist/` output is not durable evidence and must not be committed.
+
+The standard `npm run build` is safe to run from an isolated worktree. Commands that explicitly operate on the installed CEP state—`build:dev`, `watch`, `symlink`, `delsymlink`, `zxp`, and `zip`—remain separate installed-state or release operations.
 
 ## Live validation
 

@@ -24,7 +24,9 @@ test("one static command covers build, product tests, runner contracts, and CEP 
     "npm run test:native-gradient",
     "npm run test:runner-contract",
     "npm run test:release-contract",
+    "npm run test:cep-testkit",
     "npm run check:cep",
+    "npm run check:cep-testkit",
   ]) {
     assert.ok(verify.includes(command), `verify:static must include ${command}`);
   }
@@ -33,11 +35,17 @@ test("one static command covers build, product tests, runner contracts, and CEP 
 test("build and package scripts use one Bolt Vite pipeline", async () => {
   const packageJson = JSON.parse(await readText("../package.json"));
   const viteConfig = await readText("../vite.config.ts");
+  const isolatedBuild = await readText("../scripts/build-isolated.mjs");
 
   assert.equal(
     packageJson.scripts.build,
-    'rimraf dist && tsc -p "tsconfig-build.json" && vite build --watch false'
+    "node scripts/build-isolated.mjs",
   );
+  assert.equal(
+    packageJson.scripts["build:compile"],
+    'rimraf dist && tsc -p "tsconfig-build.json" && vite build --watch false',
+  );
+  assert.match(isolatedBuild, /runIsolatedBuild/);
   assert.match(packageJson.scripts["build:dev"], /^rimraf dist && /);
   assert.equal(packageJson.scripts["package:alpha"], undefined);
   assert.match(packageJson.scripts.zxp, /^rimraf dist && .*ZXP_PACKAGE=true vite build --watch false/);
