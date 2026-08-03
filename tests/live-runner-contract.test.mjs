@@ -2570,8 +2570,9 @@ test("functional smoke production paths satisfy AST-backed closed-world mutation
     "utf8",
   );
   assert.deepEqual(analyzeFunctionalSmokeClosedWorld(functionalSource), []);
+  const lfFunctionalSource = functionalSource.replaceAll("\r\n", "\n");
   assert.deepEqual(
-    analyzeFunctionalSmokeClosedWorld(functionalSource.replaceAll("\n", "\r\n")),
+    analyzeFunctionalSmokeClosedWorld(lfFunctionalSource.replaceAll("\n", "\r\n")),
     [],
   );
 
