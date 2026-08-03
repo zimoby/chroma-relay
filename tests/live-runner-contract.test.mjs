@@ -144,7 +144,8 @@ const propertyInitializerUse = (identifier, propertyName) =>
 const EXPECTED_FUNCTIONAL_SMOKE_SOURCE_SHA256 =
   "3db743d187b959fb75310dcac0573b9f7790bab9b17fa0c005dfb39ddaae346b";
 
-const analyzeFunctionalSmokeClosedWorld = (source, { requireExactSource = true } = {}) => {
+const analyzeFunctionalSmokeClosedWorld = (inputSource, { requireExactSource = true } = {}) => {
+  const source = inputSource.replaceAll("\r\n", "\n");
   const sourceFile = ts.createSourceFile(
     "cep-functional-smoke.mjs",
     source,
@@ -153,8 +154,7 @@ const analyzeFunctionalSmokeClosedWorld = (source, { requireExactSource = true }
     ts.ScriptKind.JS,
   );
   const errors = [];
-  const canonicalSource = source.replaceAll("\r\n", "\n");
-  const actualSourceSha256 = createHash("sha256").update(canonicalSource).digest("hex");
+  const actualSourceSha256 = createHash("sha256").update(source).digest("hex");
   if (requireExactSource && actualSourceSha256 !== EXPECTED_FUNCTIONAL_SMOKE_SOURCE_SHA256) {
     errors.push(
       `functional-source-fingerprint:expected-${EXPECTED_FUNCTIONAL_SMOKE_SOURCE_SHA256}:actual-${actualSourceSha256}`,
