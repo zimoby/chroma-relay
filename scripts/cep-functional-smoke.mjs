@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { Buffer } from "node:buffer";
+import { createHash } from "node:crypto";
 import { mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -98,6 +100,236 @@ export const activePaletteItems = (document) => {
 };
 export const colorSelectionResult = (lastHostResult) =>
   lastHostResult?.selection?.colors ?? lastHostResult;
+export const validateImageSelectionOwnedTopology = (items, setupResult) => {
+  const ownedTopology = setupResult?.ownedTopology;
+  if (!Array.isArray(items) || !Array.isArray(ownedTopology) || ownedTopology.length !== items.length) {
+    throw new Error(
+      `Owned image fixture same-dispatch topology capture failed: ${JSON.stringify(setupResult)}`
+    );
+  }
+  const validDescriptor = (descriptor) =>
+    Number.isInteger(descriptor?.id) &&
+    descriptor.id > 0 &&
+    typeof descriptor.name === "string" &&
+    descriptor.name.length > 0 &&
+    (descriptor.kind === "comp" || descriptor.kind === "footage");
+  for (let index = 0; index < items.length; index += 1) {
+    const item = items[index];
+    const topology = ownedTopology[index];
+    if (
+      !validDescriptor(item) ||
+      !validDescriptor(topology) ||
+      topology.id !== item.id ||
+      topology.name !== item.name ||
+      topology.kind !== item.kind
+    ) {
+      throw new Error(
+        `Owned image fixture topology descriptor drifted: ${JSON.stringify({ item, topology })}`
+      );
+    }
+  }
+  return ownedTopology;
+};
+export const captureImageSelectionOwnedTopology = (capturedTopology, items, setupResult) => {
+  if (!Array.isArray(capturedTopology)) {
+    throw new Error("Owned image fixture topology capture target is unavailable");
+  }
+  capturedTopology.push(...validateImageSelectionOwnedTopology(items, setupResult));
+  return capturedTopology;
+};
+const imageSourceSha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
+export const createFunctionalSmokeDiagnosticState = () => ({
+  cleanupErrors: [],
+  evidenceWriteErrors: [],
+});
+const FUNCTIONAL_SMOKE_CLI_DIAGNOSTIC_LIMIT = 16;
+const FUNCTIONAL_SMOKE_DIAGNOSTIC_TEXT_LIMIT = 4096;
+const functionalSmokeErrorText = (value, undefinedPlaceholder = "undefined") => {
+  const primitiveText = (candidate, missingPlaceholder) => {
+    switch (typeof candidate) {
+      case "undefined":
+        return missingPlaceholder;
+      case "string":
+        return candidate;
+      case "boolean":
+      case "number":
+      case "bigint":
+        return String(candidate);
+      case "symbol":
+        return "<symbol>";
+      default:
+        return null;
+    }
+  };
+
+  let text = primitiveText(value, undefinedPlaceholder);
+  if (text === null) {
+    if (value === null) {
+      text = "null";
+    } else {
+      let isError = false;
+      try {
+        isError = value instanceof Error;
+      } catch {
+        isError = false;
+      }
+      if (isError) {
+        let stack;
+        let message;
+        let stackReadable = false;
+        let messageReadable = false;
+        try {
+          stack = value.stack;
+          stackReadable = true;
+        } catch {}
+        try {
+          message = value.message;
+          messageReadable = true;
+        } catch {}
+        const safeErrorFieldText = (candidate, readable) =>
+          readable && ["string", "boolean", "number", "bigint"].includes(typeof candidate)
+            ? primitiveText(candidate, undefinedPlaceholder)
+            : null;
+        const stackText = safeErrorFieldText(stack, stackReadable);
+        const messageText = safeErrorFieldText(message, messageReadable);
+        text = stackText
+          ? stackText
+          : messageText
+            ? messageText
+            : "<error>";
+      } else {
+        text = typeof value === "function" ? "<function>" : "<object>";
+      }
+    }
+  }
+  return text.length <= FUNCTIONAL_SMOKE_DIAGNOSTIC_TEXT_LIMIT
+    ? text
+    : `${text.slice(0, FUNCTIONAL_SMOKE_DIAGNOSTIC_TEXT_LIMIT - 1)}…`;
+};
+const appendFunctionalSmokeDiagnostic = (ledger, phase, error) => {
+  ledger.push({ phase, error: functionalSmokeErrorText(error) });
+};
+export const importFunctionalSmokeErrorDiagnostics = (error, diagnosticState) => {
+  if (
+    error === null ||
+    (typeof error !== "object" && typeof error !== "function")
+  ) {
+    return;
+  }
+  for (const ledgerName of ["cleanupErrors", "evidenceWriteErrors"]) {
+    try {
+      const source = error[ledgerName];
+      const target = diagnosticState[ledgerName];
+      if (!Array.isArray(source) || !Array.isArray(target) || source === target) continue;
+      const sourceEntries = Array.from(source);
+      for (const diagnostic of sourceEntries) {
+        if (!target.includes(diagnostic)) target.push(diagnostic);
+      }
+    } catch {
+      // Hostile diagnostics must not replace or obscure the caught primary.
+    }
+  }
+};
+const attachFunctionalSmokeDiagnosticCompatibility = (error, diagnosticState) => {
+  if (
+    error === null ||
+    (typeof error !== "object" && typeof error !== "function")
+  ) {
+    return;
+  }
+  try {
+    error.cleanupErrors = diagnosticState.cleanupErrors;
+    error.evidenceWriteErrors = diagnosticState.evidenceWriteErrors;
+  } catch {
+    // The explicit run-scoped state remains authoritative for frozen errors.
+  }
+};
+export const isFunctionalSmokeRuntimeCompletionKnown = (runtimeEvaluationGuard) => {
+  try {
+    return (
+      typeof runtimeEvaluationGuard?.isCompletionKnown === "function" &&
+      runtimeEvaluationGuard.isCompletionKnown() === true
+    );
+  } catch {
+    return false;
+  }
+};
+export const runCorruptImageSelectionCase = async ({
+  corruptPath,
+  validBytes,
+  corruptBytes = Buffer.from("not a valid PNG"),
+  runProductCase,
+  validateProductResult,
+  hasRestoreAuthority,
+  diagnosticState = createFunctionalSmokeDiagnosticState(),
+  onRestoreVerified = async () => undefined,
+  writeSource = writeFile,
+  readSource = readFile,
+}) => {
+  const expectedBytes = Buffer.from(validBytes);
+  let result;
+  let restoreAuthorityKnown = false;
+  let primaryError;
+  let hasPrimaryError = false;
+  let restoration = null;
+  let restorationError = null;
+
+  try {
+    await writeSource(corruptPath, corruptBytes);
+    result = await runProductCase();
+    await validateProductResult(result);
+  } catch (error) {
+    primaryError = error;
+    hasPrimaryError = true;
+    importFunctionalSmokeErrorDiagnostics(error, diagnosticState);
+  }
+
+  try {
+    restoreAuthorityKnown = hasRestoreAuthority() === true;
+  } catch {}
+  if (!restoreAuthorityKnown) {
+    restorationError = new Error(
+      "Product completion is unknown; corrupt image source restoration refused"
+    );
+  } else {
+    try {
+      await writeSource(corruptPath, expectedBytes);
+      const restoredBytes = Buffer.from(await readSource(corruptPath));
+      const expectedSha256 = imageSourceSha256(expectedBytes);
+      const actualSha256 = imageSourceSha256(restoredBytes);
+      if (!restoredBytes.equals(expectedBytes) || actualSha256 !== expectedSha256) {
+        throw new Error(
+          `Corrupt image source restoration readback failed: ${JSON.stringify({
+            path: corruptPath,
+            expectedSha256,
+            actualSha256,
+          })}`
+        );
+      }
+      restoration = { restored: true, path: corruptPath, sha256: actualSha256 };
+      await onRestoreVerified(restoration);
+    } catch (error) {
+      restorationError = error;
+    }
+  }
+
+  if (restorationError !== null) {
+    appendFunctionalSmokeDiagnostic(
+      diagnosticState.cleanupErrors,
+      "corrupt-image-source-restoration",
+      restorationError,
+    );
+  }
+  if (hasPrimaryError) {
+    attachFunctionalSmokeDiagnosticCompatibility(primaryError, diagnosticState);
+    throw primaryError;
+  }
+  if (restorationError !== null) {
+    attachFunctionalSmokeDiagnosticCompatibility(restorationError, diagnosticState);
+    throw restorationError;
+  }
+  return { result, restoration };
+};
 const IMAGE_FIXTURES = ["png", "jpg"].map((format) => ({
   format,
   path: resolve(REPO_ROOT, `tests/fixtures/image-extraction/fixture.${format}`),
@@ -957,42 +1189,145 @@ const getConsoleEvidence = (events) => ({
     .map((event) => event.params.entry),
 });
 
+const snapshotFunctionalSmokeDiagnosticField = (diagnostic, field) => {
+  if (
+    diagnostic === null ||
+    (typeof diagnostic !== "object" && typeof diagnostic !== "function")
+  ) {
+    return `<missing-${field}>`;
+  }
+  let value;
+  try {
+    value = diagnostic[field];
+  } catch {
+    return `<unreadable-${field}>`;
+  }
+  return functionalSmokeErrorText(value, `<missing-${field}>`);
+};
+export const snapshotFunctionalSmokeDiagnostics = (diagnostics) => {
+  try {
+    if (!Array.isArray(diagnostics)) return Object.freeze([]);
+  } catch {
+    return Object.freeze([]);
+  }
+  let length;
+  try {
+    length = diagnostics.length;
+  } catch {
+    return Object.freeze([]);
+  }
+  if (!Number.isInteger(length) || length < 0) return Object.freeze([]);
+  const snapshot = [];
+  const boundedLength = Math.min(length, FUNCTIONAL_SMOKE_CLI_DIAGNOSTIC_LIMIT);
+  for (let index = 0; index < boundedLength; index += 1) {
+    let diagnostic;
+    try {
+      diagnostic = diagnostics[index];
+    } catch {
+      snapshot.push(Object.freeze({
+        phase: "<unreadable-phase>",
+        error: "<unreadable-error>",
+      }));
+      continue;
+    }
+    snapshot.push(Object.freeze({
+      phase: snapshotFunctionalSmokeDiagnosticField(diagnostic, "phase"),
+      error: snapshotFunctionalSmokeDiagnosticField(diagnostic, "error"),
+    }));
+  }
+  return Object.freeze(snapshot);
+};
+const snapshotFunctionalSmokeDiagnosticLedger = (diagnosticState, ledgerName) => {
+  try {
+    return snapshotFunctionalSmokeDiagnostics(diagnosticState?.[ledgerName]);
+  } catch {
+    return Object.freeze([]);
+  }
+};
+export const formatFunctionalSmokeCliDiagnostics = (diagnosticState) => {
+  const cleanupErrors = snapshotFunctionalSmokeDiagnosticLedger(
+    diagnosticState,
+    "cleanupErrors",
+  );
+  const evidenceWriteErrors = snapshotFunctionalSmokeDiagnosticLedger(
+    diagnosticState,
+    "evidenceWriteErrors",
+  );
+  if (cleanupErrors.length === 0 && evidenceWriteErrors.length === 0) return null;
+  return JSON.stringify({
+    kind: "functional-smoke-finalization-diagnostics",
+    cleanupErrors,
+    evidenceWriteErrors,
+  });
+};
+export const printFunctionalSmokeCliError = (
+  error,
+  diagnosticState,
+  writeError = (message) => console.error(message)
+) => {
+  writeError(functionalSmokeErrorText(error));
+  const diagnostics = formatFunctionalSmokeCliDiagnostics(diagnosticState);
+  if (diagnostics) writeError(diagnostics);
+};
+
 export const finalizeFunctionalSmoke = async ({
-  primaryError = null,
+  primaryError,
+  hasPrimaryError,
+  diagnosticState = createFunctionalSmokeDiagnosticState(),
+  initialCleanupErrors = [],
   cleanupSteps = [],
   publishSuccess,
   writeFailure,
 }) => {
-  const cleanupErrors = [];
+  let primaryPresent = hasPrimaryError === undefined
+    ? primaryError !== undefined && primaryError !== null
+    : hasPrimaryError === true;
+  if (primaryPresent) {
+    importFunctionalSmokeErrorDiagnostics(primaryError, diagnosticState);
+  }
+  for (const diagnostic of initialCleanupErrors) {
+    if (!diagnosticState.cleanupErrors.includes(diagnostic)) {
+      diagnosticState.cleanupErrors.push(diagnostic);
+    }
+  }
   for (const { phase, run: cleanup } of cleanupSteps) {
     try {
       await cleanup();
     } catch (error) {
-      cleanupErrors.push({ phase, error: String(error?.stack || error) });
+      importFunctionalSmokeErrorDiagnostics(error, diagnosticState);
+      appendFunctionalSmokeDiagnostic(diagnosticState.cleanupErrors, phase, error);
     }
   }
-  if (!primaryError && cleanupErrors.length === 0) {
+  if (!primaryPresent && diagnosticState.cleanupErrors.length === 0) {
     try {
       await publishSuccess();
       return;
     } catch (error) {
+      importFunctionalSmokeErrorDiagnostics(error, diagnosticState);
       primaryError = error;
+      primaryPresent = true;
     }
   }
   try {
-    await writeFailure({ primaryError, cleanupErrors });
+    await writeFailure({
+      primaryError,
+      hasPrimaryError: primaryPresent,
+      cleanupErrors: diagnosticState.cleanupErrors,
+      evidenceWriteErrors: diagnosticState.evidenceWriteErrors,
+      diagnosticState,
+    });
   } catch (error) {
-    cleanupErrors.push({ phase: "write-failure", error: String(error?.stack || error) });
+    importFunctionalSmokeErrorDiagnostics(error, diagnosticState);
+    appendFunctionalSmokeDiagnostic(diagnosticState.cleanupErrors, "write-failure", error);
   }
 
-  if (primaryError) {
-    if (cleanupErrors.length > 0 && (typeof primaryError === "object" || typeof primaryError === "function")) {
-      try { primaryError.cleanupErrors = cleanupErrors; } catch {}
-    }
+  if (primaryPresent) {
+    attachFunctionalSmokeDiagnosticCompatibility(primaryError, diagnosticState);
     throw primaryError;
   }
   throw new AggregateError(
-    cleanupErrors.map(({ error }) => new Error(error)),
+    snapshotFunctionalSmokeDiagnosticLedger(diagnosticState, "cleanupErrors")
+      .map(({ error }) => new Error(error)),
     "Functional smoke cleanup failed"
   );
 };
@@ -1014,7 +1349,93 @@ export const replaceFunctionalSmokeReport = async ({
   }
 };
 
-const run = async () => {
+export const publishFunctionalSmokeFailure = async ({
+  reportPath,
+  pendingReportPath,
+  failurePath,
+  mode,
+  runId,
+  primaryError,
+  hasPrimaryError,
+  diagnosticState,
+  replaceReport = replaceFunctionalSmokeReport,
+  writeFailureFile = writeFile,
+  getFailureConsoleEvidence = () => null,
+  now = () => new Date().toISOString(),
+}) => {
+  const error = hasPrimaryError ? functionalSmokeErrorText(primaryError) : null;
+  const failureRecord = (includeConsoleEvidence) => {
+    const cleanupErrors = snapshotFunctionalSmokeDiagnosticLedger(
+      diagnosticState,
+      "cleanupErrors",
+    );
+    const evidenceWriteErrors = snapshotFunctionalSmokeDiagnosticLedger(
+      diagnosticState,
+      "evidenceWriteErrors",
+    );
+    return {
+      capturedAt: now(),
+      passed: false,
+      ...(includeConsoleEvidence ? {} : { status: "failed", mode, runId }),
+      error,
+      cleanupErrors,
+      evidenceWriteErrors,
+      ...(includeConsoleEvidence
+        ? { consoleEvidence: getFailureConsoleEvidence() }
+        : {}),
+    };
+  };
+  try {
+    await replaceReport({
+      reportPath,
+      pendingReportPath,
+      report: failureRecord(false),
+    });
+  } catch (reportError) {
+    importFunctionalSmokeErrorDiagnostics(reportError, diagnosticState);
+    appendFunctionalSmokeDiagnostic(
+      diagnosticState.evidenceWriteErrors,
+      "failure-report",
+      reportError,
+    );
+  }
+  try {
+    await writeFailureFile(
+      failurePath,
+      `${JSON.stringify(failureRecord(true), null, 2)}\n`,
+    );
+  } catch (failureJsonError) {
+    importFunctionalSmokeErrorDiagnostics(failureJsonError, diagnosticState);
+    appendFunctionalSmokeDiagnostic(
+      diagnosticState.evidenceWriteErrors,
+      "failure-json",
+      failureJsonError,
+    );
+    throw failureJsonError;
+  }
+};
+
+export const assertFunctionalSmokeTemporaryDirectoryRemovalAllowed = ({
+  path,
+  corruptImageSourceRestoreRequired,
+  corruptImageSourceRestored,
+  imageSelectionProjectResetRequired,
+  imageSelectionProjectResetCompleted,
+  configMutationAttempted,
+  configRestored,
+}) => {
+  if (corruptImageSourceRestoreRequired && !corruptImageSourceRestored) {
+    throw new Error(`Preserving ${path} because corrupt image source restoration is unproven`);
+  }
+  if (imageSelectionProjectResetRequired && !imageSelectionProjectResetCompleted) {
+    throw new Error(`Preserving ${path} because image-selection project reset is unproven`);
+  }
+  if (configMutationAttempted && !configRestored) {
+    throw new Error(`Preserving ${path} because config restoration is unproven`);
+  }
+};
+
+const run = async ({ diagnosticState = createFunctionalSmokeDiagnosticState() } = {}) => {
   const outputRun = await createOwnedRunDirectory(resolve(REPO_ROOT, requestedOutput));
   const outputDirectory = outputRun.path;
   let client;
@@ -1024,13 +1445,17 @@ const run = async () => {
   let configRestored = false;
   let imageSelectionCleanupRequired = false;
   let imageSelectionProjectResetRequired = false;
+  let imageSelectionProjectResetCompleted = false;
+  let corruptImageSourceRestoreRequired = false;
+  let corruptImageSourceRestored = false;
   let imageSelectionHostStateKnown = true;
   let runtimeEvaluationGuard = null;
   const runtimeEvaluationCompletionKnown = () =>
-    runtimeEvaluationGuard?.isCompletionKnown() !== false;
+    isFunctionalSmokeRuntimeCompletionKnown(runtimeEvaluationGuard);
   const imageSelectionOwnedItems = [];
   const imageSelectionOwnedTopology = [];
-  let primaryError = null;
+  let primaryError;
+  let hasPrimaryError = false;
   let successPublication = null;
   const runId = `${process.pid}-${Date.now()}`;
   const reportPath = resolve(outputDirectory, "report.json");
@@ -1410,20 +1835,8 @@ const run = async () => {
 
     if (mode === "image-selection") {
       const staleCleanup = { removed: [] };
-      const captureNewOwnedTopology = (items, setupResult) => {
-        if (setupResult.ownedTopology?.length !== items.length) {
-          throw new Error(`Owned image fixture same-dispatch topology capture failed: ${JSON.stringify(setupResult)}`);
-        }
-        for (let index = 0; index < items.length; index += 1) {
-          requireCondition(
-            setupResult.ownedTopology[index]?.id === items[index].id &&
-              setupResult.ownedTopology[index]?.name === items[index].name &&
-              setupResult.ownedTopology[index]?.kind === items[index].kind,
-            `Owned image fixture topology descriptor drifted: ${JSON.stringify({ item: items[index], topology: setupResult.ownedTopology[index] })}`
-          );
-        }
-        imageSelectionOwnedTopology.push(...setupResult.ownedTopology);
-      };
+      const captureNewOwnedTopology = (items, setupResult) =>
+        captureImageSelectionOwnedTopology(imageSelectionOwnedTopology, items, setupResult);
       const recordResidualItems = (result) => {
         if (!Array.isArray(result?.residualItems)) return;
         for (const item of result.residualItems) {
@@ -1633,22 +2046,35 @@ const run = async () => {
       const corruptOwnedItem = { id: corruptImage.id, name: corruptImage.name, kind: "footage" };
       imageSelectionOwnedItems.push(corruptOwnedItem);
       captureNewOwnedTopology([corruptOwnedItem], corruptImage);
-      await writeFile(corruptPath, "not a valid PNG");
-      const corrupt = await executeCase("corrupt-png-decode-rejected", () =>
-        evalImageHost(selectProjectImagesSource([corruptImage.id]))
-      );
-      if (
-        corrupt.selection.selectedItems !== 1 ||
-        corrupt.probe.image.status !== "ok" ||
-        corrupt.probe.image.path !== corruptImage.path ||
-        corrupt.state.lastResult !== "Could not extract colors from the selected image" ||
-        corrupt.snapshot.counters.hostCalls !== 1 ||
-        corrupt.snapshot.counters.diskWrites !== 0 ||
-        corrupt.state.palette.length !== 0 ||
-        corrupt.stored.revision !== 0
-      ) {
-        throw new Error(`Corrupt-image rejection failed: ${JSON.stringify(corrupt)}`);
-      }
+      corruptImageSourceRestoreRequired = true;
+      const corruptLifecycle = await runCorruptImageSelectionCase({
+        corruptPath,
+        validBytes: pngBytes,
+        diagnosticState,
+        hasRestoreAuthority: () =>
+          imageSelectionHostStateKnown && runtimeEvaluationCompletionKnown(),
+        runProductCase: () => executeCase("corrupt-png-decode-rejected", () =>
+          evalImageHost(selectProjectImagesSource([corruptImage.id]))
+        ),
+        validateProductResult: (corrupt) => {
+          if (
+            corrupt.selection.selectedItems !== 1 ||
+            corrupt.probe.image.status !== "ok" ||
+            corrupt.probe.image.path !== corruptImage.path ||
+            corrupt.state.lastResult !== "Could not extract colors from the selected image" ||
+            corrupt.snapshot.counters.hostCalls !== 1 ||
+            corrupt.snapshot.counters.diskWrites !== 0 ||
+            corrupt.state.palette.length !== 0 ||
+            corrupt.stored.revision !== 0
+          ) {
+            throw new Error(`Corrupt-image rejection failed: ${JSON.stringify(corrupt)}`);
+          }
+        },
+        onRestoreVerified: () => {
+          corruptImageSourceRestored = true;
+        },
+      });
+      const corruptSourceRestoration = corruptLifecycle.restoration;
 
       const screenshot = await client.send("Page.captureScreenshot", {
         format: "png",
@@ -1682,6 +2108,7 @@ const run = async () => {
         colorFixture,
         layerFixture,
         cases,
+        corruptSourceRestoration,
         cleanup,
         consoleEvidence,
         screenshots: ["main-selection-gates.png"],
@@ -2239,6 +2666,8 @@ const run = async () => {
     successPublication = { report, summary: { passed: true, outputDirectory } };
   } catch (error) {
     primaryError = error;
+    hasPrimaryError = true;
+    importFunctionalSmokeErrorDiagnostics(error, diagnosticState);
   } finally {
     const cleanupSteps = [];
     if (client) {
@@ -2267,6 +2696,9 @@ const run = async () => {
         cleanupSteps.push({
           phase: "image-selection-project-reset",
           run: async () => {
+            if (corruptImageSourceRestoreRequired && !corruptImageSourceRestored) {
+              throw new Error("Corrupt image source restoration is unproven; project reset refused");
+            }
             if (!imageSelectionHostStateKnown || !runtimeEvaluationCompletionKnown()) {
               throw new Error("Renderer or image-selection host completion is unknown; project reset refused");
             }
@@ -2286,6 +2718,7 @@ const run = async () => {
             ) {
               throw new Error(`Image-selection project reset failed: ${JSON.stringify(reset)}`);
             }
+            imageSelectionProjectResetCompleted = true;
           },
         });
       }
@@ -2316,15 +2749,23 @@ const run = async () => {
       cleanupSteps.push({
         phase: "temporary-directory",
         run: () => {
-          if (configMutationAttempted && !configRestored) {
-            throw new Error(`Preserving ${configRun.path} because config restoration is unproven`);
-          }
+          assertFunctionalSmokeTemporaryDirectoryRemovalAllowed({
+            path: configRun.path,
+            corruptImageSourceRestoreRequired,
+            corruptImageSourceRestored,
+            imageSelectionProjectResetRequired,
+            imageSelectionProjectResetCompleted,
+            configMutationAttempted,
+            configRestored,
+          });
           return removeOwnedRunDirectory(configRun);
         },
       });
     }
     await finalizeFunctionalSmoke({
       primaryError,
+      hasPrimaryError,
+      diagnosticState,
       cleanupSteps,
       publishSuccess: async () => {
         if (!successPublication) throw new Error("Functional smoke completed without a success report");
@@ -2344,51 +2785,25 @@ const run = async () => {
           // The committed report remains authoritative if stdout closes after publication.
         }
       },
-      writeFailure: async ({ primaryError: failure, cleanupErrors }) => {
-        const error = failure ? String(failure?.stack || failure) : null;
-        const finalCleanupErrors = [...cleanupErrors];
-        try {
-          await replaceFunctionalSmokeReport({
-            reportPath,
-            pendingReportPath,
-            report: {
-              capturedAt: new Date().toISOString(),
-              passed: false,
-              status: "failed",
-              mode,
-              runId,
-              error,
-              cleanupErrors,
-            },
-          });
-        } catch (reportError) {
-          finalCleanupErrors.push({
-            phase: "failure-report",
-            error: String(reportError?.stack || reportError),
-          });
-        }
-        await writeFile(
-          failurePath,
-          `${JSON.stringify(
-            {
-              capturedAt: new Date().toISOString(),
-              passed: false,
-              error,
-              cleanupErrors: finalCleanupErrors,
-              consoleEvidence: client ? getConsoleEvidence(client.events) : null,
-            },
-            null,
-            2
-          )}\n`
-        );
-      },
+      writeFailure: (failure) => publishFunctionalSmokeFailure({
+        ...failure,
+        reportPath,
+        pendingReportPath,
+        failurePath,
+        mode,
+        runId,
+        diagnosticState,
+        getFailureConsoleEvidence: () =>
+          client ? getConsoleEvidence(client.events) : null,
+      }),
     });
   }
 };
 
 if (isCliEntry) {
-  run().catch((error) => {
-    console.error(error instanceof Error ? error.stack || error.message : error);
+  const diagnosticState = createFunctionalSmokeDiagnosticState();
+  run({ diagnosticState }).catch((error) => {
+    printFunctionalSmokeCliError(error, diagnosticState);
     process.exitCode = 1;
   });
 }

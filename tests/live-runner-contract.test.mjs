@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { lstat, mkdir, mkdtemp, readFile, readdir, realpath, rename, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, posix, relative, resolve, sep, win32 } from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
+import ts from "typescript";
 import { CdpClient } from "../scripts/lib/cdp-client.mjs";
 import {
   RunnerPolicyError,
@@ -22,6 +24,8 @@ import {
   selectCanonicalCdpTarget,
   validateRunnerOutputRoot,
 } from "../scripts/lib/live-runner-policy.mjs";
+import { assertFunctionalSmokeTemporaryDirectoryRemovalAllowed } from
+  "../scripts/cep-functional-smoke.mjs";
 
 const expectReject = async (promise, pattern) => {
   await assert.rejects(promise, (error) => {
@@ -29,6 +33,1586 @@ const expectReject = async (promise, pattern) => {
     if (pattern) assert.match(error.message, pattern);
     return true;
   });
+};
+
+const collectBindingIdentifiers = (root) => {
+  const bindings = [];
+  const addBindingName = (name, declaration, kind) => {
+    if (!name) return;
+    if (ts.isIdentifier(name)) {
+      bindings.push({ name: name.text, node: name, declaration, kind });
+      return;
+    }
+    if (ts.isObjectBindingPattern(name) || ts.isArrayBindingPattern(name)) {
+      for (const element of name.elements) {
+        if (ts.isBindingElement(element)) addBindingName(element.name, declaration, kind);
+      }
+    }
+  };
+  const visit = (node) => {
+    if (ts.isImportSpecifier(node)) {
+      addBindingName(node.name, node, "import-specifier");
+    } else if (ts.isNamespaceImport(node)) {
+      addBindingName(node.name, node, "namespace-import");
+    } else if (ts.isImportClause(node) && node.name) {
+      addBindingName(node.name, node, "default-import");
+    } else if (ts.isImportEqualsDeclaration(node)) {
+      addBindingName(node.name, node, "import-equals");
+    } else if (ts.isVariableDeclaration(node)) {
+      addBindingName(
+        node.name,
+        node,
+        ts.isCatchClause(node.parent) ? "catch-binding" : "variable-declaration",
+      );
+    } else if (ts.isParameter(node)) {
+      addBindingName(node.name, node, "parameter");
+    } else if (ts.isFunctionDeclaration(node) || ts.isFunctionExpression(node)) {
+      addBindingName(
+        node.name,
+        node,
+        ts.isFunctionDeclaration(node) ? "function-declaration" : "named-function-expression",
+      );
+    } else if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
+      addBindingName(
+        node.name,
+        node,
+        ts.isClassDeclaration(node) ? "class-declaration" : "named-class-expression",
+      );
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(root);
+  return bindings;
+};
+
+const collectSourceFileScopeBindings = (sourceFile) => {
+  const bindings = [];
+  const addBindingName = (name, declaration, kind) => {
+    if (ts.isIdentifier(name)) {
+      bindings.push({ name: name.text, node: name, declaration, kind });
+      return;
+    }
+    if (ts.isObjectBindingPattern(name) || ts.isArrayBindingPattern(name)) {
+      for (const element of name.elements) {
+        if (ts.isBindingElement(element)) addBindingName(element.name, declaration, kind);
+      }
+    }
+  };
+  for (const statement of sourceFile.statements) {
+    if (ts.isImportDeclaration(statement)) {
+      const clause = statement.importClause;
+      if (clause?.name) addBindingName(clause.name, clause, "default-import");
+      const namedBindings = clause?.namedBindings;
+      if (namedBindings && ts.isNamespaceImport(namedBindings)) {
+        addBindingName(namedBindings.name, namedBindings, "namespace-import");
+      } else if (namedBindings && ts.isNamedImports(namedBindings)) {
+        for (const specifier of namedBindings.elements) {
+          addBindingName(specifier.name, specifier, "import-specifier");
+        }
+      }
+    } else if (ts.isImportEqualsDeclaration(statement)) {
+      addBindingName(statement.name, statement, "import-equals");
+    } else if (ts.isVariableStatement(statement)) {
+      for (const declaration of statement.declarationList.declarations) {
+        addBindingName(declaration.name, declaration, "variable-declaration");
+      }
+    } else if (ts.isFunctionDeclaration(statement)) {
+      addBindingName(statement.name, statement, "function-declaration");
+    } else if (ts.isClassDeclaration(statement)) {
+      addBindingName(statement.name, statement, "class-declaration");
+    }
+  }
+  return bindings;
+};
+
+const callArgumentUse = (identifier, calleeName, argumentIndex) => {
+  const call = identifier.parent;
+  return (
+    ts.isCallExpression(call) &&
+    call.arguments[argumentIndex] === identifier &&
+    ts.isIdentifier(call.expression) &&
+    call.expression.text === calleeName
+  );
+};
+
+const propertyInitializerUse = (identifier, propertyName) =>
+  ts.isPropertyAssignment(identifier.parent) &&
+  identifier.parent.initializer === identifier &&
+  ((ts.isIdentifier(identifier.parent.name) && identifier.parent.name.text === propertyName) ||
+    (ts.isStringLiteral(identifier.parent.name) && identifier.parent.name.text === propertyName));
+
+const EXPECTED_FUNCTIONAL_SMOKE_SOURCE_SHA256 =
+  "3db743d187b959fb75310dcac0573b9f7790bab9b17fa0c005dfb39ddaae346b";
+
+const analyzeFunctionalSmokeClosedWorld = (source, { requireExactSource = true } = {}) => {
+  const sourceFile = ts.createSourceFile(
+    "cep-functional-smoke.mjs",
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.JS,
+  );
+  const errors = [];
+  const actualSourceSha256 = createHash("sha256").update(source).digest("hex");
+  if (requireExactSource && actualSourceSha256 !== EXPECTED_FUNCTIONAL_SMOKE_SOURCE_SHA256) {
+    errors.push(
+      `functional-source-fingerprint:expected-${EXPECTED_FUNCTIONAL_SMOKE_SOURCE_SHA256}:actual-${actualSourceSha256}`,
+    );
+  }
+  const counts = new Map();
+  const allow = (label) => counts.set(label, (counts.get(label) ?? 0) + 1);
+  const reject = (identifier, policy) => {
+    const { line, character } = sourceFile.getLineAndCharacterOfPosition(identifier.getStart(sourceFile));
+    errors.push(`${policy}:${line + 1}:${character + 1}`);
+  };
+  const rejectNode = (node, policy) => reject(node, policy);
+  const identifierNamed = (node, name) => ts.isIdentifier(node) && node.text === name;
+  const isConstDeclaration = (declaration) =>
+    ts.isVariableDeclarationList(declaration.parent) &&
+    (declaration.parent.flags & ts.NodeFlags.Const) !== 0;
+  const propertyAccessNamed = (node, expressionName, propertyName) =>
+    ts.isPropertyAccessExpression(node) &&
+    identifierNamed(node.expression, expressionName) &&
+    identifierNamed(node.name, propertyName);
+  const propertyNameText = (property) => {
+    if (ts.isShorthandPropertyAssignment(property)) return property.name.text;
+    if (
+      (ts.isPropertyAssignment(property) || ts.isMethodDeclaration(property)) &&
+      (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name))
+    ) {
+      return property.name.text;
+    }
+    return null;
+  };
+
+  if (sourceFile.parseDiagnostics.length > 0) {
+    for (const diagnostic of sourceFile.parseDiagnostics) {
+      errors.push(`parse-diagnostic:${diagnostic.start ?? "unknown"}:${diagnostic.code}`);
+    }
+    return errors;
+  }
+
+  const sourceFileBindings = collectSourceFileScopeBindings(sourceFile);
+  const topLevelVariableDeclarationsNamed = (name) => {
+    const declarations = [];
+    for (const statement of sourceFile.statements) {
+      if (!ts.isVariableStatement(statement)) continue;
+      for (const declaration of statement.declarationList.declarations) {
+        if (identifierNamed(declaration.name, name)) declarations.push(declaration);
+      }
+    }
+    return declarations;
+  };
+  const authenticateNamedImport = (name, moduleName) => {
+    const matchingSpecifiers = [];
+    for (const statement of sourceFile.statements) {
+      if (
+        !ts.isImportDeclaration(statement) ||
+        !ts.isStringLiteral(statement.moduleSpecifier) ||
+        statement.moduleSpecifier.text !== moduleName
+      ) continue;
+      const namedBindings = statement.importClause?.namedBindings;
+      if (!namedBindings || !ts.isNamedImports(namedBindings)) continue;
+      for (const specifier of namedBindings.elements) {
+        const importedName = specifier.propertyName?.text ?? specifier.name.text;
+        if (importedName === name && specifier.name.text === name) matchingSpecifiers.push(specifier);
+      }
+    }
+    const sourceBindings = sourceFileBindings.filter((binding) => binding.name === name);
+    if (
+      matchingSpecifiers.length !== 1 ||
+      sourceBindings.length !== 1 ||
+      sourceBindings[0].node !== matchingSpecifiers[0].name
+    ) {
+      errors.push(
+        `${name}-import-authority:expected-${moduleName}-named-import:imports-${matchingSpecifiers.length}:bindings-${sourceBindings.length}`,
+      );
+    }
+  };
+  const authenticateTopLevelArrowBinding = (name) => {
+    const declarations = topLevelVariableDeclarationsNamed(name);
+    const sourceBindings = sourceFileBindings.filter((binding) => binding.name === name);
+    const declaration = declarations.length === 1 ? declarations[0] : null;
+    if (
+      !declaration ||
+      sourceBindings.length !== 1 ||
+      sourceBindings[0].node !== declaration.name ||
+      !isConstDeclaration(declaration) ||
+      !ts.isArrowFunction(declaration.initializer)
+    ) {
+      errors.push(
+        `${name}-top-level-binding-authority:declarations-${declarations.length}:bindings-${sourceBindings.length}`,
+      );
+      return null;
+    }
+    return declaration.initializer;
+  };
+
+  authenticateNamedImport("readFile", "node:fs/promises");
+  authenticateNamedImport("writeFile", "node:fs/promises");
+  authenticateNamedImport("resolve", "node:path");
+  authenticateNamedImport("Buffer", "node:buffer");
+  const topLevelArrowBindings = new Map();
+  for (const name of [
+    "run",
+    "runCorruptImageSelectionCase",
+    "createFunctionalSmokeDiagnosticState",
+    "captureImageSelectionOwnedTopology",
+    "isFunctionalSmokeRuntimeCompletionKnown",
+    "importProjectImageSource",
+    "cleanupImageSelectionFixturesSource",
+    "selectProjectImagesSource",
+  ]) {
+    topLevelArrowBindings.set(name, authenticateTopLevelArrowBinding(name));
+  }
+  const run = topLevelArrowBindings.get("run");
+  const corruptHelper = topLevelArrowBindings.get("runCorruptImageSelectionCase");
+  const diagnosticStateFactory = topLevelArrowBindings.get(
+    "createFunctionalSmokeDiagnosticState",
+  );
+  if (!run || !corruptHelper) return errors;
+
+  const unwrapParenthesized = (node) => {
+    let current = node;
+    while (current && ts.isParenthesizedExpression(current)) current = current.expression;
+    return current;
+  };
+  const diagnosticStateFactoryBody = diagnosticStateFactory
+    ? unwrapParenthesized(diagnosticStateFactory.body)
+    : null;
+  if (
+    diagnosticStateFactory &&
+    (
+      diagnosticStateFactory.parameters.length !== 0 ||
+      (ts.getModifiers(diagnosticStateFactory) ?? []).length !== 0 ||
+      !diagnosticStateFactoryBody ||
+      !ts.isObjectLiteralExpression(diagnosticStateFactoryBody) ||
+      diagnosticStateFactoryBody.properties.length !== 2 ||
+      !ts.isPropertyAssignment(diagnosticStateFactoryBody.properties[0]) ||
+      propertyNameText(diagnosticStateFactoryBody.properties[0]) !== "cleanupErrors" ||
+      !ts.isArrayLiteralExpression(diagnosticStateFactoryBody.properties[0].initializer) ||
+      diagnosticStateFactoryBody.properties[0].initializer.elements.length !== 0 ||
+      !ts.isPropertyAssignment(diagnosticStateFactoryBody.properties[1]) ||
+      propertyNameText(diagnosticStateFactoryBody.properties[1]) !== "evidenceWriteErrors" ||
+      !ts.isArrayLiteralExpression(diagnosticStateFactoryBody.properties[1].initializer) ||
+      diagnosticStateFactoryBody.properties[1].initializer.elements.length !== 0
+    )
+  ) {
+    rejectNode(diagnosticStateFactory, "createFunctionalSmokeDiagnosticState-shape");
+  }
+
+  const sourceBufferBinding = sourceFileBindings.find((binding) => binding.name === "Buffer");
+
+  const runBindings = collectBindingIdentifiers(run);
+  for (const name of [
+    "runCorruptImageSelectionCase",
+    "readFile",
+    "writeFile",
+    "resolve",
+    "captureImageSelectionOwnedTopology",
+    "isFunctionalSmokeRuntimeCompletionKnown",
+    "importProjectImageSource",
+    "cleanupImageSelectionFixturesSource",
+    "selectProjectImagesSource",
+    "createFunctionalSmokeDiagnosticState",
+    "Buffer",
+  ]) {
+    for (const binding of runBindings.filter((candidate) => candidate.name === name)) {
+      rejectNode(binding.node, `${name}-shadow-binding`);
+    }
+  }
+
+  const corruptHelperBindings = collectBindingIdentifiers(corruptHelper);
+  for (const binding of corruptHelperBindings.filter(
+    (candidate) => candidate.name === "Buffer",
+  )) {
+    rejectNode(binding.node, "Buffer-helper-shadow-binding");
+  }
+  for (const binding of corruptHelperBindings.filter(
+    (candidate) => candidate.name === "createFunctionalSmokeDiagnosticState",
+  )) {
+    rejectNode(binding.node, "createFunctionalSmokeDiagnosticState-helper-shadow-binding");
+  }
+  const corruptHelperParameter = corruptHelper.parameters.length === 1
+    ? corruptHelper.parameters[0]
+    : null;
+  const corruptHelperParameterElements =
+    corruptHelperParameter && ts.isObjectBindingPattern(corruptHelperParameter.name)
+      ? corruptHelperParameter.name.elements
+      : [];
+  const expectedCorruptHelperParameterNames = [
+    "corruptPath",
+    "validBytes",
+    "corruptBytes",
+    "runProductCase",
+    "validateProductResult",
+    "hasRestoreAuthority",
+    "diagnosticState",
+    "onRestoreVerified",
+    "writeSource",
+    "readSource",
+  ];
+  const hasAsyncModifier = (node) =>
+    (ts.getModifiers(node) ?? []).some(
+      (modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword,
+    );
+  const isExactZeroArgumentCall = (node, calleeName) =>
+    ts.isCallExpression(node) &&
+    identifierNamed(node.expression, calleeName) &&
+    node.arguments.length === 0;
+  const isExactCorruptBytesDefault = (node) =>
+    ts.isCallExpression(node) &&
+    propertyAccessNamed(node.expression, "Buffer", "from") &&
+    node.arguments.length === 1 &&
+    ts.isStringLiteral(node.arguments[0]) &&
+    node.arguments[0].text === "not a valid PNG";
+  const isExactRestoreCallbackDefault = (node) =>
+    ts.isArrowFunction(node) &&
+    hasAsyncModifier(node) &&
+    node.parameters.length === 0 &&
+    identifierNamed(node.body, "undefined");
+  const corruptHelperParameterShapeValid =
+    corruptHelper.parameters.length === 1 &&
+    corruptHelperParameter !== null &&
+    corruptHelperParameter.dotDotDotToken === undefined &&
+    corruptHelperParameter.initializer === undefined &&
+    ts.isObjectBindingPattern(corruptHelperParameter.name) &&
+    corruptHelperParameterElements.length === expectedCorruptHelperParameterNames.length &&
+    corruptHelperParameterElements.every((element, index) => {
+      const name = expectedCorruptHelperParameterNames[index];
+      if (
+        element.dotDotDotToken !== undefined ||
+        element.propertyName !== undefined ||
+        !identifierNamed(element.name, name)
+      ) return false;
+      switch (name) {
+        case "corruptBytes":
+          return isExactCorruptBytesDefault(element.initializer);
+        case "diagnosticState":
+          return isExactZeroArgumentCall(
+            element.initializer,
+            "createFunctionalSmokeDiagnosticState",
+          );
+        case "onRestoreVerified":
+          return isExactRestoreCallbackDefault(element.initializer);
+        case "writeSource":
+          return identifierNamed(element.initializer, "writeFile");
+        case "readSource":
+          return identifierNamed(element.initializer, "readFile");
+        default:
+          return element.initializer === undefined;
+      }
+    });
+  if (!corruptHelperParameterShapeValid) {
+    rejectNode(corruptHelperParameter ?? corruptHelper, "corrupt-helper-parameter-shape");
+  }
+  for (const name of [
+    "corruptPath",
+    "validBytes",
+    "corruptBytes",
+    "runProductCase",
+    "validateProductResult",
+    "hasRestoreAuthority",
+    "diagnosticState",
+    "onRestoreVerified",
+    "writeSource",
+    "readSource",
+  ]) {
+    const intendedElements = corruptHelperParameterElements.filter(
+      (element) => ts.isIdentifier(element.name) && element.name.text === name,
+    );
+    const bindings = corruptHelperBindings.filter((binding) => binding.name === name);
+    if (
+      intendedElements.length !== 1 ||
+      bindings.length !== 1 ||
+      bindings[0].node !== intendedElements[0].name
+    ) {
+      errors.push(
+        `${name}-helper-binding-shadow:expected-parameter-binding:actual-${bindings.length}`,
+      );
+    }
+  }
+  const walkIdentifiers = (root, name, policy, classify) => {
+    const visit = (node) => {
+      if (ts.isIdentifier(node) && node.text === name) {
+        const label = classify(node);
+        if (label) allow(label);
+        else reject(node, policy);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(root);
+  };
+  const rejectDynamicExecution = (root, policy) => {
+    const dynamicNames = new Set([
+      "eval",
+      "Function",
+      "AsyncFunction",
+      "GeneratorFunction",
+      "AsyncGeneratorFunction",
+    ]);
+    const visit = (node) => {
+      if (ts.isIdentifier(node) && dynamicNames.has(node.text)) reject(node, policy);
+      if (
+        (
+          (ts.isPropertyAccessExpression(node) && ["eval", "constructor"].includes(node.name.text)) ||
+          (ts.isElementAccessExpression(node) &&
+            !ts.isNumericLiteral(node.argumentExpression))
+        )
+      ) rejectNode(node, policy);
+      ts.forEachChild(node, visit);
+    };
+    visit(root);
+  };
+  walkIdentifiers(sourceFile, "Buffer", "Buffer-use-authority", (identifier) => {
+    if (sourceBufferBinding?.node === identifier) return "Buffer-import-use";
+    if (
+      (ts.isPropertyAccessExpression(identifier.parent) && identifier.parent.name === identifier) ||
+      ((ts.isPropertyAssignment(identifier.parent) || ts.isMethodDeclaration(identifier.parent)) &&
+        identifier.parent.name === identifier) ||
+      (ts.isLabeledStatement(identifier.parent) && identifier.parent.label === identifier)
+    ) return "Buffer-non-value-name";
+    const propertyAccess = identifier.parent;
+    if (
+      ts.isPropertyAccessExpression(propertyAccess) &&
+      propertyAccess.expression === identifier &&
+      identifierNamed(propertyAccess.name, "from") &&
+      ts.isCallExpression(propertyAccess.parent) &&
+      propertyAccess.parent.expression === propertyAccess &&
+      !propertyAccess.parent.questionDotToken
+    ) return "Buffer-from-direct-call";
+    return null;
+  });
+  rejectDynamicExecution(run, "production-dynamic-execution");
+  rejectDynamicExecution(corruptHelper, "helper-dynamic-execution");
+  const helperBindingUse = (identifier, name) =>
+    ts.isBindingElement(identifier.parent) &&
+    identifier.parent.name === identifier &&
+    identifierNamed(identifier, name) &&
+    ts.isObjectBindingPattern(identifier.parent.parent) &&
+    identifier.parent.parent === corruptHelperParameter?.name;
+  const helperCalleeUse = (identifier, argumentCount) =>
+    ts.isCallExpression(identifier.parent) &&
+    identifier.parent.expression === identifier &&
+    identifier.parent.arguments.length === argumentCount;
+  const helperBufferFromArgumentUse = (identifier) => {
+    const call = identifier.parent;
+    return (
+      ts.isCallExpression(call) &&
+      call.arguments.length === 1 &&
+      call.arguments[0] === identifier &&
+      propertyAccessNamed(call.expression, "Buffer", "from")
+    );
+  };
+  walkIdentifiers(corruptHelper, "validBytes", "helper-validBytes-use", (identifier) => {
+    if (helperBindingUse(identifier, "validBytes")) return "helper-validBytes-binding";
+    if (helperBufferFromArgumentUse(identifier)) return "helper-validBytes-copy";
+    return null;
+  });
+  walkIdentifiers(corruptHelper, "corruptBytes", "helper-corruptBytes-use", (identifier) => {
+    if (helperBindingUse(identifier, "corruptBytes")) return "helper-corruptBytes-binding";
+    if (
+      callArgumentUse(identifier, "writeSource", 1) &&
+      identifier.parent.arguments.length === 2 &&
+      identifierNamed(identifier.parent.arguments[0], "corruptPath")
+    ) return "helper-corruptBytes-write";
+    return null;
+  });
+  walkIdentifiers(corruptHelper, "runProductCase", "helper-runProductCase-use", (identifier) => {
+    if (helperBindingUse(identifier, "runProductCase")) return "helper-runProductCase-binding";
+    if (helperCalleeUse(identifier, 0)) return "helper-runProductCase-call";
+    return null;
+  });
+  walkIdentifiers(
+    corruptHelper,
+    "validateProductResult",
+    "helper-validateProductResult-use",
+    (identifier) => {
+      if (helperBindingUse(identifier, "validateProductResult")) {
+        return "helper-validateProductResult-binding";
+      }
+      if (
+        helperCalleeUse(identifier, 1) &&
+        identifierNamed(identifier.parent.arguments[0], "result")
+      ) return "helper-validateProductResult-call";
+      return null;
+    },
+  );
+  walkIdentifiers(
+    corruptHelper,
+    "hasRestoreAuthority",
+    "helper-hasRestoreAuthority-use",
+    (identifier) => {
+      if (helperBindingUse(identifier, "hasRestoreAuthority")) {
+        return "helper-hasRestoreAuthority-binding";
+      }
+      if (helperCalleeUse(identifier, 0)) return "helper-hasRestoreAuthority-call";
+      return null;
+    },
+  );
+  walkIdentifiers(corruptHelper, "diagnosticState", "helper-diagnosticState-use", (identifier) => {
+    if (helperBindingUse(identifier, "diagnosticState")) return "helper-diagnosticState-binding";
+    if (callArgumentUse(identifier, "importFunctionalSmokeErrorDiagnostics", 1)) {
+      return "helper-diagnosticState-import";
+    }
+    if (callArgumentUse(identifier, "attachFunctionalSmokeDiagnosticCompatibility", 1)) {
+      return "helper-diagnosticState-attach";
+    }
+    const property = identifier.parent;
+    const appendCall = property.parent;
+    if (
+      propertyAccessNamed(property, "diagnosticState", "cleanupErrors") &&
+      ts.isCallExpression(appendCall) &&
+      appendCall.arguments[0] === property &&
+      identifierNamed(appendCall.expression, "appendFunctionalSmokeDiagnostic")
+    ) return "helper-diagnosticState-cleanup-append";
+    return null;
+  });
+  walkIdentifiers(
+    corruptHelper,
+    "onRestoreVerified",
+    "helper-onRestoreVerified-use",
+    (identifier) => {
+      if (helperBindingUse(identifier, "onRestoreVerified")) return "helper-onRestoreVerified-binding";
+      if (
+        helperCalleeUse(identifier, 1) &&
+        identifierNamed(identifier.parent.arguments[0], "restoration")
+      ) return "helper-onRestoreVerified-call";
+      return null;
+    },
+  );
+  walkIdentifiers(corruptHelper, "writeSource", "helper-writeSource-use", (identifier) => {
+    if (helperBindingUse(identifier, "writeSource")) return "helper-writeSource-binding";
+    if (helperCalleeUse(identifier, 2)) return "helper-writeSource-call";
+    return null;
+  });
+  walkIdentifiers(corruptHelper, "readSource", "helper-readSource-use", (identifier) => {
+    if (helperBindingUse(identifier, "readSource")) return "helper-readSource-binding";
+    if (helperCalleeUse(identifier, 1)) return "helper-readSource-call";
+    return null;
+  });
+  const variableDeclarationNamed = (root, name) => {
+    const declarations = [];
+    const visit = (node) => {
+      if (
+        ts.isVariableDeclaration(node) &&
+        identifierNamed(node.name, name)
+      ) declarations.push(node);
+      ts.forEachChild(node, visit);
+    };
+    visit(root);
+    if (declarations.length !== 1) {
+      errors.push(`${name}-declaration:expected-1:actual-${declarations.length}`);
+      return null;
+    }
+    return declarations[0];
+  };
+  const containingStatement = (node) => {
+    let current = node;
+    while (current && !ts.isStatement(current)) current = current.parent;
+    return current;
+  };
+  const expectedBytesDeclaration = variableDeclarationNamed(corruptHelper, "expectedBytes");
+  if (
+    !expectedBytesDeclaration ||
+    !isConstDeclaration(expectedBytesDeclaration) ||
+    !ts.isCallExpression(expectedBytesDeclaration.initializer) ||
+    !propertyAccessNamed(expectedBytesDeclaration.initializer.expression, "Buffer", "from") ||
+    expectedBytesDeclaration.initializer.arguments.length !== 1 ||
+    !identifierNamed(expectedBytesDeclaration.initializer.arguments[0], "validBytes")
+  ) {
+    rejectNode(expectedBytesDeclaration ?? corruptHelper, "expectedBytes-provenance");
+  }
+  walkIdentifiers(corruptHelper, "expectedBytes", "expectedBytes-use", (identifier) => {
+    if (expectedBytesDeclaration?.name === identifier) return "expectedBytes-declaration-use";
+    if (
+      callArgumentUse(identifier, "writeSource", 1) &&
+      identifier.parent.arguments.length === 2 &&
+      identifierNamed(identifier.parent.arguments[0], "corruptPath")
+    ) return "expectedBytes-restore-write";
+    if (callArgumentUse(identifier, "imageSourceSha256", 0)) return "expectedBytes-sha-use";
+    if (
+      ts.isCallExpression(identifier.parent) &&
+      identifier.parent.arguments[0] === identifier &&
+      propertyAccessNamed(identifier.parent.expression, "restoredBytes", "equals")
+    ) return "expectedBytes-equality-use";
+    return null;
+  });
+  walkIdentifiers(run, "corruptPath", "production-corruptPath", (identifier) => {
+    if (
+      ts.isVariableDeclaration(identifier.parent) &&
+      identifier.parent.name === identifier &&
+      ts.isCallExpression(identifier.parent.initializer) &&
+      ts.isIdentifier(identifier.parent.initializer.expression) &&
+      identifier.parent.initializer.expression.text === "resolve"
+    ) return "corrupt-declaration";
+    if (
+      callArgumentUse(identifier, "writeFile", 0) &&
+      ts.isIdentifier(identifier.parent.arguments[1]) &&
+      identifier.parent.arguments[1].text === "pngBytes"
+    ) return "corrupt-valid-copy";
+    if (
+      callArgumentUse(identifier, "importProjectImageSource", 0) &&
+      ts.isStringLiteral(identifier.parent.arguments[1]) &&
+      identifier.parent.arguments[1].text === "CP_IMAGE_CORRUPT_PNG"
+    ) return "corrupt-valid-import";
+    if (ts.isShorthandPropertyAssignment(identifier.parent)) {
+      const object = identifier.parent.parent;
+      const call = object.parent;
+      if (
+        ts.isObjectLiteralExpression(object) &&
+        ts.isCallExpression(call) &&
+        call.arguments[0] === object &&
+        ts.isIdentifier(call.expression) &&
+        call.expression.text === "runCorruptImageSelectionCase"
+      ) return "corrupt-lifecycle-wire";
+    }
+    return null;
+  });
+
+  walkIdentifiers(
+    corruptHelper,
+    "corruptPath",
+    "helper-corruptPath",
+    (identifier) => {
+      if (
+        ts.isBindingElement(identifier.parent) &&
+        identifier.parent.name === identifier &&
+        ts.isObjectBindingPattern(identifier.parent.parent)
+      ) return "helper-corrupt-parameter";
+      if (callArgumentUse(identifier, "writeSource", 0)) return "helper-corrupt-write";
+      if (callArgumentUse(identifier, "readSource", 0)) return "helper-corrupt-read";
+      if (propertyInitializerUse(identifier, "path")) return "helper-corrupt-path-record";
+      return null;
+    },
+  );
+
+  walkIdentifiers(
+    run,
+    "imageSelectionOwnedTopology",
+    "production-imageSelectionOwnedTopology",
+    (identifier) => {
+      if (
+        ts.isVariableDeclaration(identifier.parent) &&
+        identifier.parent.name === identifier &&
+        ts.isArrayLiteralExpression(identifier.parent.initializer) &&
+        identifier.parent.initializer.elements.length === 0
+      ) return "topology-declaration";
+      if (
+        callArgumentUse(identifier, "captureImageSelectionOwnedTopology", 0) &&
+        identifier.parent.arguments.length === 3 &&
+        ts.isIdentifier(identifier.parent.arguments[1]) &&
+        identifier.parent.arguments[1].text === "items" &&
+        ts.isIdentifier(identifier.parent.arguments[2]) &&
+        identifier.parent.arguments[2].text === "setupResult"
+      ) return "topology-validated-capture";
+      if (
+        callArgumentUse(identifier, "cleanupImageSelectionFixturesSource", 2) &&
+        identifier.parent.arguments.length === 3 &&
+        ts.isIdentifier(identifier.parent.arguments[0]) &&
+        identifier.parent.arguments[0].text === "runId" &&
+        ts.isIdentifier(identifier.parent.arguments[1]) &&
+        identifier.parent.arguments[1].text === "imageSelectionOwnedItems"
+      ) return "topology-readonly-cleanup";
+      return null;
+    },
+  );
+
+  const captureNewOwnedTopologyDeclaration = variableDeclarationNamed(
+    run,
+    "captureNewOwnedTopology",
+  );
+  const captureNewOwnedTopology =
+    captureNewOwnedTopologyDeclaration &&
+    ts.isArrowFunction(captureNewOwnedTopologyDeclaration.initializer)
+      ? captureNewOwnedTopologyDeclaration.initializer
+      : null;
+  const captureCall = captureNewOwnedTopology?.body;
+  if (
+    !captureNewOwnedTopology ||
+    captureNewOwnedTopology.parameters.length !== 2 ||
+    !identifierNamed(captureNewOwnedTopology.parameters[0].name, "items") ||
+    !identifierNamed(captureNewOwnedTopology.parameters[1].name, "setupResult") ||
+    !ts.isCallExpression(captureCall) ||
+    !identifierNamed(captureCall.expression, "captureImageSelectionOwnedTopology") ||
+    captureCall.arguments.length !== 3 ||
+    !identifierNamed(captureCall.arguments[0], "imageSelectionOwnedTopology") ||
+    !identifierNamed(captureCall.arguments[1], "items") ||
+    !identifierNamed(captureCall.arguments[2], "setupResult")
+  ) {
+    rejectNode(
+      captureNewOwnedTopology ?? captureNewOwnedTopologyDeclaration ?? run,
+      "captureNewOwnedTopology-shape",
+    );
+  }
+  walkIdentifiers(run, "captureNewOwnedTopology", "captureNewOwnedTopology-use", (identifier) => {
+    if (
+      ts.isVariableDeclaration(identifier.parent) &&
+      identifier.parent.name === identifier &&
+      identifier.parent.initializer === captureNewOwnedTopology &&
+      isConstDeclaration(identifier.parent)
+    ) return "captureNewOwnedTopology-declaration";
+    if (
+      ts.isCallExpression(identifier.parent) &&
+      identifier.parent.expression === identifier &&
+      ts.isExpressionStatement(identifier.parent.parent)
+    ) return "captureNewOwnedTopology-terminal-call";
+    return null;
+  });
+
+  const pngBytesDeclaration = variableDeclarationNamed(run, "pngBytes");
+  if (
+    pngBytesDeclaration &&
+    (
+      !isConstDeclaration(pngBytesDeclaration) ||
+      !pngBytesDeclaration.initializer ||
+      !ts.isAwaitExpression(pngBytesDeclaration.initializer) ||
+      !ts.isCallExpression(pngBytesDeclaration.initializer.expression) ||
+      !identifierNamed(pngBytesDeclaration.initializer.expression.expression, "readFile") ||
+      pngBytesDeclaration.initializer.expression.arguments.length !== 1 ||
+      !propertyAccessNamed(
+        pngBytesDeclaration.initializer.expression.arguments[0],
+        "pngFixture",
+        "path",
+      )
+    )
+  ) {
+    rejectNode(pngBytesDeclaration ?? run, "pngBytes-provenance");
+  }
+  walkIdentifiers(run, "pngBytes", "pngBytes-use", (identifier) => {
+    if (pngBytesDeclaration?.name === identifier) return "pngBytes-provenance-use";
+    if (
+      callArgumentUse(identifier, "writeFile", 1) &&
+      identifier.parent.arguments.length === 2 &&
+      identifierNamed(identifier.parent.arguments[0], "corruptPath")
+    ) return "pngBytes-valid-copy-use";
+    if (propertyInitializerUse(identifier, "validBytes")) return "pngBytes-lifecycle-use";
+    return null;
+  });
+
+  const corruptLifecycleDeclaration = variableDeclarationNamed(run, "corruptLifecycle");
+  const corruptLifecycleAwait = corruptLifecycleDeclaration?.initializer;
+  const corruptLifecycleCall =
+    corruptLifecycleAwait && ts.isAwaitExpression(corruptLifecycleAwait)
+    ? corruptLifecycleAwait.expression
+    : null;
+  const corruptLifecycleObject =
+    corruptLifecycleCall &&
+    ts.isCallExpression(corruptLifecycleCall) &&
+    corruptLifecycleCall.arguments.length === 1 &&
+    ts.isObjectLiteralExpression(corruptLifecycleCall.arguments[0])
+      ? corruptLifecycleCall.arguments[0]
+      : null;
+  const corruptLifecycleProperties = corruptLifecycleObject?.properties ?? [];
+  const expectedLifecycleProperties = [
+    "corruptPath",
+    "validBytes",
+    "diagnosticState",
+    "hasRestoreAuthority",
+    "runProductCase",
+    "validateProductResult",
+    "onRestoreVerified",
+  ];
+  if (
+    !corruptLifecycleDeclaration ||
+    !isConstDeclaration(corruptLifecycleDeclaration) ||
+    !corruptLifecycleAwait ||
+    !ts.isAwaitExpression(corruptLifecycleAwait) ||
+    !corruptLifecycleCall ||
+    !ts.isCallExpression(corruptLifecycleCall) ||
+    !identifierNamed(corruptLifecycleCall.expression, "runCorruptImageSelectionCase") ||
+    !corruptLifecycleObject ||
+    corruptLifecycleProperties.length !== expectedLifecycleProperties.length ||
+    corruptLifecycleProperties.some(
+      (property, index) => propertyNameText(property) !== expectedLifecycleProperties[index],
+    ) ||
+    !ts.isShorthandPropertyAssignment(corruptLifecycleProperties[0]) ||
+    !identifierNamed(corruptLifecycleProperties[0].name, "corruptPath") ||
+    !ts.isPropertyAssignment(corruptLifecycleProperties[1]) ||
+    !identifierNamed(corruptLifecycleProperties[1].initializer, "pngBytes") ||
+    !ts.isShorthandPropertyAssignment(corruptLifecycleProperties[2]) ||
+    !identifierNamed(corruptLifecycleProperties[2].name, "diagnosticState") ||
+    !ts.isPropertyAssignment(corruptLifecycleProperties[4]) ||
+    !ts.isArrowFunction(corruptLifecycleProperties[4].initializer) ||
+    !ts.isPropertyAssignment(corruptLifecycleProperties[5]) ||
+    !ts.isArrowFunction(corruptLifecycleProperties[5].initializer) ||
+    !ts.isPropertyAssignment(corruptLifecycleProperties[6]) ||
+    !ts.isArrowFunction(corruptLifecycleProperties[6].initializer)
+  ) {
+    rejectNode(corruptLifecycleDeclaration ?? run, "corrupt-lifecycle-shape");
+  }
+
+  const authorityProperty = corruptLifecycleProperties[3];
+  const authorityArrow = authorityProperty &&
+    ts.isPropertyAssignment(authorityProperty) &&
+    ts.isArrowFunction(authorityProperty.initializer)
+      ? authorityProperty.initializer
+      : null;
+  const authorityBody = authorityArrow?.body;
+  if (
+    !authorityArrow ||
+    authorityArrow.parameters.length !== 0 ||
+    !ts.isBinaryExpression(authorityBody) ||
+    authorityBody.operatorToken.kind !== ts.SyntaxKind.AmpersandAmpersandToken ||
+    !identifierNamed(authorityBody.left, "imageSelectionHostStateKnown") ||
+    !ts.isCallExpression(authorityBody.right) ||
+    !identifierNamed(authorityBody.right.expression, "runtimeEvaluationCompletionKnown") ||
+    authorityBody.right.arguments.length !== 0
+  ) {
+    rejectNode(authorityProperty ?? corruptLifecycleDeclaration ?? run, "restore-authority-shape");
+  }
+
+  const restoreCallbackProperty = corruptLifecycleProperties[6];
+  const restoreCallback =
+    restoreCallbackProperty &&
+    ts.isPropertyAssignment(restoreCallbackProperty) &&
+    ts.isArrowFunction(restoreCallbackProperty.initializer)
+      ? restoreCallbackProperty.initializer
+      : null;
+  const restoreCallbackStatement =
+    restoreCallback &&
+    ts.isBlock(restoreCallback.body) &&
+    restoreCallback.body.statements.length === 1 &&
+    ts.isExpressionStatement(restoreCallback.body.statements[0])
+      ? restoreCallback.body.statements[0]
+      : null;
+  const restoreCallbackAssignment = restoreCallbackStatement?.expression;
+  if (
+    !restoreCallback ||
+    restoreCallback.parameters.length !== 0 ||
+    restoreCallback.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ||
+    !restoreCallbackStatement ||
+    !ts.isBinaryExpression(restoreCallbackAssignment) ||
+    restoreCallbackAssignment.operatorToken.kind !== ts.SyntaxKind.EqualsToken ||
+    !identifierNamed(restoreCallbackAssignment.left, "corruptImageSourceRestored") ||
+    restoreCallbackAssignment.right.kind !== ts.SyntaxKind.TrueKeyword
+  ) {
+    rejectNode(
+      restoreCallbackProperty ?? corruptLifecycleDeclaration ?? run,
+      "restore-callback-shape",
+    );
+  }
+
+  const runtimeCompletionDeclaration = variableDeclarationNamed(
+    run,
+    "runtimeEvaluationCompletionKnown",
+  );
+  const runtimeCompletion =
+    runtimeCompletionDeclaration && ts.isArrowFunction(runtimeCompletionDeclaration.initializer)
+      ? runtimeCompletionDeclaration.initializer
+      : null;
+  const runtimeCompletionCall = runtimeCompletion?.body;
+  if (
+    !runtimeCompletion ||
+    runtimeCompletion.parameters.length !== 0 ||
+    !ts.isCallExpression(runtimeCompletionCall) ||
+    !identifierNamed(
+      runtimeCompletionCall.expression,
+      "isFunctionalSmokeRuntimeCompletionKnown",
+    ) ||
+    runtimeCompletionCall.arguments.length !== 1 ||
+    !identifierNamed(runtimeCompletionCall.arguments[0], "runtimeEvaluationGuard") ||
+    !ts.isVariableDeclaration(runtimeCompletion.parent) ||
+    !isConstDeclaration(runtimeCompletion.parent)
+  ) {
+    rejectNode(
+      runtimeCompletion ?? runtimeCompletionDeclaration ?? run,
+      "runtime-completion-binding-shape",
+    );
+  }
+
+  const intendedRunBindingDeclarations = new Map([
+    ["runtimeEvaluationCompletionKnown", runtimeCompletionDeclaration],
+    ["runtimeEvaluationGuard", variableDeclarationNamed(run, "runtimeEvaluationGuard")],
+    ["imageSelectionHostStateKnown", variableDeclarationNamed(run, "imageSelectionHostStateKnown")],
+    ["configMutationAttempted", variableDeclarationNamed(run, "configMutationAttempted")],
+    ["configRestored", variableDeclarationNamed(run, "configRestored")],
+    ["imageSelectionCleanupRequired", variableDeclarationNamed(run, "imageSelectionCleanupRequired")],
+    ["imageSelectionProjectResetRequired", variableDeclarationNamed(run, "imageSelectionProjectResetRequired")],
+    ["imageSelectionProjectResetCompleted", variableDeclarationNamed(run, "imageSelectionProjectResetCompleted")],
+    ["corruptImageSourceRestoreRequired", variableDeclarationNamed(run, "corruptImageSourceRestoreRequired")],
+    ["corruptImageSourceRestored", variableDeclarationNamed(run, "corruptImageSourceRestored")],
+    ["evalImageHost", variableDeclarationNamed(run, "evalImageHost")],
+    ["captureNewOwnedTopology", captureNewOwnedTopologyDeclaration],
+    ["executeCase", variableDeclarationNamed(run, "executeCase")],
+  ]);
+  for (const [name, declaration] of intendedRunBindingDeclarations) {
+    const bindings = runBindings.filter((binding) => binding.name === name);
+    if (
+      !declaration ||
+      !ts.isIdentifier(declaration.name) ||
+      bindings.length !== 1 ||
+      bindings[0].node !== declaration.name
+    ) {
+      errors.push(
+        `${name}-binding-shadow:expected-intended-declaration:actual-${bindings.length}`,
+      );
+    }
+  }
+
+  const compactText = (node) => node?.getText(sourceFile).replace(/\s+/g, "") ?? "";
+  const siblingStatements = (node) => {
+    const statement = containingStatement(node);
+    const statements = statement?.parent?.statements;
+    if (!statement || !statements) return { previous: null, next: null, next2: null };
+    const index = statements.indexOf(statement);
+    return {
+      previous: index > 0 ? statements[index - 1] : null,
+      next: index >= 0 ? statements[index + 1] ?? null : null,
+      next2: index >= 0 ? statements[index + 2] ?? null : null,
+    };
+  };
+  const directAwaitedCall = (statement) => {
+    let expression = null;
+    if (ts.isExpressionStatement(statement)) expression = statement.expression;
+    if (
+      ts.isVariableStatement(statement) &&
+      statement.declarationList.declarations.length === 1
+    ) expression = statement.declarationList.declarations[0].initializer;
+    if (!expression || !ts.isAwaitExpression(expression)) return null;
+    const call = expression.expression;
+    return ts.isCallExpression(call) && !call.questionDotToken ? call : null;
+  };
+  const isDirectAwaitedCall = (statement, calleeText, argumentCount) => {
+    const call = directAwaitedCall(statement);
+    return Boolean(
+      call &&
+      compactText(call.expression) === calleeText &&
+      call.arguments.length === argumentCount,
+    );
+  };
+  const enclosingCleanupPhase = (node) => {
+    let current = node;
+    while (current && current !== run) {
+      if (ts.isObjectLiteralExpression(current)) {
+        const phase = current.properties.find(
+          (property) =>
+            ts.isPropertyAssignment(property) &&
+            propertyNameText(property) === "phase" &&
+            ts.isStringLiteral(property.initializer),
+        );
+        if (phase) return phase.initializer.text;
+      }
+      current = current.parent;
+    }
+    return null;
+  };
+  const isTemporaryDirectoryRemovalAssertionArgument = (identifier) => {
+    const property = identifier.parent;
+    if (!ts.isShorthandPropertyAssignment(property) || property.name !== identifier) return false;
+    const argument = property.parent;
+    const call = argument.parent;
+    return Boolean(
+      ts.isObjectLiteralExpression(argument) &&
+      ts.isCallExpression(call) &&
+      call.arguments.length === 1 &&
+      call.arguments[0] === argument &&
+      compactText(call.expression) === "assertFunctionalSmokeTemporaryDirectoryRemovalAllowed" &&
+      compactText(argument) ===
+        "{path:configRun.path,corruptImageSourceRestoreRequired,corruptImageSourceRestored,imageSelectionProjectResetRequired,imageSelectionProjectResetCompleted,configMutationAttempted,configRestored,}" &&
+      enclosingCleanupPhase(identifier) === "temporary-directory"
+    );
+  };
+  const latchNames = [
+    "configMutationAttempted",
+    "configRestored",
+    "imageSelectionCleanupRequired",
+    "imageSelectionProjectResetRequired",
+    "imageSelectionProjectResetCompleted",
+    "corruptImageSourceRestoreRequired",
+    "corruptImageSourceRestored",
+  ];
+  for (const name of latchNames) {
+    const declaration = intendedRunBindingDeclarations.get(name);
+    if (
+      !declaration ||
+      !declaration.parent ||
+      (declaration.parent.flags & ts.NodeFlags.Let) === 0 ||
+      declaration.initializer?.kind !== ts.SyntaxKind.FalseKeyword
+    ) rejectNode(declaration ?? run, `${name}-declaration-shape`);
+  }
+  const latchAssignment = (identifier) => {
+    const assignment = identifier.parent;
+    return ts.isBinaryExpression(assignment) &&
+      assignment.left === identifier &&
+      assignment.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      assignment.right.kind === ts.SyntaxKind.TrueKeyword
+      ? assignment
+      : null;
+  };
+  walkIdentifiers(run, "configMutationAttempted", "configMutationAttempted-use", (identifier) => {
+    if (intendedRunBindingDeclarations.get("configMutationAttempted")?.name === identifier) {
+      return "configMutationAttempted-declaration-use";
+    }
+    if (latchAssignment(identifier)) {
+      const { previous, next } = siblingStatements(identifier);
+      if (
+        ts.isIfStatement(previous) &&
+        compactText(previous).includes("initialIdentity.configRoot") &&
+        compactText(next) === "imageSelectionHostStateKnown=false;"
+      ) return "configMutationAttempted-latch";
+      return null;
+    }
+    if (isTemporaryDirectoryRemovalAssertionArgument(identifier)) {
+      return "configMutationAttempted-delete-guard";
+    }
+    if (
+      ts.isPrefixUnaryExpression(identifier.parent) &&
+      identifier.parent.operator === ts.SyntaxKind.ExclamationToken &&
+      ts.isIfStatement(identifier.parent.parent) &&
+      enclosingCleanupPhase(identifier) === "temporary-config-root"
+    ) return "configMutationAttempted-restore-guard";
+    if (
+      ts.isBinaryExpression(identifier.parent) &&
+      identifier.parent.left === identifier &&
+      identifier.parent.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken &&
+      enclosingCleanupPhase(identifier) === "temporary-directory"
+    ) return "configMutationAttempted-delete-guard";
+    return null;
+  });
+  walkIdentifiers(run, "configRestored", "configRestored-use", (identifier) => {
+    if (intendedRunBindingDeclarations.get("configRestored")?.name === identifier) {
+      return "configRestored-declaration-use";
+    }
+    if (latchAssignment(identifier)) {
+      const { previous } = siblingStatements(identifier);
+      const restorationCall = directAwaitedCall(previous);
+      if (
+        restorationCall &&
+        compactText(restorationCall.expression) === "restoreConfigRootWithReadback" &&
+        restorationCall.arguments.length === 1 &&
+        compactText(restorationCall.arguments[0]) ===
+          '{expectedRoot:originalConfigRoot,setRoot:(root)=>client.evaluate(debugCall(`(api)=>api.setTemporaryConfigRoot(${JSON.stringify(root)})`)),settle:()=>afterRender(client),readRoot:()=>client.evaluate(debugCall("(api)=>api.getIdentity().configRoot")),label:"functionalsmokeMainconfigroot",}' &&
+        enclosingCleanupPhase(identifier) === "temporary-config-root"
+      ) return "configRestored-latch";
+      return null;
+    }
+    if (isTemporaryDirectoryRemovalAssertionArgument(identifier)) {
+      return "configRestored-delete-guard";
+    }
+    if (
+      ts.isPrefixUnaryExpression(identifier.parent) &&
+      identifier.parent.operator === ts.SyntaxKind.ExclamationToken &&
+      ts.isBinaryExpression(identifier.parent.parent) &&
+      identifier.parent.parent.right === identifier.parent &&
+      enclosingCleanupPhase(identifier) === "temporary-directory"
+    ) return "configRestored-delete-guard";
+    return null;
+  });
+  walkIdentifiers(run, "imageSelectionCleanupRequired", "imageSelectionCleanupRequired-use", (identifier) => {
+    if (intendedRunBindingDeclarations.get("imageSelectionCleanupRequired")?.name === identifier) {
+      return "imageSelectionCleanupRequired-declaration-use";
+    }
+    if (latchAssignment(identifier)) {
+      const { previous, next } = siblingStatements(identifier);
+      if (
+        compactText(previous) === "imageSelectionProjectResetRequired=true;" &&
+        compactText(next).startsWith("evalImageHost=(source)=>")
+      ) return "imageSelectionCleanupRequired-latch";
+      return null;
+    }
+    if (
+      ts.isBinaryExpression(identifier.parent) &&
+      identifier.parent.left === identifier &&
+      identifier.parent.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken &&
+      ts.isIfStatement(identifier.parent.parent)
+    ) return "imageSelectionCleanupRequired-branch-guard";
+    return null;
+  });
+  walkIdentifiers(
+    run,
+    "imageSelectionProjectResetRequired",
+    "imageSelectionProjectResetRequired-use",
+    (identifier) => {
+      if (intendedRunBindingDeclarations.get("imageSelectionProjectResetRequired")?.name === identifier) {
+        return "imageSelectionProjectResetRequired-declaration-use";
+      }
+      if (latchAssignment(identifier)) {
+        const { previous, next } = siblingStatements(identifier);
+        if (
+          ts.isIfStatement(previous) &&
+          compactText(previous).includes("requiresanemptycleanunsavedproject") &&
+          compactText(next) === "imageSelectionCleanupRequired=true;"
+        ) return "imageSelectionProjectResetRequired-latch";
+        return null;
+      }
+      if (isTemporaryDirectoryRemovalAssertionArgument(identifier)) {
+        return "imageSelectionProjectResetRequired-delete-guard";
+      }
+      if (
+        ts.isPrefixUnaryExpression(identifier.parent) &&
+        identifier.parent.operator === ts.SyntaxKind.ExclamationToken &&
+        ts.isBinaryExpression(identifier.parent.parent) &&
+        identifier.parent.parent.right === identifier.parent
+      ) return "imageSelectionProjectResetRequired-cleanup-negated-guard";
+      if (ts.isIfStatement(identifier.parent) && identifier.parent.expression === identifier) {
+        return "imageSelectionProjectResetRequired-reset-branch";
+      }
+      return null;
+    },
+  );
+  walkIdentifiers(
+    run,
+    "imageSelectionProjectResetCompleted",
+    "imageSelectionProjectResetCompleted-use",
+    (identifier) => {
+      if (intendedRunBindingDeclarations.get("imageSelectionProjectResetCompleted")?.name === identifier) {
+        return "imageSelectionProjectResetCompleted-declaration-use";
+      }
+      if (latchAssignment(identifier)) {
+        const { previous } = siblingStatements(identifier);
+        if (
+          enclosingCleanupPhase(identifier) === "image-selection-project-reset" &&
+          compactText(previous) ===
+            'if(reset.reset!==true||reset.archivePath!==archivePath||reset.projectPath!==null||reset.dirty!==false||reset.numItems!==0){thrownewError(`Image-selectionprojectresetfailed:${JSON.stringify(reset)}`);}'
+        ) return "imageSelectionProjectResetCompleted-latch";
+        return null;
+      }
+      return isTemporaryDirectoryRemovalAssertionArgument(identifier)
+        ? "imageSelectionProjectResetCompleted-delete-guard"
+        : null;
+    },
+  );
+  const classifyCorruptRestorationGuard = (identifier, name) => {
+    if (isTemporaryDirectoryRemovalAssertionArgument(identifier)) {
+      return "corrupt-restoration-temporary-directory-guard";
+    }
+    const expression = name === "corruptImageSourceRestored"
+      ? identifier.parent.parent
+      : identifier.parent;
+    if (
+      !ts.isBinaryExpression(expression) ||
+      expression.operatorToken.kind !== ts.SyntaxKind.AmpersandAmpersandToken ||
+      (name === "corruptImageSourceRestoreRequired" && expression.left !== identifier) ||
+      (name === "corruptImageSourceRestored" &&
+        (!ts.isPrefixUnaryExpression(identifier.parent) || expression.right !== identifier.parent))
+    ) return null;
+    const phase = enclosingCleanupPhase(identifier);
+    return ["image-selection-project-reset", "temporary-directory"].includes(phase)
+      ? `corrupt-restoration-${phase}-guard`
+      : null;
+  };
+  walkIdentifiers(
+    run,
+    "corruptImageSourceRestoreRequired",
+    "corruptImageSourceRestoreRequired-use",
+    (identifier) => {
+      if (intendedRunBindingDeclarations.get("corruptImageSourceRestoreRequired")?.name === identifier) {
+        return "corruptImageSourceRestoreRequired-declaration-use";
+      }
+      if (latchAssignment(identifier)) {
+        const { previous } = siblingStatements(identifier);
+        const latchStatement = containingStatement(identifier);
+        const lifecycleStatement = containingStatement(corruptLifecycleDeclaration);
+        if (
+          compactText(previous).startsWith("captureNewOwnedTopology([corruptOwnedItem],corruptImage)") &&
+          latchStatement?.parent === lifecycleStatement?.parent &&
+          latchStatement.getStart(sourceFile) < lifecycleStatement.getStart(sourceFile)
+        ) return "corruptImageSourceRestoreRequired-latch";
+        return null;
+      }
+      return classifyCorruptRestorationGuard(identifier, "corruptImageSourceRestoreRequired");
+    },
+  );
+  walkIdentifiers(run, "corruptImageSourceRestored", "corruptImageSourceRestored-use", (identifier) => {
+    if (intendedRunBindingDeclarations.get("corruptImageSourceRestored")?.name === identifier) {
+      return "corruptImageSourceRestored-declaration-use";
+    }
+    if (latchAssignment(identifier)) return "corruptImageSourceRestored-callback-latch";
+    return classifyCorruptRestorationGuard(identifier, "corruptImageSourceRestored");
+  });
+
+  const runtimeGuardDeclaration = intendedRunBindingDeclarations.get("runtimeEvaluationGuard");
+  walkIdentifiers(run, "runtimeEvaluationGuard", "runtimeEvaluationGuard-use", (identifier) => {
+    if (runtimeGuardDeclaration?.name === identifier) return "runtimeEvaluationGuard-declaration-use";
+    const assignment = identifier.parent;
+    if (
+      ts.isBinaryExpression(assignment) &&
+      assignment.left === identifier &&
+      assignment.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isCallExpression(assignment.right) &&
+      identifierNamed(assignment.right.expression, "guardClientEvaluations") &&
+      assignment.right.arguments.length === 2 &&
+      identifierNamed(assignment.right.arguments[0], "client") &&
+      ts.isStringLiteral(assignment.right.arguments[1]) &&
+      assignment.right.arguments[1].text === "functional smoke Main"
+    ) return "runtimeEvaluationGuard-install";
+    if (callArgumentUse(identifier, "isFunctionalSmokeRuntimeCompletionKnown", 0)) {
+      return "runtimeEvaluationGuard-completion-read";
+    }
+    if (callArgumentUse(identifier, "waitForHostIdle", 1)) {
+      return "runtimeEvaluationGuard-host-wait";
+    }
+    if (callArgumentUse(identifier, "waitForStableDebug", 1)) {
+      return "runtimeEvaluationGuard-stable-wait";
+    }
+    if (callArgumentUse(identifier, "waitForMutationRevision", 2)) {
+      return "runtimeEvaluationGuard-mutation-wait";
+    }
+    if (callArgumentUse(identifier, "waitForReloadedPalette", 3)) {
+      return "runtimeEvaluationGuard-reload-wait";
+    }
+    return null;
+  });
+
+  const hostStateDeclaration = intendedRunBindingDeclarations.get("imageSelectionHostStateKnown");
+  walkIdentifiers(
+    run,
+    "imageSelectionHostStateKnown",
+    "imageSelectionHostStateKnown-use",
+    (identifier) => {
+      if (hostStateDeclaration?.name === identifier) return "imageSelectionHostStateKnown-declaration-use";
+      const assignment = identifier.parent;
+      if (
+        ts.isBinaryExpression(assignment) &&
+        assignment.left === identifier &&
+        assignment.operatorToken.kind === ts.SyntaxKind.EqualsToken
+      ) {
+        const { previous, next, next2 } = siblingStatements(identifier);
+        const previousText = compactText(previous);
+        const nextText = compactText(next);
+        const next2Text = compactText(next2);
+        if (assignment.right.kind === ts.SyntaxKind.FalseKeyword) {
+          if (
+            isDirectAwaitedCall(next, "client.evaluate", 1) &&
+            nextText.startsWith("constaccepted=awaitclient.evaluate(debugCall(expression))") &&
+            isDirectAwaitedCall(next2, "waitForHostIdle", 2) &&
+            next2Text.startsWith("conststate=awaitwaitForHostIdle(client,runtimeEvaluationGuard)")
+          ) return "host-state-dispatch-false";
+          if (
+            isDirectAwaitedCall(next, "client.evaluate", 1) &&
+            nextText.startsWith("awaitclient.evaluate(debugCall(`(api)=>api.setTemporaryConfigRoot(")
+          ) {
+            return "host-state-config-false";
+          }
+          if (
+            isDirectAwaitedCall(next, "evalHost", 2) &&
+            nextText.startsWith("constresult=awaitevalHost(client,guardImageSelectionProjectSource(")
+          ) {
+            return "host-state-image-wrapper-false";
+          }
+          if (
+            isDirectAwaitedCall(next, "client.evaluate", 1) &&
+            nextText.startsWith("constaccepted=awaitclient.evaluate(debugCall('(api)=>api.dispatchClick(\"palette-add\")'))") &&
+            isDirectAwaitedCall(next2, "waitForHostIdle", 2) &&
+            next2Text.startsWith("conststate=awaitwaitForHostIdle(client,runtimeEvaluationGuard)")
+          ) return "host-state-palette-click-false";
+          if (
+            isDirectAwaitedCall(next, "evalHost", 2) &&
+            nextText.startsWith("constresult=awaitevalHost(client,cleanupImageSelectionFixturesSource(")
+          ) {
+            return "host-state-cleanup-false";
+          }
+          if (
+            nextText.startsWith("constarchivePath=resolve(outputDirectory,\"preserved-functional-project.aep\")") &&
+            isDirectAwaitedCall(next2, "evalHost", 2) &&
+            next2Text.startsWith("constreset=awaitevalHost(client,archiveAndResetOwnedProjectSource(")
+          ) return "host-state-project-reset-false";
+          return null;
+        }
+        if (assignment.right.kind === ts.SyntaxKind.TrueKeyword) {
+          if (
+            isDirectAwaitedCall(previous, "waitForHostIdle", 2) &&
+            previousText.startsWith("conststate=awaitwaitForHostIdle(client,runtimeEvaluationGuard)") &&
+            nextText === "return{accepted,state};"
+          ) return "host-state-dispatch-true";
+          if (
+            ts.isIfStatement(previous) &&
+            previousText.includes("temporaryIdentity.configRoot!==temporaryRoot") &&
+            nextText.startsWith("if(mode===\"mutate\")")
+          ) return "host-state-config-true";
+          if (
+            isDirectAwaitedCall(previous, "evalHost", 2) &&
+            previousText.startsWith("constresult=awaitevalHost(client,guardImageSelectionProjectSource(") &&
+            nextText === "returnresult;"
+          ) return "host-state-image-wrapper-true";
+          if (
+            isDirectAwaitedCall(previous, "waitForHostIdle", 2) &&
+            previousText.startsWith("conststate=awaitwaitForHostIdle(client,runtimeEvaluationGuard)") &&
+            nextText.startsWith("constelapsedMs=Date.now()-startedAt")
+          ) return "host-state-image-case-true";
+          if (
+            isDirectAwaitedCall(previous, "evalHost", 2) &&
+            previousText.startsWith("constresult=awaitevalHost(client,cleanupImageSelectionFixturesSource(") &&
+            nextText === "returnresult;"
+          ) return "host-state-cleanup-true";
+          if (
+            isDirectAwaitedCall(previous, "evalHost", 2) &&
+            previousText.startsWith("constreset=awaitevalHost(client,archiveAndResetOwnedProjectSource(") &&
+            ts.isIfStatement(next)
+          ) return "host-state-project-reset-true";
+          return null;
+        }
+        if (
+          assignment.right.getText(sourceFile).replace(/\s+/g, "") ===
+            "accepted===true&&snapshot?.state?.pendingHostAction===null&&snapshot?.counters?.hostCalls===1" &&
+          isDirectAwaitedCall(previous, "client.evaluate", 1) &&
+          previousText.startsWith("constsnapshot=awaitclient.evaluate(debugCall(") &&
+          nextText.startsWith("conststored=JSON.parse(awaitreadFile(")
+        ) return "host-state-selection-case-derived";
+        return null;
+      }
+      if (authorityBody?.left === identifier) return "imageSelectionHostStateKnown-authority-read";
+      if (
+        ts.isPrefixUnaryExpression(identifier.parent) &&
+        identifier.parent.operator === ts.SyntaxKind.ExclamationToken &&
+        ts.isBinaryExpression(identifier.parent.parent) &&
+        identifier.parent.parent.left === identifier.parent &&
+        identifier.parent.parent.operatorToken.kind === ts.SyntaxKind.BarBarToken &&
+        ts.isPrefixUnaryExpression(identifier.parent.parent.right) &&
+        identifier.parent.parent.right.operator === ts.SyntaxKind.ExclamationToken &&
+        ts.isCallExpression(identifier.parent.parent.right.operand) &&
+        identifierNamed(
+          identifier.parent.parent.right.operand.expression,
+          "runtimeEvaluationCompletionKnown",
+        )
+      ) {
+        const phase = enclosingCleanupPhase(identifier);
+        return [
+          "image-selection-fixtures",
+          "image-selection-project-reset",
+          "temporary-config-root",
+        ].includes(phase)
+          ? `imageSelectionHostStateKnown-${phase}-guard`
+          : null;
+      }
+      return null;
+    },
+  );
+
+  walkIdentifiers(run, "diagnosticState", "production-diagnosticState-use", (identifier) => {
+    if (
+      ts.isBindingElement(identifier.parent) &&
+      identifier.parent.name === identifier &&
+      ts.isObjectBindingPattern(identifier.parent.parent) &&
+      identifier.parent.parent === run.parameters[0]?.name
+    ) return "production-diagnosticState-binding";
+    if (callArgumentUse(identifier, "importFunctionalSmokeErrorDiagnostics", 1)) {
+      return "production-diagnosticState-import";
+    }
+    if (ts.isShorthandPropertyAssignment(identifier.parent)) {
+      const object = identifier.parent.parent;
+      const call = object.parent;
+      if (
+        ts.isObjectLiteralExpression(object) &&
+        ts.isCallExpression(call) &&
+        call.arguments[0] === object &&
+        ts.isIdentifier(call.expression) &&
+        [
+          "runCorruptImageSelectionCase",
+          "finalizeFunctionalSmoke",
+          "publishFunctionalSmokeFailure",
+        ].includes(call.expression.text)
+      ) return `production-diagnosticState-${call.expression.text}`;
+    }
+    return null;
+  });
+
+  const corruptImportDeclaration = variableDeclarationNamed(run, "corruptImage");
+  const corruptImportAwait = corruptImportDeclaration?.initializer;
+  const corruptImportEvalCall = corruptImportAwait && ts.isAwaitExpression(corruptImportAwait)
+    ? corruptImportAwait.expression
+    : null;
+  const corruptImportSourceCall =
+    corruptImportEvalCall &&
+    ts.isCallExpression(corruptImportEvalCall) &&
+    corruptImportEvalCall.arguments.length === 1 &&
+    ts.isCallExpression(corruptImportEvalCall.arguments[0])
+      ? corruptImportEvalCall.arguments[0]
+      : null;
+  if (
+    !corruptImportDeclaration ||
+    !isConstDeclaration(corruptImportDeclaration) ||
+    !corruptImportAwait ||
+    !ts.isAwaitExpression(corruptImportAwait) ||
+    !corruptImportEvalCall ||
+    !ts.isCallExpression(corruptImportEvalCall) ||
+    !identifierNamed(corruptImportEvalCall.expression, "evalImageHost") ||
+    !corruptImportSourceCall ||
+    !identifierNamed(corruptImportSourceCall.expression, "importProjectImageSource") ||
+    corruptImportSourceCall.arguments.length !== 2 ||
+    !identifierNamed(corruptImportSourceCall.arguments[0], "corruptPath") ||
+    !ts.isStringLiteral(corruptImportSourceCall.arguments[1]) ||
+    corruptImportSourceCall.arguments[1].text !== "CP_IMAGE_CORRUPT_PNG"
+  ) {
+    rejectNode(corruptImportDeclaration ?? run, "corrupt-import-shape");
+  }
+
+  let validCopyStatement = null;
+  const findValidCopy = (node) => {
+    if (
+      ts.isExpressionStatement(node) &&
+      ts.isAwaitExpression(node.expression) &&
+      ts.isCallExpression(node.expression.expression) &&
+      identifierNamed(node.expression.expression.expression, "writeFile") &&
+      node.expression.expression.arguments.length === 2 &&
+      identifierNamed(node.expression.expression.arguments[0], "corruptPath") &&
+      identifierNamed(node.expression.expression.arguments[1], "pngBytes")
+    ) {
+      if (validCopyStatement) rejectNode(node, "corrupt-valid-copy-duplicate");
+      validCopyStatement = node;
+    }
+    ts.forEachChild(node, findValidCopy);
+  };
+  findValidCopy(run);
+  const pngBytesStatement = pngBytesDeclaration && containingStatement(pngBytesDeclaration);
+  const corruptImportStatement = corruptImportDeclaration && containingStatement(corruptImportDeclaration);
+  const corruptLifecycleStatement =
+    corruptLifecycleDeclaration && containingStatement(corruptLifecycleDeclaration);
+  if (
+    !pngBytesStatement ||
+    !validCopyStatement ||
+    !corruptImportStatement ||
+    !corruptLifecycleStatement ||
+    pngBytesStatement.parent !== validCopyStatement.parent ||
+    validCopyStatement.parent !== corruptImportStatement.parent ||
+    corruptImportStatement.parent !== corruptLifecycleStatement.parent ||
+    !(
+      pngBytesStatement.getStart(sourceFile) < validCopyStatement.getStart(sourceFile) &&
+      validCopyStatement.getStart(sourceFile) < corruptImportStatement.getStart(sourceFile) &&
+      corruptImportStatement.getStart(sourceFile) < corruptLifecycleStatement.getStart(sourceFile)
+    )
+  ) {
+    rejectNode(corruptLifecycleDeclaration ?? run, "corrupt-lifecycle-order");
+  }
+
+  const corruptSourceRestorationDeclaration = variableDeclarationNamed(
+    run,
+    "corruptSourceRestoration",
+  );
+  walkIdentifiers(run, "corruptLifecycle", "corruptLifecycle-use", (identifier) => {
+    if (corruptLifecycleDeclaration?.name === identifier) return "corruptLifecycle-declaration-use";
+    if (
+      ts.isPropertyAccessExpression(identifier.parent) &&
+      identifier.parent.expression === identifier &&
+      identifierNamed(identifier.parent.name, "restoration") &&
+      corruptSourceRestorationDeclaration?.initializer === identifier.parent
+    ) return "corruptLifecycle-restoration-use";
+    return null;
+  });
+  walkIdentifiers(
+    run,
+    "corruptSourceRestoration",
+    "corruptSourceRestoration-use",
+    (identifier) => {
+      if (corruptSourceRestorationDeclaration?.name === identifier) {
+        return "corruptSourceRestoration-declaration-use";
+      }
+      if (
+        ts.isShorthandPropertyAssignment(identifier.parent) &&
+        identifier.parent.name === identifier
+      ) return "corruptSourceRestoration-report-use";
+      return null;
+    },
+  );
+
+  for (const [label, expected] of [
+    ["corrupt-declaration", 1],
+    ["corrupt-valid-copy", 1],
+    ["corrupt-valid-import", 1],
+    ["corrupt-lifecycle-wire", 1],
+    ["helper-corrupt-parameter", 1],
+    ["helper-corrupt-write", 2],
+    ["helper-corrupt-read", 1],
+    ["helper-corrupt-path-record", 2],
+    ["helper-validBytes-binding", 1],
+    ["helper-validBytes-copy", 1],
+    ["helper-corruptBytes-binding", 1],
+    ["helper-corruptBytes-write", 1],
+    ["Buffer-import-use", 1],
+    ["Buffer-from-direct-call", 9],
+    ["helper-runProductCase-binding", 1],
+    ["helper-runProductCase-call", 1],
+    ["helper-validateProductResult-binding", 1],
+    ["helper-validateProductResult-call", 1],
+    ["helper-hasRestoreAuthority-binding", 1],
+    ["helper-hasRestoreAuthority-call", 1],
+    ["helper-diagnosticState-binding", 1],
+    ["helper-diagnosticState-import", 1],
+    ["helper-diagnosticState-attach", 2],
+    ["helper-diagnosticState-cleanup-append", 1],
+    ["helper-onRestoreVerified-binding", 1],
+    ["helper-onRestoreVerified-call", 1],
+    ["helper-writeSource-binding", 1],
+    ["helper-writeSource-call", 2],
+    ["helper-readSource-binding", 1],
+    ["helper-readSource-call", 1],
+    ["expectedBytes-declaration-use", 1],
+    ["expectedBytes-restore-write", 1],
+    ["expectedBytes-sha-use", 1],
+    ["expectedBytes-equality-use", 1],
+    ["configMutationAttempted-declaration-use", 1],
+    ["configMutationAttempted-latch", 1],
+    ["configMutationAttempted-restore-guard", 1],
+    ["configMutationAttempted-delete-guard", 1],
+    ["configRestored-declaration-use", 1],
+    ["configRestored-latch", 1],
+    ["configRestored-delete-guard", 1],
+    ["imageSelectionCleanupRequired-declaration-use", 1],
+    ["imageSelectionCleanupRequired-latch", 1],
+    ["imageSelectionCleanupRequired-branch-guard", 1],
+    ["imageSelectionProjectResetRequired-declaration-use", 1],
+    ["imageSelectionProjectResetRequired-latch", 1],
+    ["imageSelectionProjectResetRequired-cleanup-negated-guard", 1],
+    ["imageSelectionProjectResetRequired-reset-branch", 1],
+    ["imageSelectionProjectResetRequired-delete-guard", 1],
+    ["imageSelectionProjectResetCompleted-declaration-use", 1],
+    ["imageSelectionProjectResetCompleted-latch", 1],
+    ["imageSelectionProjectResetCompleted-delete-guard", 1],
+    ["corruptImageSourceRestoreRequired-declaration-use", 1],
+    ["corruptImageSourceRestoreRequired-latch", 1],
+    ["corruptImageSourceRestored-declaration-use", 1],
+    ["corruptImageSourceRestored-callback-latch", 1],
+    ["corrupt-restoration-image-selection-project-reset-guard", 2],
+    ["corrupt-restoration-temporary-directory-guard", 2],
+    ["runtimeEvaluationGuard-declaration-use", 1],
+    ["runtimeEvaluationGuard-install", 1],
+    ["runtimeEvaluationGuard-completion-read", 1],
+    ["runtimeEvaluationGuard-host-wait", 3],
+    ["runtimeEvaluationGuard-stable-wait", 4],
+    ["runtimeEvaluationGuard-mutation-wait", 4],
+    ["runtimeEvaluationGuard-reload-wait", 1],
+    ["imageSelectionHostStateKnown-declaration-use", 1],
+    ["host-state-dispatch-false", 1],
+    ["host-state-config-false", 1],
+    ["host-state-image-wrapper-false", 1],
+    ["host-state-palette-click-false", 2],
+    ["host-state-cleanup-false", 1],
+    ["host-state-project-reset-false", 1],
+    ["host-state-dispatch-true", 1],
+    ["host-state-config-true", 1],
+    ["host-state-image-wrapper-true", 1],
+    ["host-state-image-case-true", 1],
+    ["host-state-cleanup-true", 1],
+    ["host-state-project-reset-true", 1],
+    ["host-state-selection-case-derived", 1],
+    ["imageSelectionHostStateKnown-authority-read", 1],
+    ["imageSelectionHostStateKnown-image-selection-fixtures-guard", 1],
+    ["imageSelectionHostStateKnown-image-selection-project-reset-guard", 1],
+    ["imageSelectionHostStateKnown-temporary-config-root-guard", 1],
+    ["production-diagnosticState-binding", 1],
+    ["production-diagnosticState-import", 1],
+    ["production-diagnosticState-runCorruptImageSelectionCase", 1],
+    ["production-diagnosticState-finalizeFunctionalSmoke", 1],
+    ["production-diagnosticState-publishFunctionalSmokeFailure", 1],
+    ["topology-declaration", 1],
+    ["topology-validated-capture", 1],
+    ["topology-readonly-cleanup", 1],
+    ["captureNewOwnedTopology-declaration", 1],
+    ["captureNewOwnedTopology-terminal-call", 5],
+    ["pngBytes-provenance-use", 1],
+    ["pngBytes-valid-copy-use", 1],
+    ["pngBytes-lifecycle-use", 1],
+    ["corruptLifecycle-declaration-use", 1],
+    ["corruptLifecycle-restoration-use", 1],
+    ["corruptSourceRestoration-declaration-use", 1],
+    ["corruptSourceRestoration-report-use", 1],
+  ]) {
+    if ((counts.get(label) ?? 0) !== expected) {
+      errors.push(`${label}:expected-${expected}:actual-${counts.get(label) ?? 0}`);
+    }
+  }
+  return errors;
 };
 
 test("CLI parsing rejects empty, duplicate, unknown, absolute, root, and traversal outputs", () => {
@@ -979,6 +2563,2418 @@ test("functional smoke reads current palette documents and wrapped color-selecti
   );
 });
 
+test("functional smoke production paths satisfy AST-backed closed-world mutation contracts", async () => {
+  const functionalSource = await readFile(
+    new URL("../scripts/cep-functional-smoke.mjs", import.meta.url),
+    "utf8",
+  );
+  assert.deepEqual(analyzeFunctionalSmokeClosedWorld(functionalSource), []);
+
+  const afterValidCopy = (insertion) => functionalSource.replace(
+    "      await writeFile(corruptPath, pngBytes);",
+    `      await writeFile(corruptPath, pngBytes);\n${insertion}`,
+  );
+  for (const [label, mutated] of [
+    [
+      "direct writer",
+      afterValidCopy('      await writeFile(corruptPath, Buffer.from("not a valid PNG"));'),
+    ],
+    [
+      "aliased writer",
+      afterValidCopy(
+        '      const corruptAlias = corruptPath;\n      await writeFile(corruptAlias, "not a valid PNG");',
+      ),
+    ],
+    ["helper wrapped", afterValidCopy("      await mutateCorruptFixture(corruptPath);")],
+    ["alternate writer", afterValidCopy('      await appendFile(corruptPath, "damage");')],
+    ["Buffer consumer", afterValidCopy("      Buffer.from(corruptPath);")],
+  ]) {
+    assert.match(
+      analyzeFunctionalSmokeClosedWorld(mutated).join("\n"),
+      /production-corruptPath/,
+      label,
+    );
+  }
+  const helperBypass = functionalSource.replace(
+    "    await writeSource(corruptPath, corruptBytes);",
+    '    await writeFile(corruptPath, Buffer.from("helper bypass"));\n    await writeSource(corruptPath, corruptBytes);',
+  );
+  assert.match(
+    analyzeFunctionalSmokeClosedWorld(helperBypass).join("\n"),
+    /helper-corruptPath/,
+    "corrupt helper internals must remain separately closed",
+  );
+
+  const assertBindingMutationRejected = (label, mutated, policy = /binding|shadow/) => {
+    const parsed = ts.createSourceFile(
+      `${label}.mjs`,
+      mutated,
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.JS,
+    );
+    assert.equal(parsed.parseDiagnostics.length, 0, `${label} must be syntactically valid`);
+    let errors;
+    assert.doesNotThrow(() => {
+      errors = analyzeFunctionalSmokeClosedWorld(mutated);
+    }, `${label} must return causal analyzer errors rather than throw`);
+    assert.match(errors.join("\n"), policy, label);
+  };
+  const beforeCorruptLifecycle = (insertion) => functionalSource.replace(
+    "      const corruptLifecycle = await runCorruptImageSelectionCase({",
+    `${insertion}\n      const corruptLifecycle = await runCorruptImageSelectionCase({`,
+  );
+
+  const exactCorruptHelperParameter = `export const runCorruptImageSelectionCase = async ({
+  corruptPath,
+  validBytes,
+  corruptBytes = Buffer.from("not a valid PNG"),
+  runProductCase,
+  validateProductResult,
+  hasRestoreAuthority,
+  diagnosticState = createFunctionalSmokeDiagnosticState(),
+  onRestoreVerified = async () => undefined,
+  writeSource = writeFile,
+  readSource = readFile,
+}) => {`;
+  const mutateCorruptHelperParameter = (replacement) => {
+    assert.ok(functionalSource.includes(exactCorruptHelperParameter));
+    return functionalSource.replace(exactCorruptHelperParameter, replacement);
+  };
+  const corruptHelperDefaultAndTopologyMutations = [
+    [
+      "no-op write default",
+      exactCorruptHelperParameter.replace(
+        "writeSource = writeFile",
+        "writeSource = async () => undefined",
+      ),
+    ],
+    [
+      "forged read default",
+      exactCorruptHelperParameter.replace(
+        "readSource = readFile",
+        "readSource = async () => Buffer.from(validBytes)",
+      ),
+    ],
+    [
+      "valid bytes replace corrupt default",
+      exactCorruptHelperParameter.replace(
+        'corruptBytes = Buffer.from("not a valid PNG")',
+        "corruptBytes = validBytes",
+      ),
+    ],
+    [
+      "foreign diagnostic state default",
+      exactCorruptHelperParameter.replace(
+        "diagnosticState = createFunctionalSmokeDiagnosticState()",
+        "diagnosticState = ({ cleanupErrors: [], evidenceWriteErrors: [] })",
+      ),
+    ],
+    [
+      "permissive diagnostic state default",
+      exactCorruptHelperParameter.replace(
+        "diagnosticState = createFunctionalSmokeDiagnosticState()",
+        "diagnosticState = createFunctionalSmokeDiagnosticState() || {}",
+      ),
+    ],
+    [
+      "throwing restore callback default",
+      exactCorruptHelperParameter.replace(
+        "onRestoreVerified = async () => undefined",
+        'onRestoreVerified = async () => { throw new Error("forged restore"); }',
+      ),
+    ],
+    [
+      "aliased parameter",
+      exactCorruptHelperParameter.replace("  corruptPath,", "  corruptPath: watchedPath,"),
+    ],
+    [
+      "nested destructuring parameter",
+      exactCorruptHelperParameter.replace("  validBytes,", "  validBytes: { length },"),
+    ],
+    [
+      "rest parameter element",
+      exactCorruptHelperParameter.replace("  readSource = readFile,", "  ...rest,"),
+    ],
+    [
+      "extra parameter element",
+      exactCorruptHelperParameter.replace("  readSource = readFile,", "  readSource = readFile,\n  extra,"),
+    ],
+    [
+      "reordered parameter elements",
+      exactCorruptHelperParameter
+        .replace("  corruptPath,\n  validBytes,", "  validBytes,\n  corruptPath,"),
+    ],
+    [
+      "missing parameter element",
+      exactCorruptHelperParameter.replace("  validateProductResult,\n", ""),
+    ],
+    [
+      "second function parameter",
+      exactCorruptHelperParameter.replace("}) => {", "}, options) => {"),
+    ],
+  ];
+  for (const [label, replacement] of corruptHelperDefaultAndTopologyMutations) {
+    assertBindingMutationRejected(
+      label,
+      mutateCorruptHelperParameter(replacement),
+      /corrupt-helper-parameter-shape/,
+    );
+  }
+
+  const inCorruptHelperBody = (insertion) => functionalSource.replace(
+    "  const expectedBytes = Buffer.from(validBytes);",
+    `${insertion}\n  const expectedBytes = Buffer.from(validBytes);`,
+  );
+  for (const [name, replacement, policy] of [
+    ["corruptPath", '  corruptPath = "/forged/corrupt.png";', /helper-corruptPath/],
+    ["validBytes", '  validBytes = Buffer.from("forged valid");', /helper-validBytes-use/],
+    ["corruptBytes", "  corruptBytes = validBytes;", /helper-corruptBytes-use/],
+    ["runProductCase", "  runProductCase = async () => undefined;", /helper-runProductCase-use/],
+    [
+      "validateProductResult",
+      "  validateProductResult = async () => undefined;",
+      /helper-validateProductResult-use/,
+    ],
+    ["hasRestoreAuthority", "  hasRestoreAuthority = () => true;", /helper-hasRestoreAuthority-use/],
+    [
+      "diagnosticState",
+      "  diagnosticState = createFunctionalSmokeDiagnosticState();",
+      /helper-diagnosticState-use/,
+    ],
+    ["onRestoreVerified", "  onRestoreVerified = async () => undefined;", /helper-onRestoreVerified-use/],
+    ["writeSource", "  writeSource = async () => undefined;", /helper-writeSource-use/],
+    ["readSource", "  readSource = async () => Buffer.from(validBytes);", /helper-readSource-use/],
+  ]) {
+    assertBindingMutationRejected(
+      `${name} same-binding reassignment`,
+      inCorruptHelperBody(replacement),
+      policy,
+    );
+    assertBindingMutationRejected(
+      `${name} alias`,
+      inCorruptHelperBody(`  const ${name}Alias = ${name};`),
+      policy,
+    );
+  }
+  assertBindingMutationRejected(
+    "corruptPath update expression",
+    inCorruptHelperBody("  corruptPath++;"),
+    /helper-corruptPath/,
+  );
+  for (const [label, insertion, policy] of [
+    [
+      "direct helper eval authority forgery",
+      '  eval("hasRestoreAuthority = () => true");',
+      /helper-dynamic-execution/,
+    ],
+    [
+      "element-access helper eval authority forgery",
+      '  globalThis["eval"]("hasRestoreAuthority = () => true");',
+      /helper-dynamic-execution/,
+    ],
+    [
+      "dynamic Function constructor",
+      '  Function("return true")();',
+      /helper-dynamic-execution/,
+    ],
+    [
+      "computed constructor chain",
+      '  ({})["con" + "structor"]["con" + "structor"]("return true")();',
+      /helper-dynamic-execution/,
+    ],
+    [
+      "template eval access",
+      '  globalThis[`eval`]("hasRestoreAuthority = () => true");',
+      /helper-dynamic-execution/,
+    ],
+    [
+      "unknown computed callable key",
+      '  const dynamicKey = "eval";\n  globalThis[dynamicKey]("hasRestoreAuthority = () => true");',
+      /helper-dynamic-execution/,
+    ],
+  ]) {
+    assertBindingMutationRejected(label, inCorruptHelperBody(insertion), policy);
+  }
+  for (const [label, insertion] of [
+    ["Buffer.from method replacement", "  Buffer.from = () => Buffer.alloc(0);"],
+    ["Buffer.from element replacement", '  Buffer["from"] = () => Buffer.alloc(0);'],
+    ["Buffer.from alias", "  const forgedBufferFrom = Buffer.from;"],
+    [
+      "Buffer.from descriptor replacement",
+      '  Object.defineProperty(Buffer, "from", { value: () => Buffer.alloc(0) });',
+    ],
+  ]) {
+    assertBindingMutationRejected(
+      label,
+      inCorruptHelperBody(insertion),
+      /Buffer-use-authority/,
+    );
+  }
+
+  for (const [label, insertion] of [
+    [
+      "mutable forged expected bytes",
+      '  let expectedBytes = Buffer.from(validBytes);\n  expectedBytes = Buffer.from("forged restoration bytes");',
+    ],
+    ["expected bytes alias", "  const expectedBytes = Buffer.from(validBytes);\n  const expectedAlias = expectedBytes;"],
+    ["expected bytes update", "  const expectedBytes = Buffer.from(validBytes);\n  expectedBytes++;"],
+    [
+      "expected bytes destructuring target",
+      "  const expectedBytes = Buffer.from(validBytes);\n  ({ expectedBytes } = replacement);",
+    ],
+    [
+      "expected bytes extra use",
+      "  const expectedBytes = Buffer.from(validBytes);\n  Buffer.from(expectedBytes);",
+    ],
+  ]) {
+    assertBindingMutationRejected(
+      label,
+      functionalSource.replace("  const expectedBytes = Buffer.from(validBytes);", insertion),
+      /expectedBytes-(?:provenance|use)|expectedBytes-.*expected-/,
+    );
+  }
+
+  for (const [label, insertion, policy] of [
+    [
+      "direct run eval authority forgery",
+      '      eval("runtimeEvaluationGuard = { isCompletionKnown: () => true }");',
+      /production-dynamic-execution/,
+    ],
+    [
+      "element-access run eval authority forgery",
+      '      globalThis["eval"]("imageSelectionHostStateKnown = true");',
+      /production-dynamic-execution/,
+    ],
+    [
+      "computed run constructor evaluator replacement",
+      '      ({})["con" + "structor"]["con" + "structor"]("client", "client.evaluate = client.sendForEvaluate")(client);',
+      /production-dynamic-execution/,
+    ],
+    [
+      "template run eval authority forgery",
+      '      globalThis[`eval`]("runtimeEvaluationGuard = { isCompletionKnown: () => true }");',
+      /production-dynamic-execution/,
+    ],
+    [
+      "runtime guard forged reassignment",
+      "      runtimeEvaluationGuard = { isCompletionKnown: () => true };",
+      /runtimeEvaluationGuard-use/,
+    ],
+    [
+      "runtime guard duplicate authenticated install",
+      '      runtimeEvaluationGuard = guardClientEvaluations(client, "functional smoke Main");',
+      /runtimeEvaluationGuard-install:expected-1:actual-2/,
+    ],
+    [
+      "runtime guard alias",
+      "      const runtimeGuardAlias = runtimeEvaluationGuard;",
+      /runtimeEvaluationGuard-use/,
+    ],
+    [
+      "host-state forged reassignment",
+      "      imageSelectionHostStateKnown = true;",
+      /imageSelectionHostStateKnown-use|host-state-/,
+    ],
+    [
+      "host-state alias",
+      "      const hostStateAlias = imageSelectionHostStateKnown;",
+      /imageSelectionHostStateKnown-use/,
+    ],
+    [
+      "run diagnostic-state reassignment",
+      "      diagnosticState = createFunctionalSmokeDiagnosticState();",
+      /production-diagnosticState-use/,
+    ],
+    [
+      "run diagnostic-state alias",
+      "      const diagnosticAlias = diagnosticState;",
+      /production-diagnosticState-use/,
+    ],
+  ]) {
+    assertBindingMutationRejected(label, beforeCorruptLifecycle(insertion), policy);
+  }
+  for (const [label, mutated] of [
+    [
+      "Reflect prototype constructor recovery backstop",
+      beforeCorruptLifecycle(
+        '      Reflect.get(Object.getPrototypeOf(() => undefined), "constructor")("client", "client.evaluate = client.sendForEvaluate")(client);',
+      ),
+    ],
+    [
+      "guarded client capability reassignment backstop",
+      beforeCorruptLifecycle("      client.evaluate = client.sendForEvaluate;"),
+    ],
+    [
+      "guarded client numeric-element escape backstop",
+      beforeCorruptLifecycle("      client.evaluate = [client.sendForEvaluate][0];"),
+    ],
+    [
+      "global Buffer alias mutation backstop",
+      inCorruptHelperBody("  globalThis.Buffer.from = () => globalThis.Buffer.alloc(0);"),
+    ],
+    [
+      "Reflect global Buffer alias mutation backstop",
+      inCorruptHelperBody(
+        '  Reflect.set(globalThis.Buffer, "from", () => globalThis.Buffer.alloc(0));',
+      ),
+    ],
+    [
+      "restore callee lexical shadow backstop",
+      beforeCorruptLifecycle(
+        "      { const restoreConfigRootWithReadback = async () => originalConfigRoot; void restoreConfigRootWithReadback; }",
+      ),
+    ],
+    [
+      "host wait callee lexical shadow backstop",
+      beforeCorruptLifecycle(
+        "      { const waitForHostIdle = async () => ({ pendingHostAction: null }); void waitForHostIdle; }",
+      ),
+    ],
+  ]) {
+    assertBindingMutationRejected(label, mutated, /functional-source-fingerprint/);
+  }
+
+  for (const [name, value] of [
+    ["corruptImageSourceRestoreRequired", "false"],
+    ["corruptImageSourceRestored", "true"],
+    ["configRestored", "true"],
+    ["configMutationAttempted", "false"],
+    ["imageSelectionCleanupRequired", "false"],
+    ["imageSelectionProjectResetRequired", "false"],
+  ]) {
+    assertBindingMutationRejected(
+      `${name} forged cleanup latch`,
+      beforeCorruptLifecycle(`      ${name} = ${value};`),
+      new RegExp(`${name}-use|${name}-.*expected-`),
+    );
+  }
+  assertBindingMutationRejected(
+    "no-op restoration callback",
+    functionalSource.replace(
+      "        onRestoreVerified: () => {\n          corruptImageSourceRestored = true;\n        },",
+      "        onRestoreVerified: () => undefined,",
+    ),
+    /restore-callback-shape|corruptImageSourceRestored-.*expected-/,
+  );
+  assertBindingMutationRejected(
+    "same-count host-state true transition moved before awaited operation",
+    functionalSource.replace(
+      `            imageSelectionHostStateKnown = false;
+            const accepted = await client.evaluate(
+              debugCall('(api) => api.dispatchClick("palette-add")')
+            );
+            const state = await waitForHostIdle(client, runtimeEvaluationGuard);
+            imageSelectionHostStateKnown = true;`,
+      `            imageSelectionHostStateKnown = false;
+            imageSelectionHostStateKnown = true;
+            const accepted = await client.evaluate(
+              debugCall('(api) => api.dispatchClick("palette-add")')
+            );
+            const state = await waitForHostIdle(client, runtimeEvaluationGuard);`,
+    ),
+    /imageSelectionHostStateKnown-use|host-state-image-case-true:expected-1:actual-0/,
+  );
+
+  const configRestoreOpen = "            await restoreConfigRootWithReadback({";
+  const configRestoreClose =
+    '              label: "functional smoke Main config root",\n            });\n            configRestored = true;';
+  assert.ok(functionalSource.includes(configRestoreOpen));
+  assert.ok(functionalSource.includes(configRestoreClose));
+  for (const [label, mutated] of [
+    [
+      "config restoration catch suffix",
+      functionalSource.replace(
+        configRestoreClose,
+        '              label: "functional smoke Main config root",\n            }).catch(() => undefined);\n            configRestored = true;',
+      ),
+    ],
+    [
+      "config restoration then suffix",
+      functionalSource.replace(
+        configRestoreClose,
+        '              label: "functional smoke Main config root",\n            }).then(() => undefined);\n            configRestored = true;',
+      ),
+    ],
+    [
+      "config restoration callee replacement",
+      functionalSource.replace(configRestoreOpen, "            await Promise.resolve({"),
+    ],
+    [
+      "config restoration wrapper",
+      functionalSource
+        .replace(
+          configRestoreOpen,
+          "            await (async () => restoreConfigRootWithReadback({",
+        )
+        .replace(
+          configRestoreClose,
+          '              label: "functional smoke Main config root",\n            }))();\n            configRestored = true;',
+        ),
+    ],
+  ]) {
+    assertBindingMutationRejected(
+      label,
+      mutated,
+      /configRestored-use|configRestored-latch:expected-1:actual-0/,
+    );
+  }
+
+  for (const [label, mutated, policy] of [
+    [
+      "project reset completion defaults true",
+      functionalSource.replace(
+        "  let imageSelectionProjectResetCompleted = false;",
+        "  let imageSelectionProjectResetCompleted = true;",
+      ),
+      /imageSelectionProjectResetCompleted-declaration-shape/,
+    ],
+    [
+      "project reset completion latch relocated into a suffix block",
+      functionalSource.replace(
+        "            imageSelectionProjectResetCompleted = true;",
+        "            { imageSelectionProjectResetCompleted = true; }",
+      ),
+      /imageSelectionProjectResetCompleted-use|imageSelectionProjectResetCompleted-latch:expected-1:actual-0/,
+    ],
+    [
+      "temporary root deletion omits project reset completion authority",
+      functionalSource.replace(
+        "            imageSelectionProjectResetCompleted,\n            configMutationAttempted,",
+        "            configMutationAttempted,",
+      ),
+      /imageSelectionProjectResetCompleted-delete-guard:expected-1:actual-0/,
+    ],
+  ]) {
+    assertBindingMutationRejected(label, mutated, policy);
+  }
+
+  for (const [label, mutated, policy] of [
+    [
+      "source-level Buffer binding",
+      functionalSource.replace(
+        "export const runCorruptImageSelectionCase = async ({",
+        "const Buffer = globalThis.Buffer;\nexport const runCorruptImageSelectionCase = async ({",
+      ),
+      /Buffer-import-authority|Buffer-use-authority/,
+    ],
+    [
+      "corrupt helper Buffer shadow",
+      functionalSource.replace(
+        "  const expectedBytes = Buffer.from(validBytes);",
+        "  { const Buffer = { from: (bytes) => bytes }; void Buffer; }\n  const expectedBytes = Buffer.from(validBytes);",
+      ),
+      /Buffer-helper-shadow-binding/,
+    ],
+    [
+      "run diagnostic-state factory shadow",
+      beforeCorruptLifecycle(
+        "      { const createFunctionalSmokeDiagnosticState = () => ({ cleanupErrors: [], evidenceWriteErrors: [] }); void createFunctionalSmokeDiagnosticState; }",
+      ),
+      /createFunctionalSmokeDiagnosticState-shadow-binding/,
+    ],
+    [
+      "corrupt helper diagnostic-state factory shadow",
+      functionalSource.replace(
+        "  const expectedBytes = Buffer.from(validBytes);",
+        "  { const createFunctionalSmokeDiagnosticState = () => ({}); void createFunctionalSmokeDiagnosticState; }\n  const expectedBytes = Buffer.from(validBytes);",
+      ),
+      /createFunctionalSmokeDiagnosticState-helper-shadow-binding/,
+    ],
+    [
+      "top-level diagnostic-state factory alias",
+      functionalSource
+        .replace(
+          "export const createFunctionalSmokeDiagnosticState = () => ({",
+          "export const intendedCreateFunctionalSmokeDiagnosticState = () => ({",
+        )
+        .replace(
+          "const FUNCTIONAL_SMOKE_CLI_DIAGNOSTIC_LIMIT =",
+          "const createFunctionalSmokeDiagnosticState = intendedCreateFunctionalSmokeDiagnosticState;\nconst FUNCTIONAL_SMOKE_CLI_DIAGNOSTIC_LIMIT =",
+        ),
+      /createFunctionalSmokeDiagnosticState-top-level-binding-authority/,
+    ],
+    [
+      "async diagnostic-state factory",
+      functionalSource.replace(
+        "export const createFunctionalSmokeDiagnosticState = () => ({",
+        "export const createFunctionalSmokeDiagnosticState = async () => ({",
+      ),
+      /createFunctionalSmokeDiagnosticState-shape/,
+    ],
+  ]) {
+    assertBindingMutationRejected(label, mutated, policy);
+  }
+
+  const afterTopologyDeclaration = (insertion) => functionalSource.replace(
+    "  const imageSelectionOwnedTopology = [];",
+    `  const imageSelectionOwnedTopology = [];\n${insertion}`,
+  );
+  for (const [label, mutated] of [
+    ["direct push", afterTopologyDeclaration("  imageSelectionOwnedTopology.push({});")],
+    ["direct splice", afterTopologyDeclaration("  imageSelectionOwnedTopology.splice(0, 0, {});")],
+    ["assignment", afterTopologyDeclaration("  imageSelectionOwnedTopology = [];")],
+    [
+      "alias then mutation",
+      afterTopologyDeclaration(
+        "  const topologyAlias = imageSelectionOwnedTopology;\n  topologyAlias.push({});",
+      ),
+    ],
+    [
+      "unknown helper",
+      afterTopologyDeclaration("  mutateOwnedTopology(imageSelectionOwnedTopology);"),
+    ],
+    [
+      "spread append bypass",
+      functionalSource.replace(
+        "      const captureNewOwnedTopology = (items, setupResult) =>",
+        "      imageSelectionOwnedTopology.push(...setupResult.ownedTopology);\n      const captureNewOwnedTopology = (items, setupResult) =>",
+      ),
+    ],
+  ]) {
+    assert.match(
+      analyzeFunctionalSmokeClosedWorld(mutated).join("\n"),
+      /production-imageSelectionOwnedTopology/,
+      label,
+    );
+  }
+
+  for (const [label, mutated, policy] of [
+    [
+      "capture return chained mutation",
+      functionalSource.replace(
+        "        captureImageSelectionOwnedTopology(imageSelectionOwnedTopology, items, setupResult);",
+        "        captureImageSelectionOwnedTopology(imageSelectionOwnedTopology, items, setupResult).push({});",
+      ),
+      /captureNewOwnedTopology-shape/,
+    ],
+    [
+      "capture return alias mutation",
+      functionalSource.replace(
+        "        captureNewOwnedTopology([colorOwnedItem], colorFixture);",
+        "        const capturedTopologyAlias = captureNewOwnedTopology([colorOwnedItem], colorFixture);\n        capturedTopologyAlias.push({});",
+      ),
+      /captureNewOwnedTopology-use/,
+    ],
+    [
+      "post-lifecycle restoration path writer",
+      functionalSource.replace(
+        "      const corruptSourceRestoration = corruptLifecycle.restoration;",
+        '      const corruptSourceRestoration = corruptLifecycle.restoration;\n      await writeFile(corruptLifecycle.restoration.path, Buffer.from("damage"));',
+      ),
+      /corruptLifecycle-use/,
+    ],
+    [
+      "post-lifecycle restoration path alias writer",
+      functionalSource.replace(
+        "      const corruptSourceRestoration = corruptLifecycle.restoration;",
+        '      const corruptSourceRestoration = corruptLifecycle.restoration;\n      const restorationPathAlias = corruptSourceRestoration.path;\n      await writeFile(restorationPathAlias, Buffer.from("damage"));',
+      ),
+      /corruptSourceRestoration-use/,
+    ],
+    [
+      "invalid pngBytes provenance",
+      functionalSource.replace(
+        "      const pngBytes = await readFile(pngFixture.path);",
+        '      const pngBytes = Buffer.from("not a valid PNG");',
+      ),
+      /pngBytes-provenance/,
+    ],
+    [
+      "valid copy moved after corrupt lifecycle",
+      functionalSource
+        .replace("      await writeFile(corruptPath, pngBytes);\n", "")
+        .replace(
+          "      const corruptSourceRestoration = corruptLifecycle.restoration;",
+          "      await writeFile(corruptPath, pngBytes);\n      const corruptSourceRestoration = corruptLifecycle.restoration;",
+        ),
+      /corrupt-lifecycle-order/,
+    ],
+    [
+      "corrupt lifecycle validBytes rewired",
+      functionalSource.replace(
+        "        validBytes: pngBytes,",
+        '        validBytes: Buffer.from("not a valid PNG"),',
+      ),
+      /corrupt-lifecycle-shape/,
+    ],
+  ]) {
+    assert.match(analyzeFunctionalSmokeClosedWorld(mutated).join("\n"), policy, label);
+  }
+
+  const exactAuthority =
+    "          imageSelectionHostStateKnown && runtimeEvaluationCompletionKnown(),";
+  for (const [label, replacement] of [
+    ["authority OR true", "          imageSelectionHostStateKnown && runtimeEvaluationCompletionKnown() || true,"],
+    ["authority ternary", "          imageSelectionHostStateKnown ? runtimeEvaluationCompletionKnown() : true,"],
+    ["authority non-false", "          (imageSelectionHostStateKnown && runtimeEvaluationCompletionKnown()) !== false,"],
+    ["authority wrapper", "          Boolean(imageSelectionHostStateKnown && runtimeEvaluationCompletionKnown()),"],
+    ["authority extra parent expression", "          (imageSelectionHostStateKnown && runtimeEvaluationCompletionKnown()) && true,"],
+  ]) {
+    assert.match(
+      analyzeFunctionalSmokeClosedWorld(functionalSource.replace(exactAuthority, replacement)).join("\n"),
+      /restore-authority-shape/,
+      label,
+    );
+  }
+  const exactRuntimeBinding =
+    "  const runtimeEvaluationCompletionKnown = () =>\n    isFunctionalSmokeRuntimeCompletionKnown(runtimeEvaluationGuard);";
+  for (const [label, replacement] of [
+    [
+      "permissive runtime completion binding",
+      "  const runtimeEvaluationCompletionKnown = () =>\n    isFunctionalSmokeRuntimeCompletionKnown(runtimeEvaluationGuard) || true;",
+    ],
+    [
+      "wrapped runtime completion binding",
+      "  const runtimeEvaluationCompletionKnown = () =>\n    Boolean(isFunctionalSmokeRuntimeCompletionKnown(runtimeEvaluationGuard));",
+    ],
+  ]) {
+    assert.match(
+      analyzeFunctionalSmokeClosedWorld(functionalSource.replace(exactRuntimeBinding, replacement)).join("\n"),
+      /runtime-completion-binding-shape/,
+      label,
+    );
+  }
+
+  const afterRuntimeCompletionBinding = (insertion) => functionalSource.replace(
+    exactRuntimeBinding,
+    `${exactRuntimeBinding}\n${insertion}`,
+  );
+
+  for (const [label, mutated, policy] of [
+    [
+      "reviewer block function shadows corrupt lifecycle helper",
+      beforeCorruptLifecycle(
+        "      async function runCorruptImageSelectionCase(options) {\n        try {\n          return await options.runProductCase();\n        } finally {\n          await writeFile(options[\"corrupt\" + \"Path\"], options.validBytes);\n        }\n      }",
+      ),
+      /runCorruptImageSelectionCase-(?:binding|shadow)/,
+    ],
+    [
+      "function declaration shadows readFile",
+      beforeCorruptLifecycle("      { function readFile(path) { return path; } }"),
+      /readFile-(?:binding|shadow)/,
+    ],
+    [
+      "const declaration shadows readFile",
+      beforeCorruptLifecycle("      { const readFile = async () => Buffer.alloc(0); void readFile; }"),
+      /readFile-(?:binding|shadow)/,
+    ],
+    [
+      "parameter shadows readFile",
+      beforeCorruptLifecycle("      { const inspectReader = (readFile) => readFile; void inspectReader; }"),
+      /readFile-(?:binding|shadow)/,
+    ],
+    [
+      "destructuring declaration shadows readFile",
+      beforeCorruptLifecycle("      { const { readFile } = { readFile: null }; void readFile; }"),
+      /readFile-(?:binding|shadow)/,
+    ],
+    [
+      "block function shadows topology capture helper",
+      beforeCorruptLifecycle("      { function captureImageSelectionOwnedTopology() { return []; } }"),
+      /captureImageSelectionOwnedTopology-(?:binding|shadow)/,
+    ],
+    [
+      "block const shadows topology capture helper",
+      beforeCorruptLifecycle("      { const captureImageSelectionOwnedTopology = () => []; void captureImageSelectionOwnedTopology; }"),
+      /captureImageSelectionOwnedTopology-(?:binding|shadow)/,
+    ],
+    [
+      "nested block shadows runtime completion authority",
+      beforeCorruptLifecycle("      { const runtimeEvaluationCompletionKnown = () => true; void runtimeEvaluationCompletionKnown; }"),
+      /runtimeEvaluationCompletionKnown-(?:binding|shadow)/,
+    ],
+    [
+      "block const shadows writeFile",
+      beforeCorruptLifecycle("      { const writeFile = async () => undefined; void writeFile; }"),
+      /writeFile-(?:binding|shadow)/,
+    ],
+    [
+      "block function shadows strict completion helper",
+      afterRuntimeCompletionBinding(
+        "  { function isFunctionalSmokeRuntimeCompletionKnown() { return true; } }",
+      ),
+      /isFunctionalSmokeRuntimeCompletionKnown-(?:binding|shadow)/,
+    ],
+    [
+      "nested function shadows evalImageHost",
+      beforeCorruptLifecycle("      function inspectEvalBinding(evalImageHost) { return evalImageHost; } void inspectEvalBinding;"),
+      /evalImageHost-(?:binding|shadow)/,
+    ],
+    [
+      "block const shadows captureNewOwnedTopology",
+      beforeCorruptLifecycle("      { const captureNewOwnedTopology = () => undefined; void captureNewOwnedTopology; }"),
+      /captureNewOwnedTopology-(?:binding|shadow)/,
+    ],
+    [
+      "block class shadows cleanup source helper",
+      beforeCorruptLifecycle("      { class cleanupImageSelectionFixturesSource {} void cleanupImageSelectionFixturesSource; }"),
+      /cleanupImageSelectionFixturesSource-(?:binding|shadow)/,
+    ],
+    [
+      "catch binding shadows image source helper",
+      beforeCorruptLifecycle("      try {} catch (importProjectImageSource) { void importProjectImageSource; }"),
+      /importProjectImageSource-(?:binding|shadow)/,
+    ],
+    [
+      "destructuring parameter shadows host-state authority",
+      beforeCorruptLifecycle("      { const inspectHostState = ({ imageSelectionHostStateKnown }) => imageSelectionHostStateKnown; void inspectHostState; }"),
+      /imageSelectionHostStateKnown-(?:binding|shadow)/,
+    ],
+    [
+      "named function expression shadows runtime guard",
+      beforeCorruptLifecycle("      { const inspectGuard = function runtimeEvaluationGuard() {}; void inspectGuard; }"),
+      /runtimeEvaluationGuard-(?:binding|shadow)/,
+    ],
+    [
+      "named class expression shadows capture helper",
+      beforeCorruptLifecycle("      { const Capture = class captureImageSelectionOwnedTopology {}; void Capture; }"),
+      /captureImageSelectionOwnedTopology-(?:binding|shadow)/,
+    ],
+    [
+      "nested block shadows corrupt helper writer parameter",
+      functionalSource.replace(
+        "    await writeSource(corruptPath, corruptBytes);",
+        "    { const writeSource = async () => undefined; void writeSource; }\n    await writeSource(corruptPath, corruptBytes);",
+      ),
+      /writeSource-helper-binding-shadow/,
+    ],
+    [
+      "nested parameter shadows corrupt helper reader parameter",
+      functionalSource.replace(
+        "    await writeSource(corruptPath, corruptBytes);",
+        "    { const inspectSource = (readSource) => readSource; void inspectSource; }\n    await writeSource(corruptPath, corruptBytes);",
+      ),
+      /readSource-helper-binding-shadow/,
+    ],
+    [
+      "top-level readFile import alias and redeclaration",
+      functionalSource.replace(
+        'import { mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";',
+        'import { mkdir, readFile as importedReadFile, realpath, rename, rm, writeFile } from "node:fs/promises";\nconst readFile = importedReadFile;',
+      ),
+      /readFile-(?:import|binding|authority)/,
+    ],
+    [
+      "top-level writeFile import alias and redeclaration",
+      functionalSource.replace(
+        'import { mkdir, readFile, realpath, rename, rm, writeFile } from "node:fs/promises";',
+        'import { mkdir, readFile, realpath, rename, rm, writeFile as importedWriteFile } from "node:fs/promises";\nconst writeFile = importedWriteFile;',
+      ),
+      /writeFile-(?:import|binding|authority)/,
+    ],
+    [
+      "top-level corrupt helper alias replaces intended declaration shape",
+      functionalSource
+        .replace(
+          "export const runCorruptImageSelectionCase = async ({",
+          "export const intendedRunCorruptImageSelectionCase = async ({",
+        )
+        .replace(
+          "const IMAGE_FIXTURES =",
+          "const runCorruptImageSelectionCase = intendedRunCorruptImageSelectionCase;\nconst IMAGE_FIXTURES =",
+        ),
+      /runCorruptImageSelectionCase-top-level-binding-authority/,
+    ],
+  ]) {
+    assertBindingMutationRejected(label, mutated, policy);
+  }
+
+  const nonBindingNameUses = beforeCorruptLifecycle(
+    "      readFile: {\n        const propertyNoise = {\n          readFile: true,\n          writeFile() {},\n          captureImageSelectionOwnedTopology: true,\n        };\n        propertyNoise.isFunctionalSmokeRuntimeCompletionKnown;\n        break readFile;\n      }",
+  );
+  const nonBindingParsed = ts.createSourceFile(
+    "non-binding-critical-name-uses.mjs",
+    nonBindingNameUses,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.JS,
+  );
+  assert.equal(nonBindingParsed.parseDiagnostics.length, 0);
+  assert.deepEqual(
+    analyzeFunctionalSmokeClosedWorld(nonBindingNameUses, { requireExactSource: false }),
+    [],
+    "property keys, method names, labels, and property usages must not be treated as bindings",
+  );
+  const helperNonBindingNameUses = functionalSource.replace(
+    "  const expectedBytes = Buffer.from(validBytes);",
+    "  const propertyNoise = { Buffer: true, createFunctionalSmokeDiagnosticState() {} };\n  propertyNoise.Buffer;\n  propertyNoise.createFunctionalSmokeDiagnosticState;\n  const expectedBytes = Buffer.from(validBytes);",
+  );
+  assert.deepEqual(
+    analyzeFunctionalSmokeClosedWorld(helperNonBindingNameUses, { requireExactSource: false }),
+    [],
+    "helper property keys, method names, and property accesses must not be treated as bindings",
+  );
+});
+
+test("functional image selection executes and wires same-dispatch topology capture", async () => {
+  const functionalSource = await readFile(
+    new URL("../scripts/cep-functional-smoke.mjs", import.meta.url),
+    "utf8",
+  );
+  assert.doesNotMatch(functionalSource, /\brequireCondition\s*\(/);
+  assert.match(
+    functionalSource,
+    /captureImageSelectionOwnedTopology\(imageSelectionOwnedTopology, items, setupResult\)/,
+  );
+
+  const { captureImageSelectionOwnedTopology } = await import(
+    "../scripts/cep-functional-smoke.mjs?image-selection-topology-validation"
+  );
+  const items = [{ id: 37, name: "CP_IMAGE_LAYER_PNG", kind: "footage" }];
+  const topology = [{ id: 37, name: "CP_IMAGE_LAYER_PNG", kind: "footage", detail: {} }];
+  const sentinel = { id: "sentinel", nested: { retained: true } };
+  const capturedTopology = [sentinel];
+
+  assert.equal(
+    captureImageSelectionOwnedTopology(capturedTopology, items, { ownedTopology: topology }),
+    capturedTopology,
+  );
+  assert.deepEqual(capturedTopology, [sentinel, ...topology]);
+
+  for (const { label, candidateItems, setupResult, pattern } of [
+    { label: "count drift", candidateItems: items, setupResult: { ownedTopology: [] }, pattern: /same-dispatch topology capture failed/ },
+    { label: "ID drift", candidateItems: items, setupResult: { ownedTopology: [{ ...topology[0], id: 38 }] }, pattern: /topology descriptor drifted/ },
+    { label: "name drift", candidateItems: items, setupResult: { ownedTopology: [{ ...topology[0], name: "DRIFTED" }] }, pattern: /topology descriptor drifted/ },
+    { label: "kind drift", candidateItems: items, setupResult: { ownedTopology: [{ ...topology[0], kind: "comp" }] }, pattern: /topology descriptor drifted/ },
+    { label: "missing items", candidateItems: null, setupResult: { ownedTopology: topology }, pattern: /same-dispatch topology capture failed/ },
+    { label: "object items", candidateItems: {}, setupResult: { ownedTopology: topology }, pattern: /same-dispatch topology capture failed/ },
+    { label: "malformed item", candidateItems: [null], setupResult: { ownedTopology: topology }, pattern: /topology descriptor drifted/ },
+    { label: "matching malformed descriptors", candidateItems: [{}], setupResult: { ownedTopology: [{}] }, pattern: /topology descriptor drifted/ },
+    { label: "missing setup", candidateItems: items, setupResult: null, pattern: /same-dispatch topology capture failed/ },
+    { label: "object setup topology", candidateItems: items, setupResult: { ownedTopology: {} }, pattern: /same-dispatch topology capture failed/ },
+    { label: "malformed setup topology item", candidateItems: items, setupResult: { ownedTopology: [null] }, pattern: /topology descriptor drifted/ },
+  ]) {
+    const destination = [{ ...sentinel, nested: { ...sentinel.nested } }];
+    const before = structuredClone(destination);
+    assert.throws(
+      () => captureImageSelectionOwnedTopology(destination, candidateItems, setupResult),
+      pattern,
+      label,
+    );
+    assert.deepEqual(destination, before, `${label} must leave the capture destination unchanged`);
+  }
+
+  const malformedTarget = { sentinel: { retained: true } };
+  const malformedTargetBefore = structuredClone(malformedTarget);
+  assert.throws(
+    () => captureImageSelectionOwnedTopology(malformedTarget, items, { ownedTopology: topology }),
+    /topology capture target is unavailable/,
+  );
+  assert.deepEqual(malformedTarget, malformedTargetBefore);
+});
+
+test("functional temporary source root is preserved when project reset is refused", () => {
+  const archivePath = "/owned-output/preserved-functional-project.aep";
+  const reset = {
+    reset: false,
+    reason: "project-close-refused",
+    archivePath,
+    projectPath: "/owned-temp/image-selection.aep",
+    dirty: true,
+    numItems: 1,
+  };
+  const imageSelectionProjectResetCompleted =
+    reset.reset === true &&
+    reset.archivePath === archivePath &&
+    reset.projectPath === null &&
+    reset.dirty === false &&
+    reset.numItems === 0;
+  assert.equal(imageSelectionProjectResetCompleted, false);
+
+  const restoredState = {
+    path: "/owned-temp/image-selection",
+    corruptImageSourceRestoreRequired: true,
+    corruptImageSourceRestored: true,
+    imageSelectionProjectResetRequired: true,
+    imageSelectionProjectResetCompleted,
+    configMutationAttempted: true,
+    configRestored: true,
+  };
+  assert.throws(
+    () => assertFunctionalSmokeTemporaryDirectoryRemovalAllowed(restoredState),
+    /image-selection project reset is unproven/,
+  );
+  assert.doesNotThrow(() => assertFunctionalSmokeTemporaryDirectoryRemovalAllowed({
+    ...restoredState,
+    imageSelectionProjectResetCompleted: true,
+  }));
+});
+
+test("functional corrupt image lifecycle restores valid bytes before evidence and fails closed", async () => {
+  const functionalSource = await readFile(
+    new URL("../scripts/cep-functional-smoke.mjs", import.meta.url),
+    "utf8",
+  );
+  const corruptLifecycleIndex = functionalSource.indexOf(
+    "const corruptLifecycle = await runCorruptImageSelectionCase({",
+  );
+  const selectionScreenshotIndex = functionalSource.indexOf(
+    'const screenshot = await client.send("Page.captureScreenshot"',
+    corruptLifecycleIndex,
+  );
+  assert.ok(corruptLifecycleIndex > 0, "production must use the modal-safe corrupt lifecycle");
+  assert.ok(
+    selectionScreenshotIndex > corruptLifecycleIndex,
+    "corrupt source restoration must complete before selection screenshot capture",
+  );
+  assert.doesNotMatch(
+    functionalSource,
+    /await writeFile\(corruptPath, "not a valid PNG"\)/,
+    "production must not bypass the restoring lifecycle",
+  );
+  assert.match(
+    functionalSource,
+    /corruptImageSourceRestoreRequired && !corruptImageSourceRestored[^]*project reset refused/,
+  );
+  assert.match(
+    functionalSource,
+    /finalizeFunctionalSmoke\(\{\s*primaryError,\s*hasPrimaryError,\s*diagnosticState,/,
+    "production finalization must retain the shared corrupt-source diagnostic state",
+  );
+  const diagnosticImportCatchPattern =
+    /catch \(error\) \{\s*primaryError = error;\s*hasPrimaryError = true;\s*importFunctionalSmokeErrorDiagnostics\(error, diagnosticState\);/g;
+  assert.equal(
+    functionalSource.match(diagnosticImportCatchPattern)?.length,
+    2,
+    "the corrupt helper and production run catch must both import lower-layer diagnostics",
+  );
+  const productionCatchIndex = functionalSource.lastIndexOf("} catch (error) {");
+  const productionImportIndex = functionalSource.indexOf(
+    "importFunctionalSmokeErrorDiagnostics(error, diagnosticState);",
+    productionCatchIndex,
+  );
+  const productionFinalizationIndex = functionalSource.indexOf(
+    "await finalizeFunctionalSmoke({",
+    productionCatchIndex,
+  );
+  assert.ok(
+    productionCatchIndex > 0 &&
+      productionImportIndex > productionCatchIndex &&
+      productionFinalizationIndex > productionImportIndex,
+    "production must import caught diagnostics before finalization",
+  );
+  assert.match(
+    functionalSource,
+    /hasRestoreAuthority: \(\) =>\s*imageSelectionHostStateKnown && runtimeEvaluationCompletionKnown\(\)/,
+    "production restoration authority must combine host-state and runtime-completion knowledge",
+  );
+  assert.doesNotMatch(
+    functionalSource,
+    /hasRestoreAuthority\s*=\s*\(\)\s*=>\s*true/,
+    "corrupt-source restoration authority must never default to true",
+  );
+  assert.doesNotMatch(functionalSource, /productCaseReturned/);
+
+  const {
+    createFunctionalSmokeDiagnosticState,
+    finalizeFunctionalSmoke,
+    formatFunctionalSmokeCliDiagnostics,
+    importFunctionalSmokeErrorDiagnostics,
+    publishFunctionalSmokeFailure,
+    printFunctionalSmokeCliError,
+    runCorruptImageSelectionCase,
+  } = await import(
+    "../scripts/cep-functional-smoke.mjs?corrupt-image-modal-safe-lifecycle"
+  );
+  const validBytes = Buffer.from("valid PNG fixture bytes");
+  const corruptBytes = Buffer.from("not a valid PNG");
+  const expectedResult = { name: "corrupt-png-decode-rejected" };
+  const events = [];
+  let diskBytes = Buffer.from(validBytes);
+  const writeSource = async (_path, bytes) => {
+    diskBytes = Buffer.from(bytes);
+    events.push(diskBytes.equals(validBytes) ? "restore-write" : "corrupt-write");
+  };
+  const readSource = async () => {
+    events.push("restore-readback");
+    return Buffer.from(diskBytes);
+  };
+
+  const corruptLifecycle = await runCorruptImageSelectionCase({
+    corruptPath: "/owned/corrupt.png",
+    validBytes,
+    corruptBytes,
+    writeSource,
+    readSource,
+    runProductCase: async () => {
+      events.push("product-case");
+      return expectedResult;
+    },
+    validateProductResult: (result) => {
+      events.push("product-validation");
+      assert.equal(result, expectedResult);
+    },
+    hasRestoreAuthority: () => {
+      events.push("restore-authority");
+      return true;
+    },
+    onRestoreVerified: ({ sha256 }) => events.push(`restore-verified:${sha256}`),
+  });
+  events.push("screenshot", "archive-reset", "publish-success");
+
+  assert.equal(corruptLifecycle.result, expectedResult);
+  assert.equal(corruptLifecycle.restoration.restored, true);
+  assert.equal(
+    corruptLifecycle.restoration.sha256,
+    createHash("sha256").update(validBytes).digest("hex"),
+  );
+  assert.deepEqual(events.map((event) => event.split(":")[0]), [
+    "corrupt-write",
+    "product-case",
+    "product-validation",
+    "restore-authority",
+    "restore-write",
+    "restore-readback",
+    "restore-verified",
+    "screenshot",
+    "archive-reset",
+    "publish-success",
+  ]);
+  assert.ok(diskBytes.equals(validBytes));
+
+  const lowerCleanupDiagnostic = {
+    phase: "lower-layer-cleanup",
+    error: "lower cleanup failed",
+  };
+  const lowerEvidenceDiagnostic = {
+    phase: "lower-layer-evidence",
+    error: "lower evidence write failed",
+  };
+  const lowerLayerError = new Error("lower-layer primary failed");
+  lowerLayerError.cleanupErrors = [lowerCleanupDiagnostic];
+  lowerLayerError.evidenceWriteErrors = [lowerEvidenceDiagnostic];
+  const lowerLayerState = createFunctionalSmokeDiagnosticState();
+  await assert.rejects(
+    runCorruptImageSelectionCase({
+      corruptPath: "/owned/corrupt.png",
+      validBytes,
+      corruptBytes,
+      diagnosticState: lowerLayerState,
+      writeSource: async () => undefined,
+      readSource: async () => validBytes,
+      runProductCase: async () => { throw lowerLayerError; },
+      validateProductResult: () => assert.fail("failed product must not validate"),
+      hasRestoreAuthority: () => false,
+    }),
+    (error) => error === lowerLayerError,
+  );
+  assert.deepEqual(
+    lowerLayerState.cleanupErrors.map(({ phase }) => phase),
+    ["lower-layer-cleanup", "corrupt-image-source-restoration"],
+  );
+  assert.deepEqual(
+    lowerLayerState.evidenceWriteErrors.map(({ phase }) => phase),
+    ["lower-layer-evidence"],
+  );
+  await assert.rejects(
+    finalizeFunctionalSmoke({
+      primaryError: lowerLayerError,
+      hasPrimaryError: true,
+      diagnosticState: lowerLayerState,
+      cleanupSteps: [
+        {
+          phase: "lower-layer-finalizer-cleanup",
+          run: async () => { throw new Error("later cleanup failed"); },
+        },
+      ],
+      publishSuccess: async () => assert.fail("a primary failure must not publish success"),
+      writeFailure: (failure) => publishFunctionalSmokeFailure({
+        ...failure,
+        reportPath: "/owned/report.json",
+        pendingReportPath: "/owned/report.pending.json",
+        failurePath: "/owned/failure.json",
+        mode: "image-selection",
+        runId: "lower-layer-diagnostics",
+        replaceReport: async () => { throw new Error("lower report replacement failed"); },
+        writeFailureFile: async () => { throw new Error("lower failure file write failed"); },
+      }),
+    }),
+    (error) => error === lowerLayerError,
+  );
+  assert.deepEqual(
+    lowerLayerState.cleanupErrors.map(({ phase }) => phase),
+    [
+      "lower-layer-cleanup",
+      "corrupt-image-source-restoration",
+      "lower-layer-finalizer-cleanup",
+      "write-failure",
+    ],
+  );
+  assert.deepEqual(
+    lowerLayerState.evidenceWriteErrors.map(({ phase }) => phase),
+    ["lower-layer-evidence", "failure-report", "failure-json"],
+  );
+  const lowerLayerCliOutput = [];
+  printFunctionalSmokeCliError(
+    lowerLayerError,
+    lowerLayerState,
+    (line) => lowerLayerCliOutput.push(line),
+  );
+  const lowerLayerCliDiagnostics = JSON.parse(lowerLayerCliOutput[1]);
+  assert.deepEqual(
+    lowerLayerCliDiagnostics.cleanupErrors.map(({ phase }) => phase),
+    [
+      "lower-layer-cleanup",
+      "corrupt-image-source-restoration",
+      "lower-layer-finalizer-cleanup",
+      "write-failure",
+    ],
+  );
+  assert.deepEqual(
+    lowerLayerCliDiagnostics.evidenceWriteErrors.map(({ phase }) => phase),
+    ["lower-layer-evidence", "failure-report", "failure-json"],
+  );
+
+  const frozenCleanupDiagnostic = {
+    phase: "frozen-lower-cleanup",
+    error: "frozen cleanup failed",
+  };
+  const frozenEvidenceDiagnostic = {
+    phase: "frozen-lower-evidence",
+    error: "frozen evidence failed",
+  };
+  const frozenLowerLayerError = new Error("frozen lower-layer primary failed");
+  frozenLowerLayerError.cleanupErrors = [frozenCleanupDiagnostic];
+  frozenLowerLayerError.evidenceWriteErrors = [frozenEvidenceDiagnostic];
+  Object.freeze(frozenLowerLayerError);
+  const frozenLowerLayerState = createFunctionalSmokeDiagnosticState();
+  await assert.rejects(
+    runCorruptImageSelectionCase({
+      corruptPath: "/owned/corrupt.png",
+      validBytes,
+      corruptBytes,
+      diagnosticState: frozenLowerLayerState,
+      writeSource: async (_path, bytes) => {
+        if (Buffer.from(bytes).equals(validBytes)) throw new Error("frozen primary restore failed");
+      },
+      readSource: async () => assert.fail("failed restoration must not read back"),
+      runProductCase: async () => { throw frozenLowerLayerError; },
+      validateProductResult: () => assert.fail("failed product must not validate"),
+      hasRestoreAuthority: () => true,
+    }),
+    (error) => error === frozenLowerLayerError,
+  );
+  assert.deepEqual(
+    frozenLowerLayerState.cleanupErrors.map(({ phase }) => phase),
+    ["frozen-lower-cleanup", "corrupt-image-source-restoration"],
+  );
+  assert.deepEqual(
+    frozenLowerLayerState.evidenceWriteErrors.map(({ phase }) => phase),
+    ["frozen-lower-evidence"],
+  );
+  assert.deepEqual(frozenLowerLayerError.cleanupErrors, [frozenCleanupDiagnostic]);
+  assert.deepEqual(frozenLowerLayerError.evidenceWriteErrors, [frozenEvidenceDiagnostic]);
+
+  const sharedLedgerCleanupDiagnostic = {
+    phase: "shared-ledger-cleanup",
+    error: "shared cleanup failed",
+  };
+  const sharedLedgerEvidenceDiagnostic = {
+    phase: "shared-ledger-evidence",
+    error: "shared evidence failed",
+  };
+  const sharedLedgerState = createFunctionalSmokeDiagnosticState();
+  sharedLedgerState.cleanupErrors.push(sharedLedgerCleanupDiagnostic);
+  sharedLedgerState.evidenceWriteErrors.push(sharedLedgerEvidenceDiagnostic);
+  const sharedLedgerError = new Error("shared-ledger primary failed");
+  sharedLedgerError.cleanupErrors = sharedLedgerState.cleanupErrors;
+  sharedLedgerError.evidenceWriteErrors = sharedLedgerState.evidenceWriteErrors;
+  await assert.rejects(
+    runCorruptImageSelectionCase({
+      corruptPath: "/owned/corrupt.png",
+      validBytes,
+      corruptBytes,
+      diagnosticState: sharedLedgerState,
+      writeSource: async () => undefined,
+      readSource: async () => validBytes,
+      runProductCase: async () => { throw sharedLedgerError; },
+      validateProductResult: () => assert.fail("failed product must not validate"),
+      hasRestoreAuthority: () => false,
+    }),
+    (error) => error === sharedLedgerError,
+  );
+  assert.deepEqual(
+    sharedLedgerState.cleanupErrors.map(({ phase }) => phase),
+    ["shared-ledger-cleanup", "corrupt-image-source-restoration"],
+  );
+  assert.deepEqual(
+    sharedLedgerState.evidenceWriteErrors.map(({ phase }) => phase),
+    ["shared-ledger-evidence"],
+  );
+  importFunctionalSmokeErrorDiagnostics(
+    {
+      cleanupErrors: [sharedLedgerCleanupDiagnostic],
+      evidenceWriteErrors: [sharedLedgerEvidenceDiagnostic],
+    },
+    sharedLedgerState,
+  );
+  assert.equal(
+    sharedLedgerState.cleanupErrors.filter((entry) => entry === sharedLedgerCleanupDiagnostic).length,
+    1,
+  );
+  assert.equal(
+    sharedLedgerState.evidenceWriteErrors.filter(
+      (entry) => entry === sharedLedgerEvidenceDiagnostic,
+    ).length,
+    1,
+  );
+
+  const omittedAuthorityEvents = [];
+  let omittedAuthorityDiskBytes = Buffer.from(validBytes);
+  let omittedAuthoritySuccessPublished = false;
+  let omittedAuthorityError;
+  await assert.rejects(
+    runCorruptImageSelectionCase({
+      corruptPath: "/owned/corrupt.png",
+      validBytes,
+      corruptBytes,
+      writeSource: async (_path, bytes) => {
+        omittedAuthorityDiskBytes = Buffer.from(bytes);
+        omittedAuthorityEvents.push(
+          omittedAuthorityDiskBytes.equals(validBytes) ? "restore-write" : "corrupt-write",
+        );
+      },
+      readSource: async () => {
+        omittedAuthorityEvents.push("restore-readback");
+        return Buffer.from(omittedAuthorityDiskBytes);
+      },
+      runProductCase: async () => {
+        omittedAuthorityEvents.push("product-case");
+        return expectedResult;
+      },
+      validateProductResult: () => omittedAuthorityEvents.push("product-validation"),
+      onRestoreVerified: () => omittedAuthorityEvents.push("restore-verified"),
+    }).then(() => {
+      omittedAuthoritySuccessPublished = true;
+    }),
+    (error) => {
+      omittedAuthorityError = error;
+      return /completion is unknown.*restoration refused/i.test(error.message);
+    },
+  );
+  assert.deepEqual(omittedAuthorityEvents, [
+    "corrupt-write",
+    "product-case",
+    "product-validation",
+  ]);
+  assert.ok(omittedAuthorityDiskBytes.equals(corruptBytes));
+  assert.equal(omittedAuthoritySuccessPublished, false);
+  assert.deepEqual(
+    omittedAuthorityError.cleanupErrors.map(({ phase }) => phase),
+    ["corrupt-image-source-restoration"],
+  );
+
+  const nonFunctionAuthorityEvents = [];
+  let nonFunctionAuthorityError;
+  await assert.rejects(
+    runCorruptImageSelectionCase({
+      corruptPath: "/owned/corrupt.png",
+      validBytes,
+      corruptBytes,
+      writeSource: async (_path, bytes) => {
+        nonFunctionAuthorityEvents.push(
+          Buffer.from(bytes).equals(validBytes) ? "restore-write" : "corrupt-write",
+        );
+      },
+      readSource: async () => {
+        nonFunctionAuthorityEvents.push("restore-readback");
+        return validBytes;
+      },
+      runProductCase: async () => expectedResult,
+      validateProductResult: () => undefined,
+      hasRestoreAuthority: true,
+      onRestoreVerified: () => nonFunctionAuthorityEvents.push("restore-verified"),
+    }),
+    (error) => {
+      nonFunctionAuthorityError = error;
+      return /completion is unknown.*restoration refused/i.test(error.message);
+    },
+  );
+  assert.deepEqual(nonFunctionAuthorityEvents, ["corrupt-write"]);
+  assert.deepEqual(
+    nonFunctionAuthorityError.cleanupErrors.map(({ phase }) => phase),
+    ["corrupt-image-source-restoration"],
+  );
+
+  const unknownCompletionError = new Error("product dispatch completion unknown");
+  const unknownEvents = [];
+  let unknownDiskBytes = Buffer.from(validBytes);
+  let completionKnown = true;
+  let restoreAuthorityChecks = 0;
+  await assert.rejects(
+    runCorruptImageSelectionCase({
+      corruptPath: "/owned/corrupt.png",
+      validBytes,
+      corruptBytes,
+      writeSource: async (_path, bytes) => {
+        unknownDiskBytes = Buffer.from(bytes);
+        unknownEvents.push(unknownDiskBytes.equals(validBytes) ? "restore-write" : "corrupt-write");
+      },
+      readSource: async () => {
+        unknownEvents.push("restore-readback");
+        return Buffer.from(unknownDiskBytes);
+      },
+      runProductCase: async () => {
+        unknownEvents.push("product-dispatch");
+        completionKnown = false;
+        throw unknownCompletionError;
+      },
+      validateProductResult: () => unknownEvents.push("product-validation"),
+      hasRestoreAuthority: () => {
+        restoreAuthorityChecks += 1;
+        return completionKnown;
+      },
+      onRestoreVerified: () => unknownEvents.push("restore-verified"),
+    }),
+    (error) => error === unknownCompletionError,
+  );
+  assert.deepEqual(unknownEvents, ["corrupt-write", "product-dispatch"]);
+  assert.ok(unknownDiskBytes.equals(corruptBytes));
+  assert.equal(restoreAuthorityChecks, 1);
+  assert.deepEqual(
+    unknownCompletionError.cleanupErrors.map(({ phase }) => phase),
+    ["corrupt-image-source-restoration"],
+  );
+  assert.match(unknownCompletionError.cleanupErrors[0].error, /completion is unknown.*restoration refused/i);
+
+  const unknownFinalizerEvents = [];
+  await assert.rejects(
+    finalizeFunctionalSmoke({
+      primaryError: unknownCompletionError,
+      initialCleanupErrors: unknownCompletionError.cleanupErrors,
+      cleanupSteps: [
+        {
+          phase: "image-selection-project-reset",
+          run: async () => {
+            if (!unknownDiskBytes.equals(validBytes)) throw new Error("source restoration unproven; project reset refused");
+            unknownFinalizerEvents.push("archive-reset");
+          },
+        },
+        {
+          phase: "temporary-config-root",
+          run: async () => {
+            if (!completionKnown) throw new Error("completion unknown; config restoration refused");
+            unknownFinalizerEvents.push("config-restore");
+          },
+        },
+        { phase: "cdp-close", run: async () => unknownFinalizerEvents.push("cdp-close") },
+        {
+          phase: "temporary-directory",
+          run: async () => {
+            if (!unknownDiskBytes.equals(validBytes)) throw new Error("source restoration unproven; deletion refused");
+            unknownFinalizerEvents.push("temporary-directory-delete");
+          },
+        },
+      ],
+      publishSuccess: async () => unknownFinalizerEvents.push("publish-success"),
+      writeFailure: async () => unknownFinalizerEvents.push("write-failure"),
+    }),
+    (error) => error === unknownCompletionError,
+  );
+  assert.deepEqual(unknownFinalizerEvents, ["cdp-close", "write-failure"]);
+
+  const validationFailure = new Error("returned product validation failed");
+  const validationFailureEvents = [];
+  let validationFailureDiskBytes = Buffer.from(validBytes);
+  await assert.rejects(
+    runCorruptImageSelectionCase({
+      corruptPath: "/owned/corrupt.png",
+      validBytes,
+      corruptBytes,
+      writeSource: async (_path, bytes) => {
+        validationFailureDiskBytes = Buffer.from(bytes);
+        validationFailureEvents.push(
+          validationFailureDiskBytes.equals(validBytes) ? "restore-write" : "corrupt-write",
+        );
+      },
+      readSource: async () => {
+        validationFailureEvents.push("restore-readback");
+        return Buffer.from(validationFailureDiskBytes);
+      },
+      runProductCase: async () => {
+        validationFailureEvents.push("product-case");
+        return expectedResult;
+      },
+      validateProductResult: () => {
+        validationFailureEvents.push("product-validation");
+        throw validationFailure;
+      },
+      hasRestoreAuthority: () => {
+        validationFailureEvents.push("restore-authority");
+        return false;
+      },
+      onRestoreVerified: () => validationFailureEvents.push("restore-verified"),
+    }),
+    (error) => error === validationFailure,
+  );
+  assert.deepEqual(validationFailureEvents, [
+    "corrupt-write",
+    "product-case",
+    "product-validation",
+    "restore-authority",
+  ]);
+  assert.ok(validationFailureDiskBytes.equals(corruptBytes));
+  assert.deepEqual(
+    validationFailure.cleanupErrors.map(({ phase }) => phase),
+    ["corrupt-image-source-restoration"],
+  );
+  assert.match(
+    validationFailure.cleanupErrors[0].error,
+    /completion is unknown.*restoration refused/i,
+  );
+
+  for (const { label, getAuthority } of [
+    { label: "false", getAuthority: () => false },
+    { label: "non-Boolean", getAuthority: () => "true" },
+    { label: "callback throw", getAuthority: () => { throw new Error("authority callback failed"); } },
+  ]) {
+    const refusalEvents = [];
+    let refusalDiskBytes = Buffer.from(validBytes);
+    let refusalError;
+    await assert.rejects(
+      runCorruptImageSelectionCase({
+        corruptPath: "/owned/corrupt.png",
+        validBytes,
+        corruptBytes,
+        writeSource: async (_path, bytes) => {
+          refusalDiskBytes = Buffer.from(bytes);
+          refusalEvents.push(refusalDiskBytes.equals(validBytes) ? "restore-write" : "corrupt-write");
+        },
+        readSource: async () => {
+          refusalEvents.push("restore-readback");
+          return Buffer.from(refusalDiskBytes);
+        },
+        runProductCase: async () => {
+          refusalEvents.push("product-case");
+          return expectedResult;
+        },
+        validateProductResult: () => refusalEvents.push("product-validation"),
+        hasRestoreAuthority: () => {
+          refusalEvents.push("restore-authority");
+          return getAuthority();
+        },
+        onRestoreVerified: () => refusalEvents.push("restore-verified"),
+      }),
+      (error) => {
+        refusalError = error;
+        return /completion is unknown.*restoration refused/i.test(error.message);
+      },
+      label,
+    );
+    assert.deepEqual(
+      refusalEvents,
+      ["corrupt-write", "product-case", "product-validation", "restore-authority"],
+      label,
+    );
+    assert.ok(refusalDiskBytes.equals(corruptBytes), label);
+    assert.deepEqual(
+      refusalError.cleanupErrors.map(({ phase }) => phase),
+      ["corrupt-image-source-restoration"],
+      label,
+    );
+  }
+
+  for (const phase of ["product-case", "product-validation"]) {
+    const failureEvents = [];
+    let failureDiskBytes = Buffer.from(validBytes);
+    const productError = new Error(`${phase} failed`);
+    let failureAuthorityChecks = 0;
+    await assert.rejects(
+      runCorruptImageSelectionCase({
+        corruptPath: "/owned/corrupt.png",
+        validBytes,
+        corruptBytes,
+        writeSource: async (_path, bytes) => {
+          failureDiskBytes = Buffer.from(bytes);
+          failureEvents.push(failureDiskBytes.equals(validBytes) ? "restore-write" : "corrupt-write");
+        },
+        readSource: async () => {
+          failureEvents.push("restore-readback");
+          return Buffer.from(failureDiskBytes);
+        },
+        runProductCase: async () => {
+          failureEvents.push("product-case");
+          if (phase === "product-case") throw productError;
+          return expectedResult;
+        },
+        validateProductResult: () => {
+          failureEvents.push("product-validation");
+          if (phase === "product-validation") throw productError;
+        },
+        hasRestoreAuthority: () => {
+          failureAuthorityChecks += 1;
+          failureEvents.push("restore-authority");
+          return true;
+        },
+        onRestoreVerified: () => failureEvents.push("restore-verified"),
+      }),
+      (error) => error === productError,
+    );
+    assert.ok(failureDiskBytes.equals(validBytes));
+    assert.equal(failureAuthorityChecks, 1);
+    assert.deepEqual(failureEvents.slice(-3), ["restore-write", "restore-readback", "restore-verified"]);
+  }
+
+  const restoreError = new Error("restore disk full");
+  let successPublished = false;
+  await assert.rejects(
+    runCorruptImageSelectionCase({
+      corruptPath: "/owned/corrupt.png",
+      validBytes,
+      corruptBytes,
+      writeSource: async (_path, bytes) => {
+        if (Buffer.from(bytes).equals(validBytes)) throw restoreError;
+      },
+      readSource: async () => assert.fail("failed restore must not claim readback"),
+      runProductCase: async () => expectedResult,
+      validateProductResult: () => undefined,
+      hasRestoreAuthority: () => true,
+    }).then(() => {
+      successPublished = true;
+    }),
+    (error) => error === restoreError,
+  );
+  assert.equal(successPublished, false);
+
+  const productFailure = new Error("known-complete product failure");
+  const combinedRestoreFailure = new Error("combined restore failure");
+  await assert.rejects(
+    runCorruptImageSelectionCase({
+      corruptPath: "/owned/corrupt.png",
+      validBytes,
+      corruptBytes,
+      writeSource: async (_path, bytes) => {
+        if (Buffer.from(bytes).equals(validBytes)) throw combinedRestoreFailure;
+      },
+      readSource: async () => assert.fail("failed restore must not claim readback"),
+      runProductCase: async () => { throw productFailure; },
+      validateProductResult: () => assert.fail("failed product must not validate"),
+      hasRestoreAuthority: () => true,
+    }),
+    (error) => error === productFailure,
+  );
+  assert.deepEqual(
+    productFailure.cleanupErrors.map(({ phase }) => phase),
+    ["corrupt-image-source-restoration"],
+  );
+
+  const failureWrites = [];
+  await assert.rejects(
+    finalizeFunctionalSmoke({
+      primaryError: productFailure,
+      initialCleanupErrors: productFailure.cleanupErrors,
+      cleanupSteps: [
+        {
+          phase: "image-selection-project-reset",
+          run: async () => { throw new Error("project reset refused"); },
+        },
+      ],
+      publishSuccess: async () => assert.fail("combined failure must not publish success"),
+      writeFailure: async (failure) => failureWrites.push(failure),
+    }),
+    (error) => error === productFailure,
+  );
+  assert.deepEqual(
+    failureWrites[0].cleanupErrors.map(({ phase }) => phase),
+    ["corrupt-image-source-restoration", "image-selection-project-reset"],
+  );
+
+  const evidenceWriteError = new Error("failure publication disk full");
+  const restorationDiagnostics = productFailure.cleanupErrors.filter(
+    ({ phase }) => phase === "corrupt-image-source-restoration",
+  );
+  const diagnosticState = createFunctionalSmokeDiagnosticState();
+  diagnosticState.cleanupErrors.push(...restorationDiagnostics);
+  await assert.rejects(
+    finalizeFunctionalSmoke({
+      primaryError: productFailure,
+      hasPrimaryError: true,
+      diagnosticState,
+      cleanupSteps: [],
+      publishSuccess: async () => assert.fail("combined failure must not publish success"),
+      writeFailure: (failure) => publishFunctionalSmokeFailure({
+        ...failure,
+        reportPath: "/owned/report.json",
+        pendingReportPath: "/owned/report.pending.json",
+        failurePath: "/owned/failure.json",
+        mode: "image-selection",
+        runId: "combined-failure",
+        replaceReport: async () => { throw new Error("report replacement failed"); },
+        writeFailureFile: async () => { throw evidenceWriteError; },
+      }),
+    }),
+    (error) => error === productFailure,
+  );
+  const cliOutput = [];
+  printFunctionalSmokeCliError(
+    productFailure,
+    diagnosticState,
+    (line) => cliOutput.push(line),
+  );
+  assert.equal(cliOutput.length, 2);
+  assert.match(cliOutput[0], /known-complete product failure/);
+  const cliDiagnostics = JSON.parse(cliOutput[1]);
+  assert.equal(cliDiagnostics.kind, "functional-smoke-finalization-diagnostics");
+  assert.deepEqual(
+    cliDiagnostics.cleanupErrors.map(({ phase }) => phase),
+    [
+      "corrupt-image-source-restoration",
+      "image-selection-project-reset",
+      "write-failure",
+    ],
+  );
+  assert.deepEqual(
+    cliDiagnostics.evidenceWriteErrors.map(({ phase }) => phase),
+    ["failure-report", "failure-json"],
+  );
+  const boundedDiagnostics = JSON.parse(formatFunctionalSmokeCliDiagnostics({
+    cleanupErrors: Array.from({ length: 20 }, (_, index) => ({
+      phase: `cleanup-${index}`,
+      error: "x".repeat(5000),
+    })),
+  }));
+  assert.equal(boundedDiagnostics.cleanupErrors.length, 16);
+  assert.equal(boundedDiagnostics.cleanupErrors[0].error.length, 4096);
+  assert.match(
+    functionalSource,
+    /run\(\{ diagnosticState \}\)\.catch\(\(error\) => \{\s*printFunctionalSmokeCliError\(error, diagnosticState\);\s*process\.exitCode = 1;/,
+  );
+});
+
+test("functional smoke preserves arbitrary primaries through restoration, publication, and CLI diagnostics", async () => {
+  const functionalSource = await readFile(
+    new URL("../scripts/cep-functional-smoke.mjs", import.meta.url),
+    "utf8",
+  );
+  const functional = await import(
+    "../scripts/cep-functional-smoke.mjs?arbitrary-primary-diagnostic-channel"
+  );
+  const validBytes = Buffer.from("valid image bytes");
+  const corruptBytes = Buffer.from("corrupt image bytes");
+  const captureRejection = async (promise, label) => {
+    let rejected = false;
+    let rejection;
+    try {
+      await promise;
+    } catch (error) {
+      rejected = true;
+      rejection = error;
+    }
+    assert.equal(rejected, true, `${label} must reject`);
+    return rejection;
+  };
+
+  for (const authority of [true, false]) {
+    for (const primary of [0, false, null, undefined, ""]) {
+      const label = `${String(primary)} / authority ${authority}`;
+      const diagnosticState = { cleanupErrors: [], evidenceWriteErrors: [] };
+      let diskBytes = Buffer.from(validBytes);
+      let writes = 0;
+      const rejection = await captureRejection(
+        functional.runCorruptImageSelectionCase({
+          corruptPath: "/owned/corrupt.png",
+          validBytes,
+          corruptBytes,
+          diagnosticState,
+          writeSource: async (_path, bytes) => {
+            writes += 1;
+            diskBytes = Buffer.from(bytes);
+          },
+          readSource: async () => Buffer.from(diskBytes),
+          runProductCase: async () => { throw primary; },
+          validateProductResult: () => assert.fail("thrown product result must not validate"),
+          hasRestoreAuthority: () => authority,
+        }),
+        label,
+      );
+      assert.equal(rejection, primary, `${label} must preserve the exact primary value`);
+      assert.equal(writes, authority ? 2 : 1, label);
+      assert.ok(diskBytes.equals(authority ? validBytes : corruptBytes), label);
+      assert.deepEqual(
+        diagnosticState.cleanupErrors.map(({ phase }) => phase),
+        authority ? [] : ["corrupt-image-source-restoration"],
+        label,
+      );
+    }
+  }
+
+  for (const {
+    label,
+    primary,
+    authority,
+    failRestore,
+  } of [
+    {
+      label: "frozen Error restoration refusal",
+      primary: Object.freeze(new Error("frozen product failure")),
+      authority: false,
+      failRestore: false,
+    },
+    {
+      label: "truthy primitive restoration failure",
+      primary: "truthy product failure",
+      authority: true,
+      failRestore: true,
+    },
+    {
+      label: "falsy primitive restoration refusal",
+      primary: 0,
+      authority: false,
+      failRestore: false,
+    },
+  ]) {
+    const diagnosticState = functional.createFunctionalSmokeDiagnosticState();
+    const bodyRejection = await captureRejection(
+      functional.runCorruptImageSelectionCase({
+        corruptPath: "/owned/corrupt.png",
+        validBytes,
+        corruptBytes,
+        diagnosticState,
+        writeSource: async (_path, bytes) => {
+          if (failRestore && Buffer.from(bytes).equals(validBytes)) {
+            throw new Error("restoration write failed");
+          }
+        },
+        readSource: async () => validBytes,
+        runProductCase: async () => { throw primary; },
+        validateProductResult: () => assert.fail("thrown product result must not validate"),
+        hasRestoreAuthority: () => authority,
+      }),
+      `${label} body`,
+    );
+    assert.equal(bodyRejection, primary, `${label} body must preserve primary identity/value`);
+
+    const finalRejection = await captureRejection(
+      functional.finalizeFunctionalSmoke({
+        primaryError: primary,
+        hasPrimaryError: true,
+        diagnosticState,
+        cleanupSteps: [
+          { phase: "later-cleanup", run: async () => { throw new Error("later cleanup failed"); } },
+        ],
+        publishSuccess: async () => assert.fail("a primary failure must not publish success"),
+        writeFailure: (failure) => functional.publishFunctionalSmokeFailure({
+          ...failure,
+          reportPath: "/owned/report.json",
+          pendingReportPath: "/owned/report.pending.json",
+          failurePath: "/owned/failure.json",
+          mode: "image-selection",
+          runId: "diagnostic-run",
+          replaceReport: async () => { throw new Error("report replacement failed"); },
+          writeFailureFile: async () => { throw new Error("failure.json write failed"); },
+          getFailureConsoleEvidence: () => null,
+        }),
+      }),
+      `${label} finalization`,
+    );
+    assert.equal(finalRejection, primary, `${label} finalizer must preserve primary identity/value`);
+    assert.deepEqual(
+      diagnosticState.cleanupErrors.map(({ phase }) => phase),
+      ["corrupt-image-source-restoration", "later-cleanup", "write-failure"],
+      label,
+    );
+    assert.deepEqual(
+      diagnosticState.evidenceWriteErrors.map(({ phase }) => phase),
+      ["failure-report", "failure-json"],
+      label,
+    );
+
+    const cliOutput = [];
+    functional.printFunctionalSmokeCliError(
+      primary,
+      diagnosticState,
+      (line) => cliOutput.push(line),
+    );
+    assert.equal(cliOutput.length, 2, label);
+    assert.match(cliOutput[0], new RegExp(primary instanceof Error ? "frozen product failure" : String(primary)), label);
+    const cliDiagnostics = JSON.parse(cliOutput[1]);
+    assert.deepEqual(
+      cliDiagnostics.cleanupErrors.map(({ phase }) => phase),
+      ["corrupt-image-source-restoration", "later-cleanup", "write-failure"],
+      label,
+    );
+    assert.deepEqual(
+      cliDiagnostics.evidenceWriteErrors.map(({ phase }) => phase),
+      ["failure-report", "failure-json"],
+      label,
+    );
+  }
+
+  let hostileCleanupReads = 0;
+  let hostileEvidenceReads = 0;
+  const hostilePrimary = new Error("hostile diagnostic properties");
+  Object.defineProperties(hostilePrimary, {
+    cleanupErrors: {
+      get() {
+        hostileCleanupReads += 1;
+        throw new Error("cleanup diagnostic getter failed");
+      },
+    },
+    evidenceWriteErrors: {
+      get() {
+        hostileEvidenceReads += 1;
+        throw new Error("evidence diagnostic getter failed");
+      },
+    },
+  });
+  const hostileState = functional.createFunctionalSmokeDiagnosticState();
+  const hostileRejection = await captureRejection(
+    functional.runCorruptImageSelectionCase({
+      corruptPath: "/owned/corrupt.png",
+      validBytes,
+      corruptBytes,
+      diagnosticState: hostileState,
+      writeSource: async () => undefined,
+      readSource: async () => validBytes,
+      runProductCase: async () => { throw hostilePrimary; },
+      validateProductResult: () => assert.fail("thrown product result must not validate"),
+      hasRestoreAuthority: () => false,
+    }),
+    "hostile diagnostic property access",
+  );
+  assert.equal(hostileRejection, hostilePrimary);
+  assert.equal(hostileCleanupReads, 1);
+  assert.equal(hostileEvidenceReads, 1);
+  assert.deepEqual(
+    hostileState.cleanupErrors.map(({ phase }) => phase),
+    ["corrupt-image-source-restoration"],
+  );
+  assert.deepEqual(hostileState.evidenceWriteErrors, []);
+
+  const malformedLedgerPrimary = new Error("malformed diagnostic ledgers");
+  malformedLedgerPrimary.cleanupErrors = { phase: "not-an-array" };
+  malformedLedgerPrimary.evidenceWriteErrors = "not-an-array";
+  const malformedLedgerState = functional.createFunctionalSmokeDiagnosticState();
+  const malformedLedgerRejection = await captureRejection(
+    functional.runCorruptImageSelectionCase({
+      corruptPath: "/owned/corrupt.png",
+      validBytes,
+      corruptBytes,
+      diagnosticState: malformedLedgerState,
+      writeSource: async () => undefined,
+      readSource: async () => validBytes,
+      runProductCase: async () => { throw malformedLedgerPrimary; },
+      validateProductResult: () => assert.fail("thrown product result must not validate"),
+      hasRestoreAuthority: () => false,
+    }),
+    "malformed diagnostic ledgers",
+  );
+  assert.equal(malformedLedgerRejection, malformedLedgerPrimary);
+  assert.deepEqual(
+    malformedLedgerState.cleanupErrors.map(({ phase }) => phase),
+    ["corrupt-image-source-restoration"],
+  );
+  assert.deepEqual(malformedLedgerState.evidenceWriteErrors, []);
+
+  let customStringReads = 0;
+  const cyclicDiagnosticValue = {};
+  cyclicDiagnosticValue.self = cyclicDiagnosticValue;
+  const customStringValue = {
+    toString() {
+      customStringReads += 1;
+      throw new Error("custom diagnostic toString must not run");
+    },
+  };
+  let independentErrorReads = 0;
+  const throwingPhaseDiagnostic = Object.create(null, {
+    phase: {
+      enumerable: true,
+      get() { throw new Error("phase getter failed"); },
+    },
+    error: {
+      enumerable: true,
+      get() {
+        independentErrorReads += 1;
+        return "error survived unreadable phase";
+      },
+    },
+  });
+  let proxyFieldReads = 0;
+  const throwingProxyDiagnostic = new Proxy({}, {
+    get() {
+      proxyFieldReads += 1;
+      throw new Error("diagnostic proxy field failed");
+    },
+  });
+  const hostileSnapshot = functional.snapshotFunctionalSmokeDiagnostics([
+    throwingPhaseDiagnostic,
+    { phase: cyclicDiagnosticValue, error: Symbol("diagnostic-symbol") },
+    { phase: customStringValue, error: 12n },
+    null,
+    throwingProxyDiagnostic,
+  ]);
+  assert.deepEqual(hostileSnapshot, [
+    { phase: "<unreadable-phase>", error: "error survived unreadable phase" },
+    { phase: "<object>", error: "<symbol>" },
+    { phase: "<object>", error: "12" },
+    { phase: "<missing-phase>", error: "<missing-error>" },
+    { phase: "<unreadable-phase>", error: "<unreadable-error>" },
+  ]);
+  assert.equal(independentErrorReads, 1, "phase and error must be read independently");
+  assert.equal(proxyFieldReads, 2, "both hostile Proxy fields must be attempted independently");
+  assert.equal(customStringReads, 0, "custom diagnostic coercion must never execute");
+  assert.equal(Object.isFrozen(hostileSnapshot), true);
+  assert.equal(hostileSnapshot.every(Object.isFrozen), true);
+  assert.equal(
+    hostileSnapshot.every((entry) => Object.getPrototypeOf(entry) === Object.prototype),
+    true,
+  );
+  const hostileLedgerProxy = new Proxy([throwingPhaseDiagnostic], {
+    get(target, property, receiver) {
+      if (property === "0") throw new Error("ledger entry read failed");
+      return Reflect.get(target, property, receiver);
+    },
+  });
+  assert.deepEqual(functional.snapshotFunctionalSmokeDiagnostics(hostileLedgerProxy), [
+    { phase: "<unreadable-phase>", error: "<unreadable-error>" },
+  ]);
+  const { proxy: revokedLedgerProxy, revoke } = Proxy.revocable([], {});
+  revoke();
+  assert.doesNotThrow(() => functional.snapshotFunctionalSmokeDiagnostics(revokedLedgerProxy));
+  assert.deepEqual(functional.snapshotFunctionalSmokeDiagnostics(revokedLedgerProxy), []);
+  const hostileDiagnosticState = new Proxy({}, {
+    get() { throw new Error("diagnostic state ledger getter failed"); },
+  });
+  assert.doesNotThrow(() => functional.formatFunctionalSmokeCliDiagnostics(hostileDiagnosticState));
+  assert.equal(functional.formatFunctionalSmokeCliDiagnostics(hostileDiagnosticState), null);
+
+  const hostileImportedPrimary = new Error("hostile imported diagnostic primary");
+  hostileImportedPrimary.cleanupErrors = [
+    throwingPhaseDiagnostic,
+    { phase: "cyclic-cleanup", error: cyclicDiagnosticValue },
+  ];
+  hostileImportedPrimary.evidenceWriteErrors = [
+    { phase: Symbol("phase"), error: customStringValue },
+    throwingProxyDiagnostic,
+  ];
+  const hostileImportedState = functional.createFunctionalSmokeDiagnosticState();
+  const hostileHelperRejection = await captureRejection(
+    functional.runCorruptImageSelectionCase({
+      corruptPath: "/owned/corrupt.png",
+      validBytes,
+      corruptBytes,
+      diagnosticState: hostileImportedState,
+      writeSource: async () => undefined,
+      readSource: async () => validBytes,
+      runProductCase: async () => { throw hostileImportedPrimary; },
+      validateProductResult: () => assert.fail("failed product must not validate"),
+      hasRestoreAuthority: () => false,
+    }),
+    "hostile imported diagnostics helper",
+  );
+  assert.equal(hostileHelperRejection, hostileImportedPrimary);
+  assert.equal(hostileImportedState.cleanupErrors[0], throwingPhaseDiagnostic);
+  assert.equal(hostileImportedState.evidenceWriteErrors[1], throwingProxyDiagnostic);
+  let hostilePublishedReport;
+  let hostilePublishedFailure;
+  const hostileFinalRejection = await captureRejection(
+    functional.finalizeFunctionalSmoke({
+      primaryError: hostileImportedPrimary,
+      hasPrimaryError: true,
+      diagnosticState: hostileImportedState,
+      cleanupSteps: [],
+      publishSuccess: async () => assert.fail("hostile primary must not publish success"),
+      writeFailure: (failure) => functional.publishFunctionalSmokeFailure({
+        ...failure,
+        reportPath: "/owned/report.json",
+        pendingReportPath: "/owned/report.pending.json",
+        failurePath: "/owned/failure.json",
+        mode: "image-selection",
+        runId: "hostile-diagnostic-publication",
+        replaceReport: async ({ report }) => { hostilePublishedReport = structuredClone(report); },
+        writeFailureFile: async (_path, contents) => {
+          hostilePublishedFailure = JSON.parse(contents);
+        },
+      }),
+    }),
+    "hostile imported diagnostics finalizer",
+  );
+  assert.equal(hostileFinalRejection, hostileImportedPrimary);
+  for (const artifact of [hostilePublishedReport, hostilePublishedFailure]) {
+    assert.equal(artifact.error.includes("hostile imported diagnostic primary"), true);
+    assert.deepEqual(artifact.cleanupErrors.slice(0, 2), [
+      { phase: "<unreadable-phase>", error: "error survived unreadable phase" },
+      { phase: "cyclic-cleanup", error: "<object>" },
+    ]);
+    assert.deepEqual(artifact.evidenceWriteErrors, [
+      { phase: "<symbol>", error: "<object>" },
+      { phase: "<unreadable-phase>", error: "<unreadable-error>" },
+    ]);
+  }
+  const hostileCliOutput = [];
+  assert.doesNotThrow(() => functional.printFunctionalSmokeCliError(
+    hostileImportedPrimary,
+    hostileImportedState,
+    (line) => hostileCliOutput.push(line),
+  ));
+  assert.match(hostileCliOutput[1], /<unreadable-phase>/);
+  assert.match(hostileCliOutput[1], /<unreadable-error>/);
+  assert.equal(customStringReads, 0, "publication and CLI must not execute custom coercion");
+
+  const failedHostilePrimary = new Error("failed hostile publication primary");
+  const failedHostileState = functional.createFunctionalSmokeDiagnosticState();
+  failedHostileState.cleanupErrors.push(throwingPhaseDiagnostic);
+  let failedSerializedFailure;
+  const failedHostileRejection = await captureRejection(
+    functional.finalizeFunctionalSmoke({
+      primaryError: failedHostilePrimary,
+      hasPrimaryError: true,
+      diagnosticState: failedHostileState,
+      cleanupSteps: [],
+      publishSuccess: async () => assert.fail("failed hostile primary must not publish success"),
+      writeFailure: (failure) => functional.publishFunctionalSmokeFailure({
+        ...failure,
+        reportPath: "/owned/report.json",
+        pendingReportPath: "/owned/report.pending.json",
+        failurePath: "/owned/failure.json",
+        mode: "image-selection",
+        runId: "failed-hostile-publication",
+        replaceReport: async () => { throw new Error("hostile report write failed"); },
+        writeFailureFile: async (_path, contents) => {
+          failedSerializedFailure = JSON.parse(contents);
+          throw new Error("hostile failure.json write failed");
+        },
+      }),
+    }),
+    "failed hostile publication finalizer",
+  );
+  assert.equal(failedHostileRejection, failedHostilePrimary);
+  assert.deepEqual(
+    failedHostileState.evidenceWriteErrors.map(({ phase }) => phase),
+    ["failure-report", "failure-json"],
+  );
+  assert.deepEqual(
+    failedHostileState.cleanupErrors.slice(1).map(({ phase }) => phase),
+    ["write-failure"],
+  );
+  assert.deepEqual(
+    failedSerializedFailure.evidenceWriteErrors.map(({ phase }) => phase),
+    ["failure-report"],
+    "failure.json serialization must contain diagnostics known before its own failed write",
+  );
+  const failedHostileCliOutput = [];
+  assert.doesNotThrow(() => functional.printFunctionalSmokeCliError(
+    failedHostilePrimary,
+    failedHostileState,
+    (line) => failedHostileCliOutput.push(line),
+  ));
+  const failedHostileCliDiagnostics = JSON.parse(failedHostileCliOutput[1]);
+  assert.deepEqual(
+    failedHostileCliDiagnostics.evidenceWriteErrors.map(({ phase }) => phase),
+    ["failure-report", "failure-json"],
+  );
+  assert.deepEqual(
+    failedHostileCliDiagnostics.cleanupErrors.map(({ phase }) => phase),
+    ["<unreadable-phase>", "write-failure"],
+  );
+
+  const successfulPublicationState = functional.createFunctionalSmokeDiagnosticState();
+  successfulPublicationState.cleanupErrors.push({ phase: "cleanup-seed", error: "cleanup failed" });
+  successfulPublicationState.evidenceWriteErrors.push({
+    phase: "evidence-seed",
+    error: "earlier evidence failed",
+  });
+  let publishedReport;
+  let publishedFailure;
+  let successPublished = false;
+  const publicationRejection = await captureRejection(
+    functional.finalizeFunctionalSmoke({
+      primaryError: 0,
+      hasPrimaryError: true,
+      diagnosticState: successfulPublicationState,
+      cleanupSteps: [],
+      publishSuccess: async () => { successPublished = true; },
+      writeFailure: (failure) => functional.publishFunctionalSmokeFailure({
+        ...failure,
+        reportPath: "/owned/report.json",
+        pendingReportPath: "/owned/report.pending.json",
+        failurePath: "/owned/failure.json",
+        mode: "image-selection",
+        runId: "successful-failure-publication",
+        replaceReport: async ({ report }) => { publishedReport = structuredClone(report); },
+        writeFailureFile: async (_path, contents) => {
+          publishedFailure = JSON.parse(contents);
+        },
+        getFailureConsoleEvidence: () => ({ logs: [] }),
+      }),
+    }),
+    "successful failure publication",
+  );
+  assert.equal(publicationRejection, 0);
+  assert.equal(successPublished, false);
+  for (const publication of [publishedReport, publishedFailure]) {
+    assert.equal(publication.error, "0");
+    assert.deepEqual(publication.cleanupErrors, successfulPublicationState.cleanupErrors);
+    assert.deepEqual(publication.evidenceWriteErrors, successfulPublicationState.evidenceWriteErrors);
+  }
+
+  assert.match(
+    functionalSource,
+    /const diagnosticState = createFunctionalSmokeDiagnosticState\(\);[^]*run\(\{ diagnosticState \}\)\.catch\(\(error\) => \{\s*printFunctionalSmokeCliError\(error, diagnosticState\)/,
+    "the direct CLI must print the same run-scoped side channel passed into production",
+  );
+  assert.match(
+    functionalSource,
+    /publishFunctionalSmokeFailure\(\{[^]*diagnosticState[^]*\}\)/,
+    "production finalization must call the exported failure publisher with the shared side channel",
+  );
+  assert.doesNotMatch(
+    functionalSource,
+    /if \(primaryError\)|if \(!primaryError/,
+    "primary presence must never be inferred from truthiness",
+  );
+});
+
+test("functional smoke error text is bounded deterministic and no-throw for hostile values", async () => {
+  const functional = await import(
+    "../scripts/cep-functional-smoke.mjs?hostile-error-text-normalization"
+  );
+  const captureRejection = async (promise, label) => {
+    try {
+      await promise;
+    } catch (error) {
+      return error;
+    }
+    assert.fail(`${label} must reject`);
+  };
+  const { proxy: revokedProxy, revoke } = Proxy.revocable({}, {});
+  revoke();
+  let stackReads = 0;
+  let messageReads = 0;
+  const throwingErrorFields = new Error("hidden");
+  Object.defineProperties(throwingErrorFields, {
+    stack: {
+      configurable: true,
+      get() {
+        stackReads += 1;
+        throw new Error("stack getter must remain contained");
+      },
+    },
+    message: {
+      configurable: true,
+      get() {
+        messageReads += 1;
+        throw new Error("message getter must remain contained");
+      },
+    },
+  });
+  let customToStringCalls = 0;
+  let customValueOfCalls = 0;
+  const customCoercion = {
+    toString() {
+      customToStringCalls += 1;
+      throw new Error("custom toString must not execute");
+    },
+    valueOf() {
+      customValueOfCalls += 1;
+      throw new Error("custom valueOf must not execute");
+    },
+  };
+  const cyclicObject = {};
+  cyclicObject.self = cyclicObject;
+  const symbolStackError = new Error("safe message fallback");
+  Object.defineProperty(symbolStackError, "stack", {
+    configurable: true,
+    get: () => Symbol("unsafe-stack"),
+  });
+  const hostileFunction = () => undefined;
+  hostileFunction.toString = () => {
+    customToStringCalls += 1;
+    throw new Error("custom function toString must not execute");
+  };
+
+  for (const primary of [Object.freeze(new Error("frozen exact primary")), 0]) {
+    const diagnosticState = functional.createFunctionalSmokeDiagnosticState();
+    const helperRejection = await captureRejection(
+      functional.runCorruptImageSelectionCase({
+        corruptPath: "/owned/corrupt.png",
+        validBytes: Buffer.from("valid"),
+        diagnosticState,
+        writeSource: async (_path, bytes) => {
+          if (Buffer.from(bytes).equals(Buffer.from("valid"))) throw revokedProxy;
+        },
+        readSource: async () => assert.fail("failed restoration must not read back"),
+        runProductCase: async () => { throw primary; },
+        validateProductResult: () => assert.fail("failed product must not validate"),
+        hasRestoreAuthority: () => true,
+      }),
+      "corrupt restoration hostile diagnostic",
+    );
+    assert.equal(helperRejection, primary, "restoration diagnostics must not replace the primary");
+
+    let publishedReport;
+    let publishedFailure;
+    const finalRejection = await captureRejection(
+      functional.finalizeFunctionalSmoke({
+        primaryError: primary,
+        hasPrimaryError: true,
+        diagnosticState,
+        cleanupSteps: [
+          { phase: "throwing-error-fields", run: async () => { throw throwingErrorFields; } },
+          { phase: "cyclic-object", run: async () => { throw cyclicObject; } },
+        ],
+        publishSuccess: async () => assert.fail("hostile primary must not publish success"),
+        writeFailure: (failure) => functional.publishFunctionalSmokeFailure({
+          ...failure,
+          reportPath: "/owned/report.json",
+          pendingReportPath: "/owned/report.pending.json",
+          failurePath: "/owned/failure.json",
+          mode: "image-selection",
+          runId: "hostile-error-text",
+          replaceReport: async ({ report }) => {
+            publishedReport = structuredClone(report);
+            throw customCoercion;
+          },
+          writeFailureFile: async (_path, contents) => {
+            publishedFailure = JSON.parse(contents);
+            throw Symbol("failure-json-write");
+          },
+        }),
+      }),
+      "hostile finalizer diagnostics",
+    );
+    assert.equal(finalRejection, primary, "finalization diagnostics must not replace the primary");
+    assert.equal(typeof publishedReport.error, "string");
+    assert.equal(typeof publishedFailure.error, "string");
+    assert.deepEqual(
+      diagnosticState.cleanupErrors.map(({ phase }) => phase),
+      ["corrupt-image-source-restoration", "throwing-error-fields", "cyclic-object", "write-failure"],
+    );
+    assert.deepEqual(
+      diagnosticState.evidenceWriteErrors.map(({ phase }) => phase),
+      ["failure-report", "failure-json"],
+    );
+    const cliLines = [];
+    assert.doesNotThrow(() => functional.printFunctionalSmokeCliError(
+      primary,
+      diagnosticState,
+      (line) => cliLines.push(line),
+    ));
+    assert.equal(cliLines.length, 2);
+    const printable = JSON.parse(cliLines[1]);
+    assert.deepEqual(
+      printable.cleanupErrors.map(({ phase }) => phase),
+      ["corrupt-image-source-restoration", "throwing-error-fields", "cyclic-object", "write-failure"],
+    );
+    assert.deepEqual(
+      printable.evidenceWriteErrors.map(({ phase }) => phase),
+      ["failure-report", "failure-json"],
+    );
+  }
+
+  for (const [label, primary, expectedText] of [
+    ["revoked Proxy", revokedProxy, "<object>"],
+    ["throwing Error fields", throwingErrorFields, "<error>"],
+    ["custom coercion", customCoercion, "<object>"],
+    ["Symbol", Symbol("hostile-primary"), "<symbol>"],
+    ["cyclic object", cyclicObject, "<object>"],
+    ["function", hostileFunction, "<function>"],
+    ["Error symbol stack with safe message", symbolStackError, "safe message fallback"],
+  ]) {
+    let report;
+    let failure;
+    await functional.publishFunctionalSmokeFailure({
+      reportPath: "/owned/report.json",
+      pendingReportPath: "/owned/report.pending.json",
+      failurePath: "/owned/failure.json",
+      mode: "image-selection",
+      runId: `hostile-primary-${label}`,
+      primaryError: primary,
+      hasPrimaryError: true,
+      diagnosticState: functional.createFunctionalSmokeDiagnosticState(),
+      replaceReport: async ({ report: value }) => { report = structuredClone(value); },
+      writeFailureFile: async (_path, contents) => { failure = JSON.parse(contents); },
+    });
+    assert.equal(report.error, expectedText, label);
+    assert.equal(failure.error, expectedText, label);
+    const cliLines = [];
+    assert.doesNotThrow(
+      () => functional.printFunctionalSmokeCliError(
+        primary,
+        functional.createFunctionalSmokeDiagnosticState(),
+        (line) => cliLines.push(line),
+      ),
+      label,
+    );
+    assert.deepEqual(cliLines, [expectedText], label);
+  }
+  const longPrimaryLines = [];
+  functional.printFunctionalSmokeCliError(
+    "x".repeat(5000),
+    functional.createFunctionalSmokeDiagnosticState(),
+    (line) => longPrimaryLines.push(line),
+  );
+  assert.equal(longPrimaryLines[0].length, 4096);
+  assert.equal(stackReads > 0, true, "Error stack must be attempted");
+  assert.equal(messageReads > 0, true, "Error message must be attempted independently");
+  assert.equal(customToStringCalls, 0);
+  assert.equal(customValueOfCalls, 0);
+});
+
+test("functional runtime completion authority requires a callable strict-true guard", async () => {
+  const functionalSource = await readFile(
+    new URL("../scripts/cep-functional-smoke.mjs", import.meta.url),
+    "utf8",
+  );
+  const functional = await import(
+    "../scripts/cep-functional-smoke.mjs?strict-runtime-completion-authority"
+  );
+  for (const [label, guard] of [
+    ["missing", undefined],
+    ["null", null],
+    ["object without method", {}],
+    ["non-callable method", { isCompletionKnown: true }],
+    ["false", { isCompletionKnown: () => false }],
+    ["throw", { isCompletionKnown: () => { throw new Error("guard failed"); } }],
+    ["truthy non-Boolean", { isCompletionKnown: () => "true" }],
+    ["promise", { isCompletionKnown: () => Promise.resolve(true) }],
+  ]) {
+    assert.equal(functional.isFunctionalSmokeRuntimeCompletionKnown(guard), false, label);
+  }
+  assert.equal(
+    functional.isFunctionalSmokeRuntimeCompletionKnown({ isCompletionKnown: () => true }),
+    true,
+  );
+
+  for (const [label, guard, shouldRestore] of [
+    ["missing", undefined, false],
+    ["non-callable", { isCompletionKnown: true }, false],
+    ["installed strict true", { isCompletionKnown: () => true }, true],
+  ]) {
+    let writes = 0;
+    const diagnostics = functional.createFunctionalSmokeDiagnosticState();
+    let rejected = false;
+    try {
+      await functional.runCorruptImageSelectionCase({
+        corruptPath: "/owned/corrupt.png",
+        validBytes: Buffer.from("valid"),
+        diagnosticState: diagnostics,
+        writeSource: async () => { writes += 1; },
+        readSource: async () => Buffer.from("valid"),
+        runProductCase: async () => ({ ok: true }),
+        validateProductResult: () => undefined,
+        hasRestoreAuthority: () =>
+          true && functional.isFunctionalSmokeRuntimeCompletionKnown(guard),
+      });
+    } catch {
+      rejected = true;
+    }
+    assert.equal(rejected, !shouldRestore, label);
+    assert.equal(writes, shouldRestore ? 2 : 1, label);
+  }
+
+  assert.doesNotMatch(
+    functionalSource,
+    /runtimeEvaluationGuard\?\.isCompletionKnown\(\) !== false/,
+  );
+  assert.match(
+    functionalSource,
+    /hasRestoreAuthority: \(\) =>\s*imageSelectionHostStateKnown && runtimeEvaluationCompletionKnown\(\)/,
+    "production restoration authority must continue to combine host-known and runtime-known",
+  );
+});
+
 test("functional image cleanup cannot remove an ID-matching item from a foreign project", async () => {
   const functional = await import("../scripts/cep-functional-smoke.mjs?foreign-image-project");
   const ownedProject = {};
@@ -1080,7 +5076,244 @@ test("functional smoke finalization preserves the primary error with cleanup dia
     }),
     (error) => error === primary
   );
-  assert.deepEqual(primary.cleanupErrors.map(({ phase }) => phase), ["write-failure"]);
+  assert.deepEqual(
+    primary.cleanupErrors.map(({ phase }) => phase),
+    ["cdp-close", "write-failure"],
+  );
+});
+
+test("functional smoke finalizer imports lower ledgers at every boundary in causal order", async () => {
+  const functional = await import("../scripts/cep-functional-smoke.mjs?finalizer-lower-ledger-boundaries");
+  const diagnostic = (phase) => ({ phase, error: `${phase} failed` });
+
+  const directCleanup = diagnostic("direct-lower-cleanup");
+  const directEvidence = diagnostic("direct-lower-evidence");
+  const directPrimary = new Error("direct lower-layer primary");
+  directPrimary.cleanupErrors = [directCleanup, directCleanup];
+  directPrimary.evidenceWriteErrors = [directEvidence, directEvidence];
+  const directState = functional.createFunctionalSmokeDiagnosticState();
+  let directFailureVisibility;
+  await assert.rejects(
+    functional.finalizeFunctionalSmoke({
+      primaryError: directPrimary,
+      hasPrimaryError: true,
+      diagnosticState: directState,
+      initialCleanupErrors: [directCleanup],
+      cleanupSteps: [],
+      publishSuccess: async () => assert.fail("a direct primary must not publish success"),
+      writeFailure: async (failure) => {
+        directFailureVisibility = {
+          primaryError: failure.primaryError,
+          cleanup: [...failure.cleanupErrors],
+          evidence: [...failure.evidenceWriteErrors],
+        };
+      },
+    }),
+    (error) => error === directPrimary,
+  );
+  assert.equal(directFailureVisibility.primaryError, directPrimary);
+  assert.deepEqual(directFailureVisibility.cleanup, [directCleanup]);
+  assert.deepEqual(directFailureVisibility.evidence, [directEvidence]);
+  assert.equal(directPrimary.cleanupErrors, directState.cleanupErrors);
+  assert.equal(directPrimary.evidenceWriteErrors, directState.evidenceWriteErrors);
+  assert.deepEqual(directState.cleanupErrors, [directCleanup]);
+  assert.deepEqual(directState.evidenceWriteErrors, [directEvidence]);
+
+  const cleanupLowerCleanup = diagnostic("cleanup-catch-lower-cleanup");
+  const cleanupLowerEvidence = diagnostic("cleanup-catch-lower-evidence");
+  const cleanupThrown = new Error("cleanup step failed");
+  cleanupThrown.cleanupErrors = [cleanupLowerCleanup, cleanupLowerCleanup];
+  cleanupThrown.evidenceWriteErrors = [cleanupLowerEvidence, cleanupLowerEvidence];
+  Object.freeze(cleanupThrown);
+  const cleanupState = functional.createFunctionalSmokeDiagnosticState();
+  let cleanupFailureVisibility;
+  await assert.rejects(
+    functional.finalizeFunctionalSmoke({
+      diagnosticState: cleanupState,
+      cleanupSteps: [{
+        phase: "cleanup-step-current",
+        run: async () => { throw cleanupThrown; },
+      }],
+      publishSuccess: async () => assert.fail("cleanup failure must not publish success"),
+      writeFailure: async (failure) => {
+        cleanupFailureVisibility = {
+          cleanup: [...failure.cleanupErrors],
+          evidence: [...failure.evidenceWriteErrors],
+        };
+      },
+    }),
+    (error) => error instanceof AggregateError,
+  );
+  assert.equal(cleanupFailureVisibility.cleanup[0], cleanupLowerCleanup);
+  assert.deepEqual(
+    cleanupFailureVisibility.cleanup.map(({ phase }) => phase),
+    ["cleanup-catch-lower-cleanup", "cleanup-step-current"],
+  );
+  assert.match(cleanupFailureVisibility.cleanup[1].error, /cleanup step failed/);
+  assert.deepEqual(cleanupFailureVisibility.evidence, [cleanupLowerEvidence]);
+  assert.deepEqual(cleanupState.cleanupErrors, cleanupFailureVisibility.cleanup);
+  assert.deepEqual(cleanupState.evidenceWriteErrors, [cleanupLowerEvidence]);
+
+  const publishLowerCleanup = diagnostic("publish-catch-lower-cleanup");
+  const publishLowerEvidence = diagnostic("publish-catch-lower-evidence");
+  const publishPrimary = Object.create(null);
+  Object.defineProperties(publishPrimary, {
+    cleanupErrors: { get: () => [publishLowerCleanup, publishLowerCleanup] },
+    evidenceWriteErrors: { get: () => [publishLowerEvidence, publishLowerEvidence] },
+    [Symbol.toPrimitive]: {
+      value: () => { throw new Error("publish primary must not be coerced"); },
+    },
+  });
+  Object.freeze(publishPrimary);
+  const publishState = functional.createFunctionalSmokeDiagnosticState();
+  let publishFailureVisibility;
+  await assert.rejects(
+    functional.finalizeFunctionalSmoke({
+      diagnosticState: publishState,
+      cleanupSteps: [],
+      publishSuccess: async () => { throw publishPrimary; },
+      writeFailure: async (failure) => {
+        publishFailureVisibility = {
+          primaryError: failure.primaryError,
+          cleanup: [...failure.cleanupErrors],
+          evidence: [...failure.evidenceWriteErrors],
+        };
+      },
+    }),
+    (error) => error === publishPrimary,
+  );
+  assert.equal(publishFailureVisibility.primaryError, publishPrimary);
+  assert.deepEqual(publishFailureVisibility.cleanup, [publishLowerCleanup]);
+  assert.deepEqual(publishFailureVisibility.evidence, [publishLowerEvidence]);
+  assert.deepEqual(publishState.cleanupErrors, [publishLowerCleanup]);
+  assert.deepEqual(publishState.evidenceWriteErrors, [publishLowerEvidence]);
+
+  const writeLowerCleanup = diagnostic("write-catch-lower-cleanup");
+  const writeLowerEvidence = diagnostic("write-catch-lower-evidence");
+  const writeThrown = new Error("failure publication failed");
+  writeThrown.cleanupErrors = [writeLowerCleanup, writeLowerCleanup];
+  writeThrown.evidenceWriteErrors = [writeLowerEvidence, writeLowerEvidence];
+  Object.freeze(writeThrown);
+  const writeState = functional.createFunctionalSmokeDiagnosticState();
+  let writeFailureInput;
+  let primitivePrimaryCaught = false;
+  try {
+    await functional.finalizeFunctionalSmoke({
+      primaryError: 0,
+      hasPrimaryError: true,
+      diagnosticState: writeState,
+      cleanupSteps: [],
+      publishSuccess: async () => assert.fail("a primitive primary must not publish success"),
+      writeFailure: async (failure) => {
+        writeFailureInput = {
+          primaryError: failure.primaryError,
+          cleanup: [...failure.cleanupErrors],
+          evidence: [...failure.evidenceWriteErrors],
+        };
+        throw writeThrown;
+      },
+    });
+    assert.fail("the exact primitive primary must be rethrown");
+  } catch (error) {
+    primitivePrimaryCaught = true;
+    assert.equal(error, 0);
+  }
+  assert.equal(primitivePrimaryCaught, true);
+  assert.equal(writeFailureInput.primaryError, 0);
+  assert.deepEqual(writeFailureInput.cleanup, []);
+  assert.deepEqual(writeFailureInput.evidence, []);
+  assert.equal(writeState.cleanupErrors[0], writeLowerCleanup);
+  assert.deepEqual(
+    writeState.cleanupErrors.map(({ phase }) => phase),
+    ["write-catch-lower-cleanup", "write-failure"],
+  );
+  assert.match(writeState.cleanupErrors[1].error, /failure publication failed/);
+  assert.deepEqual(writeState.evidenceWriteErrors, [writeLowerEvidence]);
+});
+
+test("functional smoke failure publisher imports lower ledgers before local diagnostics", async () => {
+  const functional = await import("../scripts/cep-functional-smoke.mjs?publisher-lower-ledger-boundaries");
+  const diagnostic = (phase) => ({ phase, error: `${phase} failed` });
+  const base = {
+    primaryError: new Error("product failed"),
+    hasPrimaryError: true,
+    reportPath: "/owned/report.json",
+    pendingReportPath: "/owned/report.pending.json",
+    failurePath: "/owned/failure.json",
+    mode: "image-selection",
+    runId: "publisher-ledger-test",
+  };
+
+  const reportCleanup = diagnostic("report-lower-cleanup");
+  const reportEvidence = diagnostic("report-lower-evidence");
+  const frozenReportError = new Error("report replacement failed");
+  frozenReportError.cleanupErrors = [reportCleanup, reportCleanup];
+  frozenReportError.evidenceWriteErrors = [reportEvidence, reportEvidence];
+  Object.freeze(frozenReportError);
+  const reportState = functional.createFunctionalSmokeDiagnosticState();
+  let writtenFailure;
+  await functional.publishFunctionalSmokeFailure({
+    ...base,
+    diagnosticState: reportState,
+    replaceReport: async () => { throw frozenReportError; },
+    writeFailureFile: async (_path, contents) => { writtenFailure = JSON.parse(contents); },
+  });
+  assert.deepEqual(reportState.cleanupErrors, [reportCleanup]);
+  assert.equal(reportState.evidenceWriteErrors[0], reportEvidence);
+  assert.deepEqual(
+    reportState.evidenceWriteErrors.map(({ phase }) => phase),
+    ["report-lower-evidence", "failure-report"],
+  );
+  assert.deepEqual(
+    writtenFailure.cleanupErrors.map(({ phase }) => phase),
+    ["report-lower-cleanup"],
+  );
+  assert.deepEqual(
+    writtenFailure.evidenceWriteErrors.map(({ phase }) => phase),
+    ["report-lower-evidence", "failure-report"],
+  );
+
+  const primitiveState = functional.createFunctionalSmokeDiagnosticState();
+  await functional.publishFunctionalSmokeFailure({
+    ...base,
+    diagnosticState: primitiveState,
+    replaceReport: async () => { throw 0; },
+    writeFailureFile: async () => undefined,
+  });
+  assert.deepEqual(
+    primitiveState.evidenceWriteErrors.map(({ phase, error }) => [phase, error]),
+    [["failure-report", "0"]],
+  );
+
+  const jsonCleanup = diagnostic("json-lower-cleanup");
+  const hostileEvidence = new Proxy({}, {
+    get() { throw new Error("hostile diagnostic entry getter"); },
+  });
+  const failureJsonError = new Proxy(new Error("failure JSON failed"), {
+    get(target, property, receiver) {
+      if (property === "cleanupErrors") return [jsonCleanup, jsonCleanup];
+      if (property === "evidenceWriteErrors") return [hostileEvidence, hostileEvidence];
+      if (property === Symbol.toPrimitive) {
+        return () => { throw new Error("failure JSON error must not be coerced"); };
+      }
+      return Reflect.get(target, property, receiver);
+    },
+  });
+  const jsonState = functional.createFunctionalSmokeDiagnosticState();
+  await assert.rejects(
+    functional.publishFunctionalSmokeFailure({
+      ...base,
+      diagnosticState: jsonState,
+      replaceReport: async () => undefined,
+      writeFailureFile: async () => { throw failureJsonError; },
+    }),
+    (error) => error === failureJsonError,
+  );
+  assert.deepEqual(jsonState.cleanupErrors, [jsonCleanup]);
+  assert.equal(jsonState.evidenceWriteErrors[0], hostileEvidence);
+  assert.equal(jsonState.evidenceWriteErrors.length, 2);
+  assert.equal(jsonState.evidenceWriteErrors[1].phase, "failure-json");
+  assert.match(jsonState.evidenceWriteErrors[1].error, /failure JSON failed/);
 });
 
 test("functional smoke publishes success only after every cleanup stage", async () => {
